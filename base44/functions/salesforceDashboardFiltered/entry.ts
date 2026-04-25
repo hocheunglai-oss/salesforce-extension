@@ -50,12 +50,15 @@ Deno.serve(async (req) => {
 
     const whereClause = where ? `WHERE ${where}` : '';
 
-    // P&L report fields: Name, Date, Office, Account, Buyer, Supplier
-    const plFields = ['Id', 'Name'];
-    if (fieldNames.includes('Stem_Date__c')) plFields.push('Stem_Date__c');
-    if (fieldNames.includes('Office__c')) plFields.push('Office__c');
+    // Detect buyer name field
+    const buyerNameField = fieldNames.includes('Buyer_Name__c') ? 'Buyer_Name__c'
+      : fieldNames.includes('Buyer__c') ? 'Buyer__c'
+      : null;
+
+    // P&L report fields: Name, CreatedDate, Delivery Date, Buyer Name, Buyer Invoice, Supplier Invoice
+    const plFields = ['Id', 'Name', 'CreatedDate'];
     if (fieldNames.includes('Delivery_Date__c')) plFields.push('Delivery_Date__c');
-    if (accountField) plFields.push(accountField);
+    if (buyerNameField) plFields.push(buyerNameField);
     if (buyerAmountField) plFields.push(buyerAmountField);
     if (supplierAmountField) plFields.push(supplierAmountField);
     const usefulFields = plFields;

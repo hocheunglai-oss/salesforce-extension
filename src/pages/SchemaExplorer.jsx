@@ -42,6 +42,8 @@ export default function SchemaExplorer() {
 
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
+  const rafRef = useRef(null);
+  const canvasSizeRef = useRef({ w: 0, h: 0 });
 
   // Interaction refs (avoid re-renders during mouse move)
   const stateRef = useRef({ zoom: 0.7, pan: { x: 40, y: 40 }, positions: {}, dragging: null, panning: null });
@@ -111,8 +113,21 @@ export default function SchemaExplorer() {
     return s;
   }, [selectedObj, schemaData]);
 
-  // Canvas draw
-  const draw = useCallback(() => {
+  const drawFnRef = useRef(null);
+
+  // Throttled draw via rAF — always calls latest drawImmediate via ref
+  const scheduleDraw = useCallback(() => {
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      drawFnRef.current?.();
+    });
+  }, []);
+
+  const draw = useCallback(() => scheduleDraw(), [scheduleDraw]);
+
+  // Canvas draw (immediate, called inside rAF)
+  const drawImmediate = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -121,9 +136,13 @@ export default function SchemaExplorer() {
     const W = canvas.clientWidth;
     const H = canvas.clientHeight;
 
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    ctx.scale(dpr, dpr);
+    // Only resize backing store when dimensions actually change
+    if (canvasSizeRef.current.w !== W * dpr || canvasSizeRef.current.h !== H * dpr) {
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvasSizeRef.current = { w: W * dpr, h: H * dpr };
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Background
     ctx.fillStyle = '#0f172a';
@@ -281,17 +300,23 @@ export default function SchemaExplorer() {
     ctx.restore();
   }, [filteredObjects, edges, highlightSet, selectedObj]);
 
+  // Keep drawFnRef up to date so scheduleDraw always calls the latest version
+  useEffect(() => { drawFnRef.current = drawImmediate; });
+
   // Redraw whenever data/state changes
-  useEffect(() => { draw(); }, [draw, zoom, pan, positions]);
+  useEffect(() => { scheduleDraw(); }, [scheduleDraw, drawImmediate, zoom, pan, positions]);
 
   // Resize observer
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => draw());
+    const ro = new ResizeObserver(() => {
+      canvasSizeRef.current = { w: 0, h: 0 }; // force resize
+      scheduleDraw();
+    });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [draw]);
+  }, [scheduleDraw]);
 
   // Hit-test: find which card was clicked (in world space)
   const hitTest = useCallback((clientX, clientY) => {
@@ -338,13 +363,13 @@ export default function SchemaExplorer() {
       dragging.moved = true;
       dragging.lastX = nx;
       dragging.lastY = ny;
-      draw();
+      scheduleDraw();
     } else if (panning) {
       const newPan = { x: e.clientX - panning.startX, y: e.clientY - panning.startY };
       stateRef.current.pan = newPan;
-      draw();
+      scheduleDraw();
     }
-  }, [draw]);
+  }, [scheduleDraw]);
 
   const onMouseUp = useCallback((e) => {
     const { dragging } = stateRef.current;
@@ -369,8 +394,8 @@ export default function SchemaExplorer() {
     const newZ = Math.min(2.5, Math.max(0.15, stateRef.current.zoom * (1 - e.deltaY * 0.001)));
     stateRef.current.zoom = newZ;
     setZoom(newZ);
-    draw();
-  }, [draw]);
+    scheduleDraw();
+  }, [scheduleDraw]);
 
   useEffect(() => {
     const el = canvasRef.current;
@@ -386,7 +411,7 @@ export default function SchemaExplorer() {
     stateRef.current.zoom = newZoom;
     setPan(newPan);
     setZoom(newZoom);
-    draw();
+    scheduleDraw();
   };
 
   return (
@@ -414,8 +439,8 @@ export default function SchemaExplorer() {
           </span>
         )}
         <div className="flex items-center gap-1 ml-auto">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const nz = Math.min(2.5, zoom + 0.1); stateRef.current.zoom = nz; setZoom(nz); }}><ZoomIn className="w-3.5 h-3.5" /></Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const nz = Math.max(0.15, zoom - 0.1); stateRef.current.zoom = nz; setZoom(nz); }}><ZoomOut className="w-3.5 h-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const nz = Math.min(2.5, zoom + 0.1); stateRef.current.zoom = nz; setZoom(nz); scheduleDraw(); }}><ZoomIn className="w-3.5 h-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const nz = Math.max(0.15, zoom - 0.1); stateRef.current.zoom = nz; setZoom(nz); scheduleDraw(); }}><ZoomOut className="w-3.5 h-3.5" /></Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={fitToScreen}><Maximize2 className="w-3.5 h-3.5" /></Button>
           <span className="text-xs text-muted-foreground w-10 text-center">{Math.round(zoom * 100)}%</span>
           <Button variant="outline" size="sm" onClick={load} disabled={loading} className="gap-1.5 h-8">

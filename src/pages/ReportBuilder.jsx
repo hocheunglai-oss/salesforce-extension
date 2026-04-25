@@ -86,7 +86,7 @@ export default function ReportBuilder() {
   const [filterGroup, setFilterGroup] = useState(defaultFilterGroup());
   const [calcFields, setCalcFields] = useState([]);
   const [lookups, setLookups] = useState([]);
-  const [orderByField, setOrderByField] = useState('CreatedDate');
+  const [orderByField, setOrderByField] = useState('KeyStem__c');
   const [limitVal, setLimitVal] = useState(100);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleFreq, setScheduleFreq] = useState('weekly');

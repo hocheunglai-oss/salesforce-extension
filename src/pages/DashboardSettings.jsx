@@ -268,7 +268,7 @@ export default function DashboardSettings() {
           {/* P&L Report */}
           <div className="bg-card rounded-xl border border-border">
             <div className="px-5 py-4 border-b border-border flex items-center gap-3">
-              <h3 className="text-sm font-semibold text-foreground shrink-0">Stem P&amp;L Report</h3>
+              <h3 className="text-sm font-semibold text-foreground shrink-0">Filtered STEMs</h3>
               <div className="relative flex-1 max-w-xs">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <Input
