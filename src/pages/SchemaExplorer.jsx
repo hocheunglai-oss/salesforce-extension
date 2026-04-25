@@ -2,157 +2,29 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { AlertCircle, Loader2, RefreshCw, Search, X, ZoomIn, ZoomOut, Maximize2, ChevronRight } from 'lucide-react';
+import { AlertCircle, Loader2, RefreshCw, Search, X, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 
-const CARD_WIDTH = 220;
-const CARD_HEADER = 36;
-const FIELD_H = 22;
-const MAX_FIELDS_SHOWN = 8;
+// Layout: grid of cards
+const CARD_W = 200;
+const CARD_H = 160;
 const H_GAP = 80;
-const V_GAP = 40;
-
-function getCardHeight(fieldCount) {
-  const shown = Math.min(fieldCount, MAX_FIELDS_SHOWN);
-  return CARD_HEADER + shown * FIELD_H + (fieldCount > MAX_FIELDS_SHOWN ? 24 : 8);
-}
+const V_GAP = 60;
 
 function layoutObjects(objects) {
-  const positions = {};
-  const cols = Math.ceil(Math.sqrt(objects.length * 1.5));
-  objects.forEach((obj, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    positions[obj.name] = {
-      x: col * (CARD_WIDTH + H_GAP) + 40,
-      y: row * (300 + V_GAP) + 40,
-    };
-  });
-  return positions;
+  const cols = Math.ceil(Math.sqrt(objects.length * 1.4));
+  return objects.map((obj, i) => ({
+    name: obj.name,
+    x: (i % cols) * (CARD_W + H_GAP) + 40,
+    y: Math.floor(i / cols) * (CARD_H + V_GAP) + 40,
+  }));
 }
 
-// Memoized card component to prevent re-renders
-const ObjectCard = ({ obj, pos, isSelected, isDimmed, onMouseDown, onClick }) => {
-  // eslint-disable-next-line
-  const isCustom = obj.custom;
-  const shownFields = obj.fields.slice(0, MAX_FIELDS_SHOWN);
-  const cardH = getCardHeight(obj.fields.length);
-
-  return (
-    <div
-      data-card={obj.name}
-      style={{
-        position: 'absolute',
-        left: pos.x,
-        top: pos.y,
-        width: CARD_WIDTH,
-        height: cardH,
-        opacity: isDimmed ? 0.15 : 1,
-        cursor: 'pointer',
-        userSelect: 'none',
-        borderRadius: 8,
-        border: `${isSelected ? 2 : 1}px solid ${isSelected ? '#f59e0b' : isCustom ? '#3b82f6' : '#22c55e'}`,
-        backgroundColor: isCustom ? '#1e3a5f' : '#1a2e1a',
-        boxShadow: isSelected ? '0 0 0 2px rgba(245,158,11,0.3)' : '3px 3px 8px rgba(0,0,0,0.4)',
-        overflow: 'hidden',
-        willChange: 'transform',
-      }}
-      onMouseDown={onMouseDown}
-      onClick={onClick}
-    >
-      {/* Header */}
-      <div style={{
-        height: CARD_HEADER,
-        backgroundColor: isCustom ? '#2563eb' : '#16a34a',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 10px',
-      }}>
-        <span style={{ color: 'white', fontSize: 12, fontWeight: 600, fontFamily: 'DM Sans, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 150 }}>
-          {obj.label}
-        </span>
-        {isCustom && (
-          <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.7)', background: 'rgba(255,255,255,0.15)', borderRadius: 3, padding: '1px 5px' }}>
-            custom
-          </span>
-        )}
-      </div>
-      {/* Fields */}
-      {shownFields.map((f, fi) => {
-        const isRef = f.type === 'reference';
-        return (
-          <div key={f.name} style={{
-            display: 'flex',
-            alignItems: 'center',
-            height: FIELD_H,
-            padding: '0 8px',
-            backgroundColor: fi % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
-            gap: 6,
-          }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: isRef ? '#f59e0b' : '#64748b', flexShrink: 0 }} />
-            <span style={{ fontSize: 10, color: isCustom ? '#e2e8f0' : '#d1fae5', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {f.label}
-            </span>
-            <span style={{ fontSize: 9, color: '#64748b', flexShrink: 0 }}>
-              {isRef ? (f.referenceTo[0] || f.type) : f.type}
-            </span>
-          </div>
-        );
-      })}
-      {obj.fields.length > MAX_FIELDS_SHOWN && (
-        <div style={{ textAlign: 'center', fontSize: 9, color: '#64748b', padding: '4px 0' }}>
-          +{obj.fields.length - MAX_FIELDS_SHOWN} more fields
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Build SVG edges separately (static-ish, only re-renders when positions/edges change)
-const EdgesLayer = ({ edges, positions, objects, highlight }) => {
-  const objMap = useMemo(() => Object.fromEntries(objects.map(o => [o.name, o])), [objects]);
-
-  const paths = useMemo(() => edges.map((e, i) => {
-    const from = positions[e.from];
-    const to = positions[e.to];
-    if (!from || !to) return null;
-    const fh = getCardHeight(objMap[e.from]?.fields?.length || 0);
-    const th = getCardHeight(objMap[e.to]?.fields?.length || 0);
-    const fx = from.x + CARD_WIDTH / 2;
-    const fy = from.y + fh / 2;
-    const tx = to.x + CARD_WIDTH / 2;
-    const ty = to.y + th / 2;
-    const cx = (fx + tx) / 2;
-    const isHighlighted = highlight && highlight.has(e.from) && highlight.has(e.to);
-    const isDimmed = highlight && !isHighlighted;
-    return { i, d: `M ${fx} ${fy} C ${cx} ${fy}, ${cx} ${ty}, ${tx} ${ty}`, isHighlighted, isDimmed };
-  }).filter(Boolean), [edges, positions, objMap, highlight]);
-
-  return (
-    <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}>
-      <defs>
-        <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <polygon points="0 0, 8 3, 0 6" fill="#475569" />
-        </marker>
-        <marker id="arrow-hi" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <polygon points="0 0, 8 3, 0 6" fill="#3b82f6" />
-        </marker>
-      </defs>
-      {paths.map(({ i, d, isHighlighted, isDimmed }) => (
-        <path
-          key={i}
-          d={d}
-          fill="none"
-          stroke={isHighlighted ? '#3b82f6' : '#334155'}
-          strokeWidth={isHighlighted ? 2 : 1}
-          strokeDasharray={isHighlighted ? '' : '4 3'}
-          opacity={isDimmed ? 0.1 : 0.7}
-          markerEnd={isHighlighted ? 'url(#arrow-hi)' : 'url(#arrow)'}
-        />
-      ))}
-    </svg>
-  );
-};
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `${r},${g},${b}`;
+}
 
 export default function SchemaExplorer() {
   const [schemaData, setSchemaData] = useState(null);
@@ -160,22 +32,19 @@ export default function SchemaExplorer() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [selectedObj, setSelectedObj] = useState(null);
+
+  // Canvas transform state
+  const [zoom, setZoom] = useState(0.7);
+  const [pan, setPan] = useState({ x: 40, y: 40 });
+
+  // Positions map: { name: {x, y} }
   const [positions, setPositions] = useState({});
-  const [zoom, setZoom] = useState(0.75);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
 
-  const containerRef = useRef(null);
   const canvasRef = useRef(null);
-  // Refs for drag/pan (avoid state updates during mouse move)
-  const dragging = useRef(null);
-  const panning = useRef(null);
-  const posRef = useRef(positions);
-  const zoomRef = useRef(zoom);
-  const panRef = useRef(pan);
+  const containerRef = useRef(null);
 
-  useEffect(() => { posRef.current = positions; }, [positions]);
-  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
-  useEffect(() => { panRef.current = pan; }, [pan]);
+  // Interaction refs (avoid re-renders during mouse move)
+  const stateRef = useRef({ zoom: 0.7, pan: { x: 40, y: 40 }, positions: {}, dragging: null, panning: null });
 
   const load = async () => {
     setLoading(true);
@@ -185,13 +54,23 @@ export default function SchemaExplorer() {
       setError(res.data.error);
     } else {
       setSchemaData(res.data);
-      setPositions(layoutObjects(res.data.objects));
+      const layout = layoutObjects(res.data.objects);
+      const pos = {};
+      layout.forEach(l => { pos[l.name] = { x: l.x, y: l.y }; });
+      setPositions(pos);
+      stateRef.current.positions = pos;
     }
     setLoading(false);
   };
 
   useEffect(() => { load(); }, []);
 
+  // Sync state into ref
+  useEffect(() => { stateRef.current.zoom = zoom; }, [zoom]);
+  useEffect(() => { stateRef.current.pan = pan; }, [pan]);
+  useEffect(() => { stateRef.current.positions = positions; }, [positions]);
+
+  // Filtered objects
   const filteredObjects = useMemo(() =>
     schemaData?.objects?.filter(o =>
       !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.name.toLowerCase().includes(search.toLowerCase())
@@ -199,124 +78,323 @@ export default function SchemaExplorer() {
     [schemaData, search]
   );
 
-  const visibleNames = useMemo(() => new Set(filteredObjects.map(o => o.name)), [filteredObjects]);
+  const visibleSet = useMemo(() => new Set(filteredObjects.map(o => o.name)), [filteredObjects]);
 
-  const dedupedEdges = useMemo(() => {
-    const visibleEdges = (schemaData?.edges || []).filter(
-      e => visibleNames.has(e.from) && visibleNames.has(e.to) && e.from !== e.to
-    );
-    const seenPairs = new Set();
-    return visibleEdges.filter(e => {
+  const edges = useMemo(() => {
+    const seen = new Set();
+    return (schemaData?.edges || []).filter(e => {
+      if (!visibleSet.has(e.from) || !visibleSet.has(e.to) || e.from === e.to) return false;
       const key = [e.from, e.to].sort().join('||');
-      if (seenPairs.has(key)) return false;
-      seenPairs.add(key);
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
-  }, [schemaData, visibleNames]);
+  }, [schemaData, visibleSet]);
 
-  const highlight = useMemo(() => selectedObj
-    ? new Set([selectedObj, ...(schemaData?.edges || [])
-        .filter(e => e.from === selectedObj || e.to === selectedObj)
-        .flatMap(e => [e.from, e.to])])
-    : null,
-    [selectedObj, schemaData]
+  const objMap = useMemo(() =>
+    Object.fromEntries((schemaData?.objects || []).map(o => [o.name, o])),
+    [schemaData]
   );
 
   const selectedObjData = useMemo(() =>
-    selectedObj ? schemaData?.objects?.find(o => o.name === selectedObj) : null,
-    [selectedObj, schemaData]
+    selectedObj ? objMap[selectedObj] : null,
+    [selectedObj, objMap]
   );
 
-  // Mouse move: directly mutate DOM transform, flush to state only on mouseup
-  const onMouseMove = useCallback((e) => {
-    if (dragging.current) {
-      const { name, startX, startY } = dragging.current;
-      const z = zoomRef.current;
-      const p = panRef.current;
-      const newX = (e.clientX - p.x) / z - startX;
-      const newY = (e.clientY - p.y) / z - startY;
-      // Directly move the DOM element for zero-lag drag
-      const el = canvasRef.current?.querySelector(`[data-card="${name}"]`);
-      if (el) { el.style.left = newX + 'px'; el.style.top = newY + 'px'; }
-      dragging.current.lastX = newX;
-      dragging.current.lastY = newY;
-    } else if (panning.current) {
-      const newPan = {
-        x: e.clientX - panning.current.startX,
-        y: e.clientY - panning.current.startY,
-      };
-      panRef.current = newPan;
-      if (canvasRef.current) {
-        canvasRef.current.style.transform = `translate(${newPan.x}px, ${newPan.y}px) scale(${zoomRef.current})`;
+  const highlightSet = useMemo(() => {
+    if (!selectedObj) return null;
+    const s = new Set([selectedObj]);
+    (schemaData?.edges || []).forEach(e => {
+      if (e.from === selectedObj) s.add(e.to);
+      if (e.to === selectedObj) s.add(e.from);
+    });
+    return s;
+  }, [selectedObj, schemaData]);
+
+  // Canvas draw
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const { zoom: z, pan: p, positions: pos } = stateRef.current;
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.scale(dpr, dpr);
+
+    // Background
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, W, H);
+
+    // Dot grid
+    ctx.fillStyle = '#1e293b';
+    const gridSpacing = 30 * z;
+    const offsetX = (p.x % gridSpacing + gridSpacing) % gridSpacing;
+    const offsetY = (p.y % gridSpacing + gridSpacing) % gridSpacing;
+    for (let gx = offsetX; gx < W; gx += gridSpacing) {
+      for (let gy = offsetY; gy < H; gy += gridSpacing) {
+        ctx.beginPath();
+        ctx.arc(gx, gy, 1, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
+
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.scale(z, z);
+
+    // Draw edges
+    edges.forEach(e => {
+      const fp = pos[e.from];
+      const tp = pos[e.to];
+      if (!fp || !tp) return;
+      const isHi = highlightSet && highlightSet.has(e.from) && highlightSet.has(e.to);
+      const isDim = highlightSet && !isHi;
+      ctx.globalAlpha = isDim ? 0.08 : isHi ? 0.9 : 0.35;
+      ctx.strokeStyle = isHi ? '#3b82f6' : '#475569';
+      ctx.lineWidth = isHi ? 2 / z : 1 / z;
+      ctx.setLineDash(isHi ? [] : [5, 4]);
+      const fx = fp.x + CARD_W / 2;
+      const fy = fp.y + CARD_H / 2;
+      const tx = tp.x + CARD_W / 2;
+      const ty = tp.y + CARD_H / 2;
+      const cx = (fx + tx) / 2;
+      ctx.beginPath();
+      ctx.moveTo(fx, fy);
+      ctx.bezierCurveTo(cx, fy, cx, ty, tx, ty);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Arrow head
+      if (isHi) {
+        const angle = Math.atan2(ty - fy, tx - fx);
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = '#3b82f6';
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(tx - 8 / z * Math.cos(angle - 0.4), ty - 8 / z * Math.sin(angle - 0.4));
+        ctx.lineTo(tx - 8 / z * Math.cos(angle + 0.4), ty - 8 / z * Math.sin(angle + 0.4));
+        ctx.closePath();
+        ctx.fill();
+      }
+    });
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 1;
+
+    // Draw cards
+    filteredObjects.forEach(obj => {
+      const p2 = pos[obj.name];
+      if (!p2) return;
+      const isCustom = obj.custom;
+      const isSelected = selectedObj === obj.name;
+      const isDimmed = !!(highlightSet && !highlightSet.has(obj.name));
+
+      ctx.globalAlpha = isDimmed ? 0.12 : 1;
+
+      // Card shadow
+      ctx.shadowColor = isSelected ? 'rgba(59,130,246,0.5)' : 'rgba(0,0,0,0.5)';
+      ctx.shadowBlur = isSelected ? 16 : 8;
+
+      // Card background
+      ctx.fillStyle = isCustom ? '#1e3a5f' : '#1a2e1a';
+      ctx.beginPath();
+      ctx.roundRect(p2.x, p2.y, CARD_W, CARD_H, 8);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Card border
+      ctx.strokeStyle = isSelected ? '#f59e0b' : isCustom ? '#3b82f6' : '#22c55e';
+      ctx.lineWidth = isSelected ? 2 / z : 1 / z;
+      ctx.beginPath();
+      ctx.roundRect(p2.x, p2.y, CARD_W, CARD_H, 8);
+      ctx.stroke();
+
+      // Header bg
+      ctx.fillStyle = isCustom ? '#2563eb' : '#16a34a';
+      ctx.beginPath();
+      ctx.roundRect(p2.x, p2.y, CARD_W, 32, [8, 8, 0, 0]);
+      ctx.fill();
+
+      // Header label
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `600 12px "DM Sans", sans-serif`;
+      ctx.textBaseline = 'middle';
+      const labelText = obj.label.length > 20 ? obj.label.slice(0, 18) + '…' : obj.label;
+      ctx.fillText(labelText, p2.x + 10, p2.y + 16);
+
+      // Custom badge
+      if (isCustom) {
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.beginPath();
+        ctx.roundRect(p2.x + CARD_W - 46, p2.y + 8, 36, 14, 3);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.font = '9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('custom', p2.x + CARD_W - 28, p2.y + 15);
+        ctx.textAlign = 'left';
+      }
+
+      // Fields list
+      const maxFields = 5;
+      const shownFields = obj.fields.slice(0, maxFields);
+      shownFields.forEach((f, fi) => {
+        const fy = p2.y + 38 + fi * 20;
+        if (fi % 2 === 0) {
+          ctx.fillStyle = 'rgba(255,255,255,0.03)';
+          ctx.fillRect(p2.x, fy, CARD_W, 20);
+        }
+        // dot
+        ctx.fillStyle = f.type === 'reference' ? '#f59e0b' : '#64748b';
+        ctx.beginPath();
+        ctx.arc(p2.x + 10, fy + 10, 3, 0, Math.PI * 2);
+        ctx.fill();
+        // field label
+        ctx.fillStyle = isCustom ? '#e2e8f0' : '#d1fae5';
+        ctx.font = '10px monospace';
+        ctx.textBaseline = 'middle';
+        const fname = f.label.length > 18 ? f.label.slice(0, 16) + '…' : f.label;
+        ctx.fillText(fname, p2.x + 18, fy + 10);
+        // type
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px sans-serif';
+        ctx.textAlign = 'right';
+        const typeText = f.type === 'reference' ? (f.referenceTo?.[0] || 'ref') : f.type;
+        ctx.fillText(typeText.slice(0, 10), p2.x + CARD_W - 6, fy + 10);
+        ctx.textAlign = 'left';
+      });
+
+      // More fields indicator
+      if (obj.fields.length > maxFields) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`+${obj.fields.length - maxFields} more`, p2.x + CARD_W / 2, p2.y + CARD_H - 8);
+        ctx.textAlign = 'left';
+      }
+
+      ctx.globalAlpha = 1;
+    });
+
+    ctx.restore();
+  }, [filteredObjects, edges, highlightSet, selectedObj]);
+
+  // Redraw whenever data/state changes
+  useEffect(() => { draw(); }, [draw, zoom, pan, positions]);
+
+  // Resize observer
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => draw());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [draw]);
+
+  // Hit-test: find which card was clicked (in world space)
+  const hitTest = useCallback((clientX, clientY) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const { zoom: z, pan: p, positions: pos } = stateRef.current;
+    const wx = (clientX - rect.left - p.x) / z;
+    const wy = (clientY - rect.top - p.y) / z;
+    for (const [name, cp] of Object.entries(pos)) {
+      if (wx >= cp.x && wx <= cp.x + CARD_W && wy >= cp.y && wy <= cp.y + CARD_H) {
+        return name;
+      }
+    }
+    return null;
   }, []);
 
-  const onMouseUp = useCallback(() => {
-    if (dragging.current && dragging.current.lastX !== undefined) {
-      const { name, lastX, lastY } = dragging.current;
-      setPositions(prev => ({ ...prev, [name]: { x: lastX, y: lastY } }));
+  // Mouse handlers
+  const onMouseDown = useCallback((e) => {
+    const hit = hitTest(e.clientX, e.clientY);
+    if (hit) {
+      const { zoom: z, pan: p, positions: pos } = stateRef.current;
+      const canvas = canvasRef.current;
+      const rect = canvas.getBoundingClientRect();
+      stateRef.current.dragging = {
+        name: hit,
+        startX: (e.clientX - rect.left - p.x) / z - pos[hit].x,
+        startY: (e.clientY - rect.top - p.y) / z - pos[hit].y,
+        moved: false,
+      };
+    } else {
+      stateRef.current.panning = { startX: e.clientX - stateRef.current.pan.x, startY: e.clientY - stateRef.current.pan.y };
     }
-    if (panning.current) {
-      setPan({ ...panRef.current });
-    }
-    dragging.current = null;
-    panning.current = null;
-  }, []);
+  }, [hitTest]);
 
-  const onBgMouseDown = useCallback((e) => {
-    if (e.target === e.currentTarget) {
-      panning.current = { startX: e.clientX - panRef.current.x, startY: e.clientY - panRef.current.y };
-      setSelectedObj(null);
+  const onMouseMove = useCallback((e) => {
+    const { dragging, panning, zoom: z, pan: p, positions: pos } = stateRef.current;
+    if (dragging) {
+      const canvas = canvasRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const nx = (e.clientX - rect.left - p.x) / z - dragging.startX;
+      const ny = (e.clientY - rect.top - p.y) / z - dragging.startY;
+      stateRef.current.positions = { ...pos, [dragging.name]: { x: nx, y: ny } };
+      dragging.moved = true;
+      dragging.lastX = nx;
+      dragging.lastY = ny;
+      draw();
+    } else if (panning) {
+      const newPan = { x: e.clientX - panning.startX, y: e.clientY - panning.startY };
+      stateRef.current.pan = newPan;
+      draw();
     }
-  }, []);
+  }, [draw]);
 
-  const onCardMouseDown = useCallback((e, name) => {
-    e.stopPropagation();
-    const z = zoomRef.current;
-    const p = panRef.current;
-    const pos = posRef.current[name];
-    dragging.current = {
-      name,
-      startX: (e.clientX - p.x) / z - pos.x,
-      startY: (e.clientY - p.y) / z - pos.y,
-    };
+  const onMouseUp = useCallback((e) => {
+    const { dragging } = stateRef.current;
+    if (dragging) {
+      if (!dragging.moved) {
+        // Click: select/deselect
+        setSelectedObj(prev => prev === dragging.name ? null : dragging.name);
+      } else {
+        // Commit position to React state
+        const newPos = { ...stateRef.current.positions };
+        setPositions(newPos);
+      }
+      stateRef.current.dragging = null;
+    } else if (stateRef.current.panning) {
+      setPan({ ...stateRef.current.pan });
+      stateRef.current.panning = null;
+    }
   }, []);
 
   const onWheel = useCallback((e) => {
     e.preventDefault();
-    const newZoom = Math.min(2, Math.max(0.2, zoomRef.current - e.deltaY * 0.001));
-    zoomRef.current = newZoom;
-    setZoom(newZoom);
-    if (canvasRef.current) {
-      canvasRef.current.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px) scale(${newZoom})`;
-    }
-  }, []);
+    const newZ = Math.min(2.5, Math.max(0.15, stateRef.current.zoom * (1 - e.deltaY * 0.001)));
+    stateRef.current.zoom = newZ;
+    setZoom(newZ);
+    draw();
+  }, [draw]);
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (el) el.addEventListener('wheel', onWheel, { passive: false });
-    return () => { if (el) el.removeEventListener('wheel', onWheel); };
+    const el = canvasRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
   }, [onWheel]);
 
   const fitToScreen = () => {
-    const newPan = { x: 0, y: 0 };
-    const newZoom = 0.75;
+    const newPan = { x: 40, y: 40 };
+    const newZoom = 0.7;
+    stateRef.current.pan = newPan;
+    stateRef.current.zoom = newZoom;
     setPan(newPan);
     setZoom(newZoom);
-    panRef.current = newPan;
-    zoomRef.current = newZoom;
-    if (canvasRef.current) {
-      canvasRef.current.style.transform = `translate(0px, 0px) scale(${newZoom})`;
-    }
+    draw();
   };
 
   return (
     <div className="flex h-full flex-col" ref={containerRef}>
       {/* Top bar */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-border bg-card shrink-0">
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-border bg-card shrink-0 flex-wrap">
         <h1 className="text-sm font-semibold text-foreground font-dm">Schema Explorer</h1>
-        <div className="relative w-56">
+        <div className="relative w-52">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
             placeholder="Search objects…"
@@ -324,11 +402,20 @@ export default function SchemaExplorer() {
             onChange={e => setSearch(e.target.value)}
             className="pl-8 h-8 text-xs"
           />
-          {search && <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="w-3 h-3" /></button>}
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+              <X className="w-3 h-3" />
+            </button>
+          )}
         </div>
+        {schemaData && (
+          <span className="text-xs text-muted-foreground">
+            {filteredObjects.length} objects · {edges.length} relationships
+          </span>
+        )}
         <div className="flex items-center gap-1 ml-auto">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const z = Math.min(2, zoom + 0.1); setZoom(z); zoomRef.current = z; if (canvasRef.current) canvasRef.current.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${z})`; }}><ZoomIn className="w-3.5 h-3.5" /></Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const z = Math.max(0.2, zoom - 0.1); setZoom(z); zoomRef.current = z; if (canvasRef.current) canvasRef.current.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${z})`; }}><ZoomOut className="w-3.5 h-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const nz = Math.min(2.5, zoom + 0.1); stateRef.current.zoom = nz; setZoom(nz); }}><ZoomIn className="w-3.5 h-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { const nz = Math.max(0.15, zoom - 0.1); stateRef.current.zoom = nz; setZoom(nz); }}><ZoomOut className="w-3.5 h-3.5" /></Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={fitToScreen}><Maximize2 className="w-3.5 h-3.5" /></Button>
           <span className="text-xs text-muted-foreground w-10 text-center">{Math.round(zoom * 100)}%</span>
           <Button variant="outline" size="sm" onClick={load} disabled={loading} className="gap-1.5 h-8">
@@ -355,61 +442,26 @@ export default function SchemaExplorer() {
       {!loading && schemaData && (
         <div className="flex flex-1 overflow-hidden">
           {/* Canvas */}
-          <div
-            className="flex-1 relative overflow-hidden bg-slate-950"
-            style={{ cursor: panning.current ? 'grabbing' : 'grab' }}
-            onMouseDown={onBgMouseDown}
-            onMouseMove={onMouseMove}
-            onMouseUp={onMouseUp}
-            onMouseLeave={onMouseUp}
-          >
-            {/* Legend */}
-            <div className="absolute top-3 left-3 z-10 flex gap-3 bg-slate-900/80 backdrop-blur rounded-lg px-3 py-2 text-xs pointer-events-none">
+          <div className="flex-1 relative overflow-hidden">
+            <canvas
+              ref={canvasRef}
+              className="w-full h-full"
+              style={{ cursor: stateRef.current.dragging ? 'grabbing' : 'grab', display: 'block' }}
+              onMouseDown={onMouseDown}
+              onMouseMove={onMouseMove}
+              onMouseUp={onMouseUp}
+              onMouseLeave={onMouseUp}
+            />
+            {/* Legend overlay */}
+            <div className="absolute top-3 left-3 flex gap-3 bg-slate-900/80 backdrop-blur rounded-lg px-3 py-2 text-xs pointer-events-none text-slate-300">
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-blue-600 inline-block" />Custom</span>
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-green-600 inline-block" />Standard</span>
-              <span className="flex items-center gap-1.5 text-muted-foreground">{filteredObjects.length} objects · {dedupedEdges.length} relationships</span>
             </div>
-
-            {/* Transformed canvas */}
-            <div
-              ref={canvasRef}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                transformOrigin: '0 0',
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              }}
-            >
-              {/* SVG edges layer */}
-              <EdgesLayer
-                edges={dedupedEdges}
-                positions={positions}
-                objects={schemaData.objects}
-                highlight={highlight}
-              />
-
-              {/* HTML card layer */}
-              {filteredObjects.map(obj => {
-                const pos = positions[obj.name];
-                if (!pos) return null;
-                const isSelected = selectedObj === obj.name;
-                const isDimmed = !!(highlight && !highlight.has(obj.name));
-                return (
-                  <ObjectCard
-                    key={obj.name}
-                    obj={obj}
-                    pos={pos}
-                    isSelected={isSelected}
-                    isDimmed={isDimmed}
-                    onMouseDown={(e) => onCardMouseDown(e, obj.name)}
-                    onClick={(e) => { e.stopPropagation(); setSelectedObj(obj.name === selectedObj ? null : obj.name); }}
-                  />
-                );
-              })}
-
-
-            </div>
+            {selectedObj && (
+              <div className="absolute top-3 right-3 text-xs text-slate-400 bg-slate-900/80 backdrop-blur rounded-lg px-2 py-1 pointer-events-none">
+                Click card to deselect
+              </div>
+            )}
           </div>
 
           {/* Detail panel */}
@@ -449,23 +501,24 @@ export default function SchemaExplorer() {
                 </div>
 
                 {(() => {
-                  const related = (schemaData?.edges || [])
-                    .filter(e => e.from === selectedObjData.name || e.to === selectedObjData.name)
-                    .map(e => e.from === selectedObjData.name ? e.to : e.from);
-                  const unique = [...new Set(related)];
-                  if (!unique.length) return null;
+                  const related = [...new Set(
+                    (schemaData?.edges || [])
+                      .filter(e => e.from === selectedObjData.name || e.to === selectedObjData.name)
+                      .flatMap(e => [e.from, e.to])
+                      .filter(n => n !== selectedObjData.name)
+                  )];
+                  if (!related.length) return null;
                   return (
                     <div className="mt-4">
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                        Related Objects ({unique.length})
+                        Related Objects ({related.length})
                       </p>
                       <div className="space-y-1">
-                        {unique.map(name => {
-                          const o = schemaData.objects.find(x => x.name === name);
+                        {related.map(name => {
+                          const o = objMap[name];
                           return (
                             <button key={name} onClick={() => setSelectedObj(name)}
                               className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 text-xs">
-                              <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
                               <span className="font-medium text-foreground">{o?.label || name}</span>
                             </button>
                           );

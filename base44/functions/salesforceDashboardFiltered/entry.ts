@@ -54,6 +54,7 @@ Deno.serve(async (req) => {
     const plFields = ['Id', 'Name'];
     if (fieldNames.includes('Stem_Date__c')) plFields.push('Stem_Date__c');
     if (fieldNames.includes('Office__c')) plFields.push('Office__c');
+    if (fieldNames.includes('Delivery_Date__c')) plFields.push('Delivery_Date__c');
     if (accountField) plFields.push(accountField);
     if (buyerAmountField) plFields.push(buyerAmountField);
     if (supplierAmountField) plFields.push(supplierAmountField);

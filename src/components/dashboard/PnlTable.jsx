@@ -33,7 +33,8 @@ export default function PnlTable({ records = [] }) {
           {records.map((row, i) => {
             const buyer = row['Total_Invoice_Amount__c'] ?? null;
             const supplier = row['Total_Invoiced_Amount_From_Suppliers__c'] ?? null;
-            const pnl = buyer != null && supplier != null ? buyer - supplier : null;
+            const hasDelivery = !!row['Delivery_Date__c'];
+            const pnl = hasDelivery && buyer != null && supplier != null ? buyer - supplier : null;
             const pnlPositive = pnl != null && pnl >= 0;
 
             return (

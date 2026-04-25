@@ -1,15 +1,14 @@
+import { useState } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { GripVertical, X, Plus } from 'lucide-react';
+import { GripVertical, X, Plus, Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 
-/**
- * Two-panel column selector with drag-to-reorder.
- * Left: available (unselected) fields
- * Right: selected fields (draggable to reorder)
- */
 export default function ColumnSelector({ fields, selectedFields, onChange, loading }) {
+  const [search, setSearch] = useState('');
+
   const available = fields.filter(
     f => !['IsDeleted', 'SystemModstamp'].includes(f.name) && !selectedFields.includes(f.name)
-  );
+  ).filter(f => !search || f.label.toLowerCase().includes(search.toLowerCase()) || f.name.toLowerCase().includes(search.toLowerCase()));
 
   const selectedMeta = selectedFields
     .map(name => fields.find(f => f.name === name))
@@ -61,6 +60,15 @@ export default function ColumnSelector({ fields, selectedFields, onChange, loadi
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
             Available ({available.length})
           </p>
+          <div className="relative mb-2">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+            <Input
+              placeholder="Search fields…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pl-7 h-7 text-xs"
+            />
+          </div>
           <Droppable droppableId="available" isDropDisabled={false}>
             {(provided, snapshot) => (
               <div

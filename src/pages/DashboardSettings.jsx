@@ -8,6 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import StatCard from '@/components/dashboard/StatCard';
 import PnlTable from '@/components/dashboard/PnlTable';
 import { Package, Building2, DollarSign, AlertCircle, RefreshCw, SlidersHorizontal, Loader2, Search, X } from 'lucide-react';
+
 import { format } from 'date-fns';
 
 const STORAGE_KEY = 'dashboard_filters_v1';
@@ -29,12 +30,7 @@ const DATE_PRESETS = [
   { label: 'Custom range', value: 'custom' },
 ];
 
-const OFFICES = ['All', 'HK', 'SG', 'Dubai', 'Rotterdam', 'Houston'];
-const DISPUTED_OPTIONS = [
-  { label: 'All', value: 'all' },
-  { label: 'Disputed only', value: 'true' },
-  { label: 'Non-disputed only', value: 'false' },
-];
+
 
 export default function DashboardSettings() {
   // Load saved filters from localStorage
@@ -43,8 +39,6 @@ export default function DashboardSettings() {
   const [datePreset, setDatePreset] = useState(savedFilters.datePreset ?? 'THIS_YEAR');
   const [customFrom, setCustomFrom] = useState(savedFilters.customFrom ?? '');
   const [customTo, setCustomTo] = useState(savedFilters.customTo ?? '');
-  const [office, setOffice] = useState(savedFilters.office ?? 'All');
-  const [disputed, setDisputed] = useState(savedFilters.disputed ?? 'all');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -63,19 +57,17 @@ export default function DashboardSettings() {
     return `Stem_Date__c = ${dp}`;
   };
 
-  const buildWhereClause = (dp = datePreset, cf = customFrom, ct = customTo, off = office, disp = disputed) => {
+  const buildWhereClause = (dp = datePreset, cf = customFrom, ct = customTo) => {
     const parts = [];
     const dateFilter = buildDateFilter(dp, cf, ct);
     if (dateFilter) parts.push(dateFilter);
-    if (off !== 'All') parts.push(`Office__c = '${off}'`);
-    if (disp !== 'all') parts.push(`Dispute__c = ${disp}`);
     return parts.length > 0 ? parts.join(' AND ') : '';
   };
 
-  const load = async (dp = datePreset, cf = customFrom, ct = customTo, off = office, disp = disputed) => {
+  const load = async (dp = datePreset, cf = customFrom, ct = customTo) => {
     setLoading(true);
     setError(null);
-    const where = buildWhereClause(dp, cf, ct, off, disp);
+    const where = buildWhereClause(dp, cf, ct);
     const res = await base44.functions.invoke('salesforceDashboardFiltered', { where });
     if (res.data?.error) {
       setError(res.data.error);
@@ -88,13 +80,13 @@ export default function DashboardSettings() {
 
   // Auto-save filters + debounced auto-load whenever filters change
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ datePreset, customFrom, customTo, office, disputed }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ datePreset, customFrom, customTo }));
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      load(datePreset, customFrom, customTo, office, disputed);
+      load(datePreset, customFrom, customTo);
     }, 600);
     return () => clearTimeout(debounceRef.current);
-  }, [datePreset, customFrom, customTo, office, disputed]);
+  }, [datePreset, customFrom, customTo]);
 
   // Filtered table rows by field-level search
   const filteredStems = useMemo(() => {
@@ -156,27 +148,7 @@ export default function DashboardSettings() {
             </>
           )}
 
-          {/* Office */}
-          <div>
-            <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Office</Label>
-            <Select value={office} onValueChange={setOffice}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {OFFICES.map(o => <SelectItem key={o} value={o}>{o === 'All' ? 'All Offices' : o}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
 
-          {/* Disputed */}
-          <div>
-            <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Dispute Status</Label>
-            <Select value={disputed} onValueChange={setDisputed}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {DISPUTED_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
         </div>
 
         {/* Active filter summary */}

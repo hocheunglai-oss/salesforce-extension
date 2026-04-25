@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { AlertCircle, Loader2, Play, Save, Trash2, Clock, Download, Plus, FileBarChart2, ChevronRight, Filter, Calculator, Link2, Code } from 'lucide-react';
 import RecentStemsTable from '@/components/dashboard/RecentStemsTable';
+import PnlTable from '@/components/dashboard/PnlTable';
 import FilterGroup from '@/components/report-builder/FilterGroup';
 import CalculatedFields from '@/components/report-builder/CalculatedFields';
 import LookupFields from '@/components/report-builder/LookupFields';
@@ -483,7 +484,7 @@ export default function ReportBuilder() {
                   <span className="text-sm">Running query…</span>
                 </div>
               ) : records.length > 0 ? (
-                <RecentStemsTable records={records} />
+                selectedObject === 'stem__c' ? <PnlTable records={records} /> : <RecentStemsTable records={records} />
               ) : (
                 <div className="py-16 flex flex-col items-center gap-3 text-muted-foreground">
                   <Play className="w-8 h-8 opacity-20" />
