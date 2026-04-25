@@ -115,6 +115,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
   const [lineItems, setLineItems] = useState([]);
   const [extraCosts, setExtraCosts] = useState([]);
   const [buyerBrokers, setBuyerBrokers] = useState([]);
+  const [supplierBrokers, setSupplierBrokers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -125,6 +126,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
     setLineItems([]);
     setExtraCosts([]);
     setBuyerBrokers([]);
+    setSupplierBrokers([]);
     setError(null);
     setLoading(true);
     base44.functions.invoke('salesforceStemDetail', { stemId }).then(res => {
@@ -134,6 +136,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
         setLineItems(res.data.lineItems || []);
         setExtraCosts(res.data.extraCosts || []);
         setBuyerBrokers(res.data.buyerBrokers || []);
+        setSupplierBrokers(res.data.supplierBrokers || []);
       }
       setLoading(false);
     });
@@ -361,6 +364,22 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                             {bb.Refcode_Index__c && <span>Ref: {bb.Refcode_Index__c}</span>}
                             {bb.Exported__c && <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded font-medium">Exported</span>}
                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* STEM Supplier Brokers */}
+                {supplierBrokers.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 pb-1.5 border-b border-border">
+                      Supplier Brokers ({supplierBrokers.length})
+                    </h3>
+                    <div className="space-y-2">
+                      {supplierBrokers.map((sb) => (
+                        <div key={sb.Id} className="flex items-center px-3 py-2 rounded-lg bg-muted/30 text-sm">
+                          <span className="font-medium text-foreground">{sb._Supplier_Broker_Name || sb.Supplier_Broker__c || '—'}</span>
                         </div>
                       ))}
                     </div>
