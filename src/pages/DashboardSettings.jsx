@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
-import RecentStemsTable from '@/components/dashboard/RecentStemsTable';
+import PnlTable from '@/components/dashboard/PnlTable';
 import { Package, Building2, DollarSign, AlertCircle, RefreshCw, SlidersHorizontal, Loader2, Search, X } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -116,7 +116,7 @@ export default function DashboardSettings() {
             <span>Dashboard</span>
           </div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-foreground font-dm tracking-tight">Custom Dashboard</h1>
+            <h1 className="text-2xl font-bold text-foreground font-dm tracking-tight">Dashboard</h1>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">Auto-saved</span>
           </div>
           {lastRefresh && <p className="text-xs text-muted-foreground mt-0.5">Last updated {format(lastRefresh, 'HH:mm:ss')}</p>}
@@ -269,14 +269,14 @@ export default function DashboardSettings() {
             </div>
           )}
 
-          {/* Recent matches */}
+          {/* P&L Report */}
           <div className="bg-card rounded-xl border border-border">
             <div className="px-5 py-4 border-b border-border flex items-center gap-3">
-              <h3 className="text-sm font-semibold text-foreground shrink-0">Matching STEMs</h3>
+              <h3 className="text-sm font-semibold text-foreground shrink-0">Stem P&amp;L Report</h3>
               <div className="relative flex-1 max-w-xs">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <Input
-                  placeholder="Search fields…"
+                  placeholder="Search…"
                   value={tableSearch}
                   onChange={e => setTableSearch(e.target.value)}
                   className="pl-8 h-8 text-xs"
@@ -292,7 +292,7 @@ export default function DashboardSettings() {
               </span>
             </div>
             <div className="p-2">
-              <RecentStemsTable records={filteredStems} />
+              <PnlTable records={filteredStems} />
             </div>
           </div>
         </>

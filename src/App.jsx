@@ -6,7 +6,6 @@ import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import Layout from '@/components/Layout';
-import Dashboard from '@/pages/Dashboard';
 import ReportBuilder from '@/pages/ReportBuilder';
 import DataExplorer from '@/pages/DataExplorer';
 import DashboardSettings from '@/pages/DashboardSettings';
@@ -35,10 +34,9 @@ const AuthenticatedApp = () => {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<DashboardSettings />} />
         <Route path="/reports" element={<ReportBuilder />} />
         <Route path="/explorer" element={<DataExplorer />} />
-        <Route path="/dashboard-settings" element={<DashboardSettings />} />
         <Route path="/schema" element={<SchemaExplorer />} />
       </Route>
       <Route path="*" element={<PageNotFound />} />

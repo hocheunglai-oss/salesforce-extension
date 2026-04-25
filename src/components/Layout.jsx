@@ -1,11 +1,10 @@
 import { useState } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
-import { LayoutDashboard, FileBarChart2, Database, SlidersHorizontal, Anchor, GitBranch, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LayoutDashboard, FileBarChart2, Database, Anchor, GitBranch, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/dashboard-settings', label: 'Custom Dashboard', icon: SlidersHorizontal },
   { to: '/reports', label: 'Report Builder', icon: FileBarChart2 },
   { to: '/explorer', label: 'Data Explorer', icon: Database },
   { to: '/schema', label: 'Schema Explorer', icon: GitBranch },

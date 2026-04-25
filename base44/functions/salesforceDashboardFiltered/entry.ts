@@ -42,31 +42,23 @@ Deno.serve(async (req) => {
       : fieldNames.includes('AccountId') ? 'AccountId'
       : null;
 
-    // Detect buyer invoice amount field
-    const buyerAmountCandidates = [
-      'Buyer_Invoice_Amount__c', 'Invoice_Amount_Buyer__c', 'Total_Invoice_Amount_Buyer__c',
-      'Buyer_Amount__c', 'Invoice_Buyer__c', 'Amount_Buyer__c'
-    ];
-    const buyerAmountField = buyerAmountCandidates.find(f => fieldNames.includes(f)) || null;
+    // Buyer invoice = Total Invoice Amount (buyer)
+    const buyerAmountField = fieldNames.includes('Total_Invoice_Amount__c') ? 'Total_Invoice_Amount__c' : null;
 
-    // Detect supplier invoice amount field
-    const supplierAmountCandidates = [
-      'Supplier_Invoice_Amount__c', 'Invoice_Amount_Supplier__c', 'Total_Invoice_Amount_Supplier__c',
-      'Supplier_Amount__c', 'Invoice_Supplier__c', 'Amount_Supplier__c'
-    ];
-    const supplierAmountField = supplierAmountCandidates.find(f => fieldNames.includes(f)) || null;
+    // Supplier invoice = Total Invoiced Amount From Suppliers
+    const supplierAmountField = fieldNames.includes('Total_Invoiced_Amount_From_Suppliers__c') ? 'Total_Invoiced_Amount_From_Suppliers__c' : null;
 
     const whereClause = where ? `WHERE ${where}` : '';
 
-    const usefulFields = ['Id', 'Name', 'CreatedDate'];
-    if (fieldNames.includes('Stem_Date__c')) usefulFields.push('Stem_Date__c');
-    if (fieldNames.includes('Office__c')) usefulFields.push('Office__c');
-    if (hasStatus) usefulFields.push('Status__c');
-    if (hasType) usefulFields.push('Type__c');
-    if (buyerAmountField) usefulFields.push(buyerAmountField);
-    if (supplierAmountField) usefulFields.push(supplierAmountField);
-    if (hasDispute) usefulFields.push('Dispute__c');
-    if (accountField) usefulFields.push(accountField);
+    // P&L report fields: Name, Date, Office, Account, Buyer, Supplier
+    const plFields = ['Id', 'Name'];
+    if (fieldNames.includes('Stem_Date__c')) plFields.push('Stem_Date__c');
+    if (fieldNames.includes('Office__c')) plFields.push('Office__c');
+    if (accountField) plFields.push(accountField);
+    if (buyerAmountField) plFields.push(buyerAmountField);
+    if (supplierAmountField) plFields.push(supplierAmountField);
+    if (hasDispute) plFields.push('Dispute__c');
+    const usefulFields = plFields;
 
     const queries = [
       // 0: total stem count
