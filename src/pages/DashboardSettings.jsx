@@ -94,13 +94,14 @@ export default function DashboardSettings() {
     return () => clearTimeout(debounceRef.current);
   }, [selectedYears, selectedMonths]);
 
-  // Filtered table rows by field-level search
+  // Filtered table rows: search by vessel name, stem name, or buyer name
   const filteredStems = useMemo(() => {
     if (!data?.recentStems?.length) return data?.recentStems || [];
     if (!tableSearch.trim()) return data.recentStems;
     const q = tableSearch.toLowerCase();
+    const SEARCH_FIELDS = ['Name', 'KeyStem__c', 'Vessel__c', 'Buyer_Name__c', 'Buyer__c'];
     return data.recentStems.filter(row =>
-      Object.values(row).some(v => v != null && String(v).toLowerCase().includes(q))
+      SEARCH_FIELDS.some(f => row[f] != null && String(row[f]).toLowerCase().includes(q))
     );
   }, [data?.recentStems, tableSearch]);
 
@@ -269,10 +270,10 @@ export default function DashboardSettings() {
           <div className="bg-card rounded-xl border border-border">
             <div className="px-5 py-4 border-b border-border flex items-center gap-3">
               <h3 className="text-sm font-semibold text-foreground shrink-0">Filtered STEMs</h3>
-              <div className="relative flex-1 max-w-xs">
+              <div className="relative flex-1 max-w-sm">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <Input
-                  placeholder="Search…"
+                  placeholder="Search by vessel, stem name, or buyer…"
                   value={tableSearch}
                   onChange={e => setTableSearch(e.target.value)}
                   className="pl-8 h-8 text-xs"
