@@ -2,14 +2,14 @@ import { format } from 'date-fns';
 
 const BUYER_FIELD = 'Total_Invoice_Amount__c';
 const SUPPLIER_FIELD = 'Total_Invoiced_Amount_From_Suppliers__c';
-const COSTS_FIELD = 'Total_Costs__c';
+const COSTS_FIELD = 'Costs_Total__c';
 const DELIVERY_FIELD = 'Delivery_Date__c';
 
 // Custom display labels for specific fields
 const FIELD_LABELS = {
   [BUYER_FIELD]: 'Buyer Invoice Amount',
   [SUPPLIER_FIELD]: 'Supplier Invoice Amount',
-  [COSTS_FIELD]: 'Total Costs',
+  'Costs_Total__c': 'Total Costs',
   'Buyer_Name__c': 'Buyer',
   'Buyer__c': 'Buyer',
 };
@@ -22,7 +22,7 @@ const fmtMoney = (val) => {
 const fmtVal = (key, val) => {
   if (val == null || val === '') return '—';
   if (typeof val === 'boolean') return val ? 'Yes' : 'No';
-  if (key.toLowerCase().includes('amount') || key.toLowerCase().includes('invoice') || key.toLowerCase().includes('price') || key === COSTS_FIELD) {
+  if (key === BUYER_FIELD || key === SUPPLIER_FIELD || key === COSTS_FIELD || key.toLowerCase().includes('amount') || key.toLowerCase().includes('invoice') || key.toLowerCase().includes('price')) {
     const n = Number(val);
     if (!isNaN(n)) return fmtMoney(n);
   }

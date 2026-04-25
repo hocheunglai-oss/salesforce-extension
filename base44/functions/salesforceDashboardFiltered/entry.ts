@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
     const supplierAmountField = fieldNames.includes('Total_Invoiced_Amount_From_Suppliers__c') ? 'Total_Invoiced_Amount_From_Suppliers__c' : null;
 
     // Total costs field
-    const totalCostsField = fieldNames.includes('Total_Costs__c') ? 'Total_Costs__c' : null;
+    const totalCostsField = fieldNames.includes('Costs_Total__c') ? 'Costs_Total__c' : null;
 
     const whereClause = where ? `WHERE ${where}` : '';
 
