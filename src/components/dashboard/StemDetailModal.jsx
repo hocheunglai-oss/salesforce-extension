@@ -91,12 +91,23 @@ const SECTIONS = [
   },
 ];
 
-function computePnl(record) {
+function computePnl(record, lineItems = []) {
   const buyer = record.Total_Invoice_Amount__c;
   const supplier = record.Total_Invoiced_Amount_From_Suppliers__c;
   const costs = record.Costs_Total__c ?? 0;
+  
+  // Sum buyer broker commissions from line items
+  const buyerBrokerComm = lineItems.reduce((sum, li) => {
+    const comm = li.Buyers_Brokers_Commission_Per_Unit__c;
+    if (comm != null) {
+      const qty = li.Quantity__c ?? 0;
+      return sum + (comm * qty);
+    }
+    return sum;
+  }, 0);
+  
   if (buyer == null || supplier == null) return null;
-  return buyer - supplier - costs;
+  return buyer - supplier - costs - buyerBrokerComm;
 }
 
 export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
@@ -134,7 +145,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
     onUpdated?.();
   };
 
-  const pnl = record ? computePnl(record) : null;
+  const pnl = record ? computePnl(record, lineItems) : null;
 
   return (
     <>
@@ -177,6 +188,8 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                 <span>Supplier Invoice: <strong>{fmtMoney(record.Total_Invoiced_Amount_From_Suppliers__c)}</strong></span>
                 <span>−</span>
                 <span>Costs: <strong>{fmtMoney(record.Costs_Total__c ?? 0)}</strong></span>
+                <span>−</span>
+                <span>Broker Comms: <strong>{fmtMoney(lineItems.reduce((sum, li) => sum + ((li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0)), 0))}</strong></span>
                 <span className="ml-auto">P&L: <strong>{fmtMoney(pnl)}</strong></span>
               </div>
             )}
@@ -247,7 +260,8 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                             <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Sell/Unit</th>
                             <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Buy/Unit</th>
                             <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Total Sell</th>
-                            <th className="text-right py-2 font-semibold text-muted-foreground">Total Buy</th>
+                            <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Total Buy</th>
+                            <th className="text-right py-2 font-semibold text-muted-foreground">Buyer Broker Comm/Unit</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -264,6 +278,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                               <td className="py-2 pr-3 text-right text-foreground">{li.Cost_Per_Unit__c != null ? fmtMoney(li.Cost_Per_Unit__c) : '—'}</td>
                               <td className="py-2 pr-3 text-right font-semibold text-foreground">{li.Total_Price__c != null ? fmtMoney(li.Total_Price__c) : '—'}</td>
                               <td className="py-2 text-right font-semibold text-foreground">{li.Total_Cost__c != null ? fmtMoney(li.Total_Cost__c) : '—'}</td>
+                              <td className="py-2 text-right text-foreground">{li.Buyers_Brokers_Commission_Per_Unit__c != null ? fmtMoney(li.Buyers_Brokers_Commission_Per_Unit__c) : '—'}</td>
                             </tr>
                           ))}
                         </tbody>
