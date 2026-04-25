@@ -280,7 +280,8 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                             <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Buy/Unit</th>
                             <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Total Sell</th>
                             <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Total Buy</th>
-                            <th className="text-right py-2 font-semibold text-muted-foreground">Buyer Broker Comm/Unit</th>
+                            <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Buyer Broker Comm/Unit</th>
+                            <th className="text-right py-2 font-semibold text-muted-foreground">Supplier Broker Comm/Unit</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -297,7 +298,8 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                               <td className="py-2 pr-3 text-right text-foreground">{li.Cost_Per_Unit__c != null ? fmtMoney(li.Cost_Per_Unit__c) : '—'}</td>
                               <td className="py-2 pr-3 text-right font-semibold text-foreground">{li.Total_Price__c != null ? fmtMoney(li.Total_Price__c) : '—'}</td>
                               <td className="py-2 text-right font-semibold text-foreground">{li.Total_Cost__c != null ? fmtMoney(li.Total_Cost__c) : '—'}</td>
-                              <td className="py-2 text-right text-foreground">{li.Buyers_Brokers_Commission_Per_Unit__c != null ? fmtMoney(li.Buyers_Brokers_Commission_Per_Unit__c) : '—'}</td>
+                              <td className="py-2 pr-3 text-right text-foreground">{li.Buyers_Brokers_Commission_Per_Unit__c != null ? fmtMoney(li.Buyers_Brokers_Commission_Per_Unit__c) : '—'}</td>
+                              <td className="py-2 text-right text-foreground">{li.Supplier_Broker_Commission_Per_Unit__c != null ? fmtMoney(li.Supplier_Broker_Commission_Per_Unit__c) : '—'}</td>
                             </tr>
                           ))}
                         </tbody>
