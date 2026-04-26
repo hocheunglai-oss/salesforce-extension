@@ -5,6 +5,11 @@ import { format } from 'date-fns';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+// Detect which columns in a record are child subquery results (Salesforce wraps them as { records: [...], totalSize: n, done: true })
+function isSubqueryResult(val) {
+  return val && typeof val === 'object' && Array.isArray(val.records) && 'totalSize' in val;
+}
+
 function fmtVal(key, val) {
   if (val == null || val === '') return '—';
   if (typeof val === 'object') {
@@ -32,11 +37,6 @@ function fmtVal(key, val) {
 
 function colLabel(key) {
   return key.replace(/__c$/i, '').replace(/__r$/i, '').replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim();
-}
-
-// Detect which columns in a record are child subquery results (Salesforce wraps them as { records: [...], totalSize: n, done: true })
-function isSubqueryResult(val) {
-  return val && typeof val === 'object' && Array.isArray(val.records) && 'totalSize' in val;
 }
 
 // ── SubTable ─────────────────────────────────────────────────────────────────
