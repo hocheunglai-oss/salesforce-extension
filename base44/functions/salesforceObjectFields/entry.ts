@@ -29,7 +29,9 @@ Deno.serve(async (req) => {
       sortable: f.sortable,
       groupable: f.groupable,
       aggregatable: f.aggregatable,
-      custom: f.custom
+      custom: f.custom,
+      relationshipName: f.relationshipName || null,
+      referenceTo: f.referenceTo || [],
     }));
 
     return Response.json({ objectName, label: data.label, fields });

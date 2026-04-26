@@ -120,10 +120,7 @@ export default function ReportBuilder() {
     base44.functions.invoke('salesforceObjectFields', { objectName: selectedObject }).then(res => {
       const f = res.data?.fields || [];
       setFields(f);
-      const defaults = f.filter(x =>
-        !x.name.endsWith('Id') && x.name !== 'IsDeleted' && x.name !== 'SystemModstamp'
-      ).slice(0, 10).map(x => x.name);
-      setSelectedFields(defaults);
+      setSelectedFields([]);
       setLoadingFields(false);
     });
   }, [selectedObject]);
@@ -252,10 +249,7 @@ export default function ReportBuilder() {
       base44.functions.invoke('salesforceObjectFields', { objectName: 'stem__c' }).then(res => {
         const f = res.data?.fields || [];
         setFields(f);
-        const defaults = f.filter(x =>
-          !x.name.endsWith('Id') && x.name !== 'IsDeleted' && x.name !== 'SystemModstamp'
-        ).slice(0, 10).map(x => x.name);
-        setSelectedFields(defaults);
+        setSelectedFields([]);
         setLoadingFields(false);
       });
     } else {
@@ -418,6 +412,13 @@ export default function ReportBuilder() {
               selectedFields={selectedFields}
               onChange={setSelectedFields}
               loading={loadingFields}
+              relatedObjects={fields
+                .filter(f => f.type === 'reference' && f.relationshipName)
+                .map(f => ({
+                  relationshipName: f.relationshipName,
+                  objectName: f.referenceTo?.[0] || f.relationshipName,
+                  label: f.label,
+                }))}
             />
           </div>
 
