@@ -107,7 +107,7 @@ Deno.serve(async (req) => {
         ? sfQuery(accessToken, `SELECT SUM(${totalCostsField}) total FROM stem__c ${whereClause}`)
         : Promise.resolve({ records: [] }),
       // 9: all line items for broker commissions (grouped by stem)
-      sfQuery(accessToken, `SELECT STEM__c stemId, Buyers_Brokers_Commission_Per_Unit__c comm, Quantity__c qty, Suppliers_Brokers_Commission_Lumpsum__c lumpsum FROM STEM_Line_Item__c ${lineItemWhere}`),
+      sfQuery(accessToken, `SELECT STEM__c, Buyers_Brokers_Commission_Per_Unit__c, Quantity__c, Suppliers_Brokers_Commission_Lumpsum__c FROM STEM_Line_Item__c ${lineItemWhere}`),
       // 10: all stems with financial fields (no limit) for accurate profit sum
       sfQuery(accessToken, `SELECT Id, ${buyerAmountField || 'Total_Invoice_Amount__c'}, ${supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'}, ${totalCostsField || 'Costs_Total__c'} FROM stem__c ${whereClause} LIMIT 2000`),
     ];
@@ -130,10 +130,11 @@ Deno.serve(async (req) => {
     // Build per-stem broker commission maps from line items
     const brokerByStem = {};
     for (const li of (lineItemsRes.records || [])) {
-      const id = li.STEM__c || li.stemId;
+      const id = li.STEM__c;
+      if (!id) continue;
       if (!brokerByStem[id]) brokerByStem[id] = { buyerComm: 0, suppLumpsum: 0 };
-      brokerByStem[id].buyerComm += (li.comm ?? li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.qty ?? li.Quantity__c ?? 0);
-      brokerByStem[id].suppLumpsum += (li.lumpsum ?? li.Suppliers_Brokers_Commission_Lumpsum__c ?? 0);
+      brokerByStem[id].buyerComm += (li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0);
+      brokerByStem[id].suppLumpsum += (li.Suppliers_Brokers_Commission_Lumpsum__c ?? 0);
     }
 
     const recentStems = (recentRes.records || []).map(({ attributes, ...rest }) => {
