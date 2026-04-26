@@ -105,9 +105,14 @@ function computePnl(record, lineItems = []) {
     }
     return sum;
   }, 0);
+
+  // Sum supplier broker lumpsum commissions from line items
+  const supplierBrokerLumpsum = lineItems.reduce((sum, li) => {
+    return sum + (li.Suppliers_Brokers_Commission_Lumpsum__c ?? 0);
+  }, 0);
   
   if (buyer == null || supplier == null) return null;
-  return buyer - supplier - costs - buyerBrokerComm;
+  return buyer - supplier - costs - buyerBrokerComm - supplierBrokerLumpsum;
 }
 
 export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
@@ -189,7 +194,9 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                 <span>−</span>
                 <span>Costs: <strong>{fmtMoney(record.Costs_Total__c ?? 0)}</strong></span>
                 <span>−</span>
-                <span>Broker Comms: <strong>{fmtMoney(lineItems.reduce((sum, li) => sum + ((li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0)), 0))}</strong></span>
+                <span>Buyer Broker Comms: <strong>{fmtMoney(lineItems.reduce((sum, li) => sum + ((li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0)), 0))}</strong></span>
+                <span>−</span>
+                <span>Supp Broker Lumpsum: <strong>{fmtMoney(lineItems.reduce((sum, li) => sum + (li.Suppliers_Brokers_Commission_Lumpsum__c ?? 0), 0))}</strong></span>
                 <span className="ml-auto">P&L: <strong>{fmtMoney(pnl)}</strong></span>
               </div>
             )}
