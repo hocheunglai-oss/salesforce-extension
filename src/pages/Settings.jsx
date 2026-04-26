@@ -3,6 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { Settings, Search, Loader2, Check } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 const STORAGE_KEY = 'report_builder_allowed_objects';
 
@@ -19,6 +20,14 @@ export default function SettingsPage() {
   const [search, setSearch] = useState('');
   const [allowed, setAllowed] = useState(null); // null = all
 
+  // Report Builder defaults
+  const [defaultObject, setDefaultObject] = useState(() => localStorage.getItem('rb_default_object') || 'stem__c');
+  const [defaultOrderBy, setDefaultOrderBy] = useState(() => localStorage.getItem('rb_default_orderby') || 'KeyStem__c');
+  const [defaultLimit, setDefaultLimit] = useState(() => localStorage.getItem('rb_default_limit') || '100');
+  const [rbFields, setRbFields] = useState([]);
+  const [rbFieldsLoading, setRbFieldsLoading] = useState(false);
+  const [rbSaved, setRbSaved] = useState(false);
+
   useEffect(() => {
     setAllowed(getAllowedObjects());
     base44.functions.invoke('salesforceSchema', {}).then(res => {
@@ -26,6 +35,23 @@ export default function SettingsPage() {
       setLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!defaultObject) return;
+    setRbFieldsLoading(true);
+    base44.functions.invoke('salesforceObjectFields', { objectName: defaultObject }).then(res => {
+      setRbFields((res.data?.fields || []).filter(f => f.sortable));
+      setRbFieldsLoading(false);
+    });
+  }, [defaultObject]);
+
+  const saveRbDefaults = () => {
+    localStorage.setItem('rb_default_object', defaultObject);
+    localStorage.setItem('rb_default_orderby', defaultOrderBy);
+    localStorage.setItem('rb_default_limit', defaultLimit);
+    setRbSaved(true);
+    setTimeout(() => setRbSaved(false), 1500);
+  };
 
   const filtered = allObjects.filter(o =>
     !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.name.toLowerCase().includes(search.toLowerCase())
@@ -128,6 +154,59 @@ export default function SettingsPage() {
           <Button onClick={save} className="gap-2" disabled={loading}>
             {saved ? <Check className="w-3.5 h-3.5" /> : null}
             {saved ? 'Saved!' : 'Save Settings'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Report Builder Defaults */}
+      <div className="bg-card rounded-xl border border-border p-5 mt-6">
+        <h2 className="text-sm font-semibold text-foreground mb-1">Report Builder — Defaults</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          Set the default Salesforce object, sort order, and row limit used when opening the Report Builder.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Default Object</label>
+            {loading ? (
+              <div className="h-9 rounded-md border border-input bg-muted animate-pulse" />
+            ) : (
+              <Select value={defaultObject} onValueChange={v => { setDefaultObject(v); setDefaultOrderBy(''); }}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {allObjects.map(o => <SelectItem key={o.name} value={o.name}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Default Order By</label>
+            {rbFieldsLoading ? (
+              <div className="h-9 rounded-md border border-input bg-muted animate-pulse" />
+            ) : (
+              <Select value={defaultOrderBy} onValueChange={setDefaultOrderBy}>
+                <SelectTrigger><SelectValue placeholder="Select field…" /></SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {rbFields.map(f => <SelectItem key={f.name} value={f.name}>{f.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Default Row Limit</label>
+            <Select value={defaultLimit} onValueChange={setDefaultLimit}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[25, 50, 100, 200, 500, 1000, 2000].map(n => (
+                  <SelectItem key={n} value={String(n)}>{n} rows</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button onClick={saveRbDefaults} className="gap-2">
+            {rbSaved ? <Check className="w-3.5 h-3.5" /> : null}
+            {rbSaved ? 'Saved!' : 'Save Defaults'}
           </Button>
         </div>
       </div>

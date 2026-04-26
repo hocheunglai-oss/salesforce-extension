@@ -5,10 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { AlertCircle, Loader2, Play, Save, Trash2, Clock, Download, Plus, FileBarChart2, ChevronRight, Filter, Calculator, Link2, Code, Search, Minimize2, Maximize2, BookOpen, ChevronDown } from 'lucide-react';
-import { getAllowedObjects } from '@/pages/Settings';
-import RecentStemsTable from '@/components/dashboard/RecentStemsTable';
-import PnlTable from '@/components/dashboard/PnlTable';
+import { AlertCircle, Loader2, Play, Save, Trash2, Clock, Download, Plus, FileBarChart2, ChevronRight, Filter, Calculator, Link2, Code, BookOpen, ChevronDown, LayoutList, AlignJustify } from 'lucide-react';
+
 import FilterGroup from '@/components/report-builder/FilterGroup';
 import CalculatedFields from '@/components/report-builder/CalculatedFields';
 import LookupFields from '@/components/report-builder/LookupFields';
@@ -76,8 +74,6 @@ function buildWhereFromGroup(group) {
 
 export default function ReportBuilder() {
   const [savedReports, setSavedReports] = useState([]);
-  const [objects, setObjects] = useState([]);
-  const [objectSearch, setObjectSearch] = useState('');
   const [fields, setFields] = useState([]);
   const [childRelationships, setChildRelationships] = useState([]);
 
@@ -85,13 +81,13 @@ export default function ReportBuilder() {
   const [reportName, setReportName] = useState('');
   const [reportDesc, setReportDesc] = useState('');
   const [reportCategory, setReportCategory] = useState('general');
-  const [selectedObject, setSelectedObject] = useState('stem__c');
+  const [selectedObject, setSelectedObject] = useState(() => localStorage.getItem('rb_default_object') || 'stem__c');
   const [selectedFields, setSelectedFields] = useState([]);
   const [filterGroup, setFilterGroup] = useState(defaultFilterGroup());
   const [calcFields, setCalcFields] = useState([]);
   const [lookups, setLookups] = useState([]);
-  const [orderByField, setOrderByField] = useState('KeyStem__c');
-  const [limitVal, setLimitVal] = useState(100);
+  const [orderByField, setOrderByField] = useState(() => localStorage.getItem('rb_default_orderby') || 'KeyStem__c');
+  const [limitVal, setLimitVal] = useState(() => Number(localStorage.getItem('rb_default_limit') || 100));
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleFreq, setScheduleFreq] = useState('weekly');
   const [scheduleEmail, setScheduleEmail] = useState('');
@@ -107,18 +103,19 @@ export default function ReportBuilder() {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [selectedSavedReport, setSelectedSavedReport] = useState(null);
   const [showSoql, setShowSoql] = useState(false);
-  const [focusMode, setFocusMode] = useState(false);
+  const [compact, setCompact] = useState(() => localStorage.getItem('rb_compact') === 'true');
   const [showReportsPanel, setShowReportsPanel] = useState(false);
+
+  const toggleCompact = () => setCompact(v => {
+    const next = !v;
+    localStorage.setItem('rb_compact', String(next));
+    return next;
+  });
   const pendingFieldsRef = useRef(null); // fields to restore after object switch
   const pendingFilterRef = useRef(null); // filter group to restore after object switch
 
   useEffect(() => {
     loadSavedReports();
-    base44.functions.invoke('salesforceSchema', {}).then(res => {
-      const all = res.data?.objects || [];
-      const allowed = getAllowedObjects();
-      setObjects(allowed ? all.filter(o => allowed.includes(o.name)) : all);
-    });
   }, []);
 
   useEffect(() => {
@@ -329,7 +326,6 @@ export default function ReportBuilder() {
     a.click();
   };
 
-  const sortableFields = fields.filter(f => f.sortable);
   const soql = buildSoql();
 
   const filterCount = (grp) => {
@@ -370,8 +366,8 @@ export default function ReportBuilder() {
                 {savedReports.length > 0 && <span className="text-[10px] font-bold bg-muted rounded-full px-1.5">{savedReports.length}</span>}
                 <ChevronDown className={`w-3 h-3 transition-transform ${showReportsPanel ? 'rotate-180' : ''}`} />
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setFocusMode(v => !v)} className="gap-1.5 text-muted-foreground" title={focusMode ? 'Exit focus mode' : 'Focus mode'}>
-                {focusMode ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+              <Button variant="ghost" size="sm" onClick={toggleCompact} className="gap-1.5 text-muted-foreground" title={compact ? 'Comfortable view' : 'Compact view'}>
+                {compact ? <AlignJustify className="w-3.5 h-3.5" /> : <LayoutList className="w-3.5 h-3.5" />}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setShowSoql(v => !v)} className="gap-1.5 text-muted-foreground">
                 <Code className="w-3.5 h-3.5" /> SOQL
@@ -444,62 +440,12 @@ export default function ReportBuilder() {
           )}
 
           {/* SOQL Preview */}
-          {!focusMode && showSoql && (
+          {!compact && showSoql && (
             <div className="mb-5 p-3 bg-slate-900 rounded-xl overflow-x-auto">
               <p className="text-xs font-mono text-emerald-400 whitespace-pre-wrap break-all">{soql}</p>
             </div>
           )}
 
-          {/* Config row */}
-          {!focusMode && <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Object</label>
-              <Select value={selectedObject} onValueChange={v => { setObjectSearch(''); setSelectedObject(v); }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent className="max-h-72">
-                  <div className="px-2 py-1.5 sticky top-0 bg-popover z-10">
-                    <div className="relative">
-                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-                      <input
-                        className="w-full pl-6 pr-2 py-1 text-xs rounded border border-input bg-background focus:outline-none"
-                        placeholder="Search objects…"
-                        value={objectSearch}
-                        onChange={e => setObjectSearch(e.target.value)}
-                        onKeyDown={e => e.stopPropagation()}
-                        onClick={e => e.stopPropagation()}
-                      />
-                    </div>
-                  </div>
-                  {objects
-                    .filter(o => !objectSearch || o.label.toLowerCase().includes(objectSearch.toLowerCase()) || o.name.toLowerCase().includes(objectSearch.toLowerCase()))
-                    .map(o => <SelectItem key={o.name} value={o.name}>{o.label}</SelectItem>)
-                  }
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Order by</label>
-              <Select value={orderByField} onValueChange={setOrderByField}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {sortableFields.map(f => <SelectItem key={f.name} value={f.name}>{f.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Limit</label>
-              <Select value={String(limitVal)} onValueChange={v => setLimitVal(Number(v))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {[25, 50, 100, 200, 500, 1000, 2000].map(n => (
-                    <SelectItem key={n} value={String(n)}>{n} rows</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          }
 
           {/* Columns */}
           <div className="mb-5 bg-card rounded-xl border border-border p-4">
@@ -524,7 +470,7 @@ export default function ReportBuilder() {
           </div>
 
           {/* Advanced panels: tabs */}
-          {!focusMode && <div className="mb-5 bg-card rounded-xl border border-border overflow-hidden">
+          {!compact && <div className="mb-5 bg-card rounded-xl border border-border overflow-hidden">
             {/* Tab bar */}
             <div className="flex border-b border-border">
               {TABS.map(tab => {
@@ -581,14 +527,14 @@ export default function ReportBuilder() {
             </div>
           </div>}
 
-          {!focusMode && error && (
+          {!compact && error && (
             <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm flex gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
             </div>
           )}
 
           {/* Results */}
-          {!focusMode && <div className="bg-card rounded-xl border border-border">
+          {!compact && <div className="bg-card rounded-xl border border-border">
             <div className="px-5 py-3.5 border-b border-border flex items-center justify-between gap-4">
               <span className="text-sm font-semibold text-foreground shrink-0">
                 {records.length > 0 ? `${records.length.toLocaleString()} rows` : 'Results'}
