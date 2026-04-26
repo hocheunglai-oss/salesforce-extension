@@ -65,6 +65,7 @@ Deno.serve(async (req) => {
     if (buyerAmountField) plFields.push(buyerAmountField);
     if (supplierAmountField) plFields.push(supplierAmountField);
     if (totalCostsField) plFields.push(totalCostsField);
+    if (fieldNames.includes('KeyStem__c')) plFields.push('KeyStem__c');
     const usefulFields = plFields;
 
     // Build a sub-filter on STEM_Line_Item__c using a semi-join when a where clause exists
@@ -105,10 +106,10 @@ Deno.serve(async (req) => {
       totalCostsField
         ? sfQuery(accessToken, `SELECT SUM(${totalCostsField}) total FROM stem__c ${whereClause}`)
         : Promise.resolve({ records: [] }),
-      // 9: sum supplier broker lumpsum commissions from line items
-      sfQuery(accessToken, `SELECT SUM(Suppliers_Brokers_Commission_Lumpsum__c) total FROM STEM_Line_Item__c ${lineItemWhere}`),
-      // 10: sum buyer broker commissions (per unit * qty) — fetch per-row since SOQL can't multiply in SUM
-      sfQuery(accessToken, `SELECT Buyers_Brokers_Commission_Per_Unit__c comm, Quantity__c qty FROM STEM_Line_Item__c ${lineItemWhere} WHERE Buyers_Brokers_Commission_Per_Unit__c != null`),
+      // 9: all line items for broker commissions (grouped by stem)
+      sfQuery(accessToken, `SELECT STEM__c stemId, Buyers_Brokers_Commission_Per_Unit__c comm, Quantity__c qty, Suppliers_Brokers_Commission_Lumpsum__c lumpsum FROM STEM_Line_Item__c ${lineItemWhere}`),
+      // 10: all stems with financial fields (no limit) for accurate profit sum
+      sfQuery(accessToken, `SELECT Id, ${buyerAmountField || 'Total_Invoice_Amount__c'}, ${supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'}, ${totalCostsField || 'Costs_Total__c'} FROM stem__c ${whereClause} LIMIT 2000`),
     ];
 
     const results = await Promise.allSettled(queries);
@@ -123,24 +124,42 @@ Deno.serve(async (req) => {
     const buyerRes          = getValue(results[6]);
     const supplierRes       = getValue(results[7]);
     const costsRes          = getValue(results[8]);
-    const suppBrokerLumpsumRes = getValue(results[9]);
-    const buyerBrokerRowsRes   = getValue(results[10]);
+    const lineItemsRes      = getValue(results[9]);
+    const allStemsRes       = getValue(results[10]);
 
     const recentStems = (recentRes.records || []).map(({ attributes, ...rest }) => rest);
 
-    const totalBuyer = buyerRes.records?.[0]?.total ?? null;
-    const totalSupplier = supplierRes.records?.[0]?.total ?? null;
-    const totalCosts = costsRes.records?.[0]?.total ?? null;
-    const totalSuppBrokerLumpsum = suppBrokerLumpsumRes.records?.[0]?.total ?? 0;
-    const totalBuyerBrokerComm = (buyerBrokerRowsRes.records || []).reduce((sum, r) => {
-      return sum + ((r.comm ?? 0) * (r.qty ?? 0));
-    }, 0);
+    // Build per-stem broker commission maps from line items
+    const brokerByStem = {};
+    for (const li of (lineItemsRes.records || [])) {
+      const id = li.STEM__c || li.stemId;
+      if (!brokerByStem[id]) brokerByStem[id] = { buyerComm: 0, suppLumpsum: 0 };
+      brokerByStem[id].buyerComm += (li.comm ?? li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.qty ?? li.Quantity__c ?? 0);
+      brokerByStem[id].suppLumpsum += (li.lumpsum ?? li.Suppliers_Brokers_Commission_Lumpsum__c ?? 0);
+    }
 
-    // Total profit = buyer - supplier - costs - buyer broker comms - supplier broker lumpsums
-    // If either buyer or supplier is 0/null, profit is 0
-    const totalProfit = (!totalBuyer || !totalSupplier)
-      ? 0
-      : totalBuyer - totalSupplier - (totalCosts ?? 0) - totalBuyerBrokerComm - totalSuppBrokerLumpsum;
+    // Compute total profit per-stem: skip stems where buyer or supplier invoice is 0/null
+    const bf = buyerAmountField || 'Total_Invoice_Amount__c';
+    const sf2 = supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c';
+    const cf = totalCostsField || 'Costs_Total__c';
+
+    let totalProfit = 0;
+    let totalBuyer = 0;
+    let totalSupplier = 0;
+    let totalCosts = 0;
+
+    for (const stem of (allStemsRes.records || [])) {
+      const buyer = stem[bf];
+      const supplier = stem[sf2];
+      if (!buyer || !supplier) continue; // skip if either is 0/null
+      const costs = stem[cf] ?? 0;
+      const { buyerComm = 0, suppLumpsum = 0 } = brokerByStem[stem.Id] || {};
+      const stemPnl = buyer - supplier - costs - buyerComm - suppLumpsum;
+      totalProfit += stemPnl;
+      totalBuyer += buyer;
+      totalSupplier += supplier;
+      totalCosts += costs;
+    }
 
     // Count distinct non-null accounts
     const accountCount = accountsRes.records
@@ -158,7 +177,6 @@ Deno.serve(async (req) => {
       stemByType: (typeRes.records || []).map(r => ({ label: r.val || 'Unknown', value: r.total })),
       recentStems,
       totalCosts,
-      // debug info
       buyerAmountField,
       supplierAmountField,
       totalCostsField,
