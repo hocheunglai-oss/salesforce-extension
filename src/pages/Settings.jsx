@@ -111,14 +111,32 @@ export default function SettingsPage() {
           Expand any object to configure which fields and child objects are accessible. Drill down into child objects to configure grandchildren, and so on.
         </p>
 
-        <div className="relative mb-3">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input
-            placeholder="Filter objects…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="pl-8 h-8 text-xs"
-          />
+        <div className="flex items-center gap-2 mb-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Filter objects…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pl-8 h-8 text-xs"
+            />
+          </div>
+          <Button
+            variant="outline" size="sm" className="text-xs h-8 shrink-0"
+            onClick={() => {
+              const next = { ...allowedMap };
+              filteredObjects.forEach(o => { next[o.name] = true; });
+              setAllowedMap(next);
+            }}
+          >All</Button>
+          <Button
+            variant="outline" size="sm" className="text-xs h-8 shrink-0"
+            onClick={() => {
+              const next = { ...allowedMap };
+              filteredObjects.forEach(o => { next[o.name] = false; });
+              setAllowedMap(next);
+            }}
+          >None</Button>
         </div>
 
         {loading ? (
