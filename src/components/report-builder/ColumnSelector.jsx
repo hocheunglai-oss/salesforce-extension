@@ -303,7 +303,7 @@ export default function ColumnSelector({
         </div>
 
         {/* ── RIGHT: Selected columns (ordered) ── */}
-        <div className="w-64 shrink-0 flex flex-col gap-2">
+        <div className="flex-1 min-w-0 flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
               Selected Columns
@@ -353,7 +353,7 @@ export default function ColumnSelector({
                             {idx + 1}
                           </span>
                           {/* Label */}
-                          <span className={`flex-1 truncate font-medium ${snapshot.isDragging ? 'text-primary-foreground' : 'text-foreground'}`}>
+                          <span className={`flex-1 min-w-0 font-medium break-words ${snapshot.isDragging ? 'text-primary-foreground' : 'text-foreground'}`}>
                             {resolveLabel(fieldKey)}
                           </span>
                           {/* Kind badge */}
