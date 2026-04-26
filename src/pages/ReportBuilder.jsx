@@ -177,7 +177,25 @@ export default function ReportBuilder() {
       return q;
     }
 
-    const baseCols = selectedFields.length > 0 ? selectedFields.map(toSoqlToken) : ['Id', 'Name'];
+    // Group child fields by relationship so each relationship becomes one subquery
+    const childFieldsByRel = {};
+    const nonChildFields = [];
+    for (const f of (selectedFields.length > 0 ? selectedFields : ['Id', 'Name'])) {
+      if (f.startsWith('__child__:')) {
+        const rest = f.slice('__child__:'.length);
+        const colonIdx = rest.indexOf(':');
+        const rel = rest.slice(0, colonIdx);
+        const field = rest.slice(colonIdx + 1);
+        if (!childFieldsByRel[rel]) childFieldsByRel[rel] = [];
+        childFieldsByRel[rel].push(field);
+      } else {
+        nonChildFields.push(f);
+      }
+    }
+    const childSubqueries = Object.entries(childFieldsByRel).map(
+      ([rel, flds]) => `(SELECT ${flds.join(', ')} FROM ${rel})`
+    );
+    const baseCols = [...nonChildFields, ...childSubqueries];
     cols = [...baseCols, ...lookupCols].join(', ');
     let q = `SELECT ${cols} FROM ${selectedObject}`;
     const where = buildWhereFromGroup(filterGroup);
