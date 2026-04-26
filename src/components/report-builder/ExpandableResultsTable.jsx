@@ -7,6 +7,10 @@ import { format } from 'date-fns';
 
 function fmtVal(key, val) {
   if (val == null || val === '') return '—';
+  if (typeof val === 'object') {
+    if (isSubqueryResult(val)) return '(subquery)';
+    return '(object)'; // nested object, not a subquery
+  }
   if (typeof val === 'boolean') return val ? 'Yes' : 'No';
   if (key.toLowerCase().includes('date')) {
     try { return format(new Date(val), 'dd MMM yyyy'); } catch { return val; }
