@@ -5,13 +5,14 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { AlertCircle, Loader2, Play, Save, Trash2, Clock, Download, Plus, FileBarChart2, ChevronRight, Filter, Calculator, Link2, Code } from 'lucide-react';
+import { AlertCircle, Loader2, Play, Save, Trash2, Clock, Download, Plus, FileBarChart2, ChevronRight, Filter, Calculator, Link2, Code, Search } from 'lucide-react';
+import { getAllowedObjects } from '@/pages/Settings';
 import RecentStemsTable from '@/components/dashboard/RecentStemsTable';
 import PnlTable from '@/components/dashboard/PnlTable';
 import FilterGroup from '@/components/report-builder/FilterGroup';
 import CalculatedFields from '@/components/report-builder/CalculatedFields';
 import LookupFields from '@/components/report-builder/LookupFields';
-import ColumnSelector from '@/components/report-builder/ColumnSelector';
+import ColumnSelector, { toSoqlToken } from '@/components/report-builder/ColumnSelector';
 import { format } from 'date-fns';
 
 const CATEGORIES = [
@@ -75,7 +76,9 @@ function buildWhereFromGroup(group) {
 export default function ReportBuilder() {
   const [savedReports, setSavedReports] = useState([]);
   const [objects, setObjects] = useState([]);
+  const [objectSearch, setObjectSearch] = useState('');
   const [fields, setFields] = useState([]);
+  const [childRelationships, setChildRelationships] = useState([]);
 
   // Report config
   const [reportName, setReportName] = useState('');
@@ -106,13 +109,18 @@ export default function ReportBuilder() {
 
   useEffect(() => {
     loadSavedReports();
-    base44.functions.invoke('salesforceSchema', {}).then(res => setObjects(res.data?.objects || []));
+    base44.functions.invoke('salesforceSchema', {}).then(res => {
+      const all = res.data?.objects || [];
+      const allowed = getAllowedObjects();
+      setObjects(allowed ? all.filter(o => allowed.includes(o.name)) : all);
+    });
   }, []);
 
   useEffect(() => {
     if (!selectedObject) return;
     setLoadingFields(true);
     setFields([]);
+    setChildRelationships([]);
     setSelectedFields([]);
     setCalcFields([]);
     setLookups([]);
@@ -120,6 +128,7 @@ export default function ReportBuilder() {
     base44.functions.invoke('salesforceObjectFields', { objectName: selectedObject }).then(res => {
       const f = res.data?.fields || [];
       setFields(f);
+      setChildRelationships(res.data?.childRelationships || []);
       setSelectedFields([]);
       setLoadingFields(false);
     });
@@ -145,7 +154,7 @@ export default function ReportBuilder() {
     if (isAggregateQuery) {
       // Aggregate query: GROUP BY the selected non-aggregate fields
       const groupByCols = selectedFields.length > 0 ? selectedFields : ['Id'];
-      cols = [...groupByCols, ...lookupCols, ...aggCols].join(', ');
+      cols = [...groupByCols.map(toSoqlToken), ...lookupCols, ...aggCols].join(', ');
       let q = `SELECT ${cols} FROM ${selectedObject}`;
       const where = buildWhereFromGroup(filterGroup);
       if (where) q += ` WHERE ${where}`;
@@ -155,7 +164,7 @@ export default function ReportBuilder() {
       return q;
     }
 
-    const baseCols = selectedFields.length > 0 ? selectedFields : ['Id', 'Name'];
+    const baseCols = selectedFields.length > 0 ? selectedFields.map(toSoqlToken) : ['Id', 'Name'];
     cols = [...baseCols, ...lookupCols].join(', ');
     let q = `SELECT ${cols} FROM ${selectedObject}`;
     const where = buildWhereFromGroup(filterGroup);
@@ -249,6 +258,7 @@ export default function ReportBuilder() {
       base44.functions.invoke('salesforceObjectFields', { objectName: 'stem__c' }).then(res => {
         const f = res.data?.fields || [];
         setFields(f);
+        setChildRelationships(res.data?.childRelationships || []);
         setSelectedFields([]);
         setLoadingFields(false);
       });
@@ -373,10 +383,26 @@ export default function ReportBuilder() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
             <div>
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Object</label>
-              <Select value={selectedObject} onValueChange={setSelectedObject}>
+              <Select value={selectedObject} onValueChange={v => { setObjectSearch(''); setSelectedObject(v); }}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent className="max-h-56">
-                  {objects.map(o => <SelectItem key={o.name} value={o.name}>{o.label}</SelectItem>)}
+                <SelectContent className="max-h-72">
+                  <div className="px-2 py-1.5 sticky top-0 bg-popover z-10">
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+                      <input
+                        className="w-full pl-6 pr-2 py-1 text-xs rounded border border-input bg-background focus:outline-none"
+                        placeholder="Search objects…"
+                        value={objectSearch}
+                        onChange={e => setObjectSearch(e.target.value)}
+                        onKeyDown={e => e.stopPropagation()}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    </div>
+                  </div>
+                  {objects
+                    .filter(o => !objectSearch || o.label.toLowerCase().includes(objectSearch.toLowerCase()) || o.name.toLowerCase().includes(objectSearch.toLowerCase()))
+                    .map(o => <SelectItem key={o.name} value={o.name}>{o.label}</SelectItem>)
+                  }
                 </SelectContent>
               </Select>
             </div>
@@ -418,7 +444,9 @@ export default function ReportBuilder() {
                   relationshipName: f.relationshipName,
                   objectName: f.referenceTo?.[0] || f.relationshipName,
                   label: f.label,
+                  isChild: false,
                 }))}
+              childRelationships={childRelationships}
             />
           </div>
 

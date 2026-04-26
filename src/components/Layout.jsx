@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
-import { LayoutDashboard, FileBarChart2, Database, Anchor, GitBranch, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LayoutDashboard, FileBarChart2, Database, GitBranch, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navItems = [
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/reports', label: 'Report Builder', icon: FileBarChart2 },
   { to: '/explorer', label: 'Data Explorer', icon: Database },
   { to: '/schema', label: 'Schema Explorer', icon: GitBranch },
+  { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
 export default function Layout() {
@@ -18,26 +19,16 @@ export default function Layout() {
       {/* Sidebar */}
       <aside className={cn('bg-sidebar flex flex-col shrink-0 transition-all duration-200', collapsed ? 'w-14' : 'w-60')}>
         {/* Logo + collapse button */}
-        <div className={cn('flex items-center border-b border-sidebar-border', collapsed ? 'px-2 py-4 justify-center' : 'px-5 py-6 justify-between')}>
+        <div className={cn('flex items-center border-b border-sidebar-border', collapsed ? 'px-2 py-4 justify-center' : 'px-5 py-5 justify-between')}>
           {!collapsed && (
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
-                <Anchor className="w-4 h-4 text-white" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-sidebar-foreground font-dm">Cosulich</div>
-                <div className="text-xs text-sidebar-foreground/50">Analytics Hub</div>
-              </div>
-            </div>
-          )}
-          {collapsed && (
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Anchor className="w-4 h-4 text-white" />
+            <div>
+              <div className="text-sm font-semibold text-sidebar-foreground font-dm">Cosulich</div>
+              <div className="text-xs text-sidebar-foreground/50">Analytics Hub</div>
             </div>
           )}
           <button
             onClick={() => setCollapsed(c => !c)}
-            className={cn('text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors', collapsed ? 'mt-2' : '')}
+            className="text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}

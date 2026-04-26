@@ -34,7 +34,16 @@ Deno.serve(async (req) => {
       referenceTo: f.referenceTo || [],
     }));
 
-    return Response.json({ objectName, label: data.label, fields });
+    // Child relationships: objects that have a lookup back to this object
+    const childRelationships = (data.childRelationships || [])
+      .filter(r => r.relationshipName && r.childSObject)
+      .map(r => ({
+        relationshipName: r.relationshipName,   // e.g. "STEM_Line_Items__r"
+        childSObject: r.childSObject,           // e.g. "STEM_Line_Item__c"
+        field: r.field,                         // the field on child that points back
+      }));
+
+    return Response.json({ objectName, label: data.label, fields, childRelationships });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
