@@ -107,7 +107,7 @@ Deno.serve(async (req) => {
         ? sfQuery(accessToken, `SELECT SUM(${totalCostsField}) total FROM stem__c ${whereClause}`)
         : Promise.resolve({ records: [] }),
       // 9: all line items for broker commissions (grouped by stem)
-      sfQuery(accessToken, `SELECT STEM__c, Buyers_Brokers_Commission_Per_Unit__c, Quantity__c, Suppliers_Brokers_Commission_Lumpsum__c, Supplier_Broker__c, Supplier_Broker__r.Name FROM STEM_Line_Item__c ${lineItemWhere}`),
+      sfQuery(accessToken, `SELECT STEM__c, Buyers_Brokers_Commission_Per_Unit__c, Quantity__c, Suppliers_Brokers_Commission_Lumpsum__c, Suppliers_Brokers_Commission_Per_Unit__c, Supplier_Broker__c, Supplier_Broker__r.Name, Buyer_Broker__c, Buyer_Broker__r.Name FROM STEM_Line_Item__c ${lineItemWhere}`),
       // 10: all stems with financial fields (no limit) for accurate profit sum
       sfQuery(accessToken, `SELECT Id, ${buyerAmountField || 'Total_Invoice_Amount__c'}, ${supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'}, ${totalCostsField || 'Costs_Total__c'} FROM stem__c ${whereClause} LIMIT 2000`),
     ];
@@ -132,17 +132,30 @@ Deno.serve(async (req) => {
     for (const li of (lineItemsRes.records || [])) {
       const id = li.STEM__c;
       if (!id) continue;
-      if (!brokerByStem[id]) brokerByStem[id] = { buyerComm: 0, suppLumpsum: 0, suppBrokerName: null };
+      if (!brokerByStem[id]) brokerByStem[id] = { buyerComm: 0, suppLumpsum: 0, suppCommPerUnit: 0, suppBrokerName: null, buyerBrokerName: null };
       brokerByStem[id].buyerComm += (li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0);
       brokerByStem[id].suppLumpsum += (li.Suppliers_Brokers_Commission_Lumpsum__c ?? 0);
+      brokerByStem[id].suppCommPerUnit += (li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0);
       if (!brokerByStem[id].suppBrokerName && li['Supplier_Broker__r']?.Name) {
         brokerByStem[id].suppBrokerName = li['Supplier_Broker__r'].Name;
+      }
+      if (!brokerByStem[id].buyerBrokerName && li['Buyer_Broker__r']?.Name) {
+        brokerByStem[id].buyerBrokerName = li['Buyer_Broker__r'].Name;
       }
     }
 
     const recentStems = (recentRes.records || []).map(({ attributes, ...rest }) => {
-      const { buyerComm = 0, suppLumpsum = 0, suppBrokerName = null } = brokerByStem[rest.Id] || {};
-      return { ...rest, _buyerBrokerComm: buyerComm, _suppBrokerLumpsum: suppLumpsum, _suppBrokerName: suppBrokerName };
+      const { buyerComm = 0, suppLumpsum = 0, suppCommPerUnit = 0, suppBrokerName = null, buyerBrokerName = null } = brokerByStem[rest.Id] || {};
+      return {
+        ...rest,
+        _buyerBrokerName: buyerBrokerName,
+        _buyerBrokerComm: buyerComm || null,
+        _suppBrokerName: suppBrokerName,
+        _suppBrokerComm: (suppLumpsum + suppCommPerUnit) || null,
+        // hidden fields for P&L calc
+        __buyerCommCalc: buyerComm,
+        __suppLumpsumCalc: suppLumpsum,
+      };
     });
 
     // Compute total profit per-stem: skip stems where buyer or supplier invoice is 0/null

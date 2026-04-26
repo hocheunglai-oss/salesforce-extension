@@ -5,13 +5,22 @@ const SUPPLIER_FIELD = 'Total_Invoiced_Amount_From_Suppliers__c';
 const COSTS_FIELD = 'Costs_Total__c';
 const DELIVERY_FIELD = 'Delivery_Date__c';
 
-// Custom display labels for specific fields
+// Custom display labels
 const FIELD_LABELS = {
-  [BUYER_FIELD]: 'Buyer Invoice Amount',
-  [SUPPLIER_FIELD]: 'Supplier Invoice Amount',
+  [BUYER_FIELD]: 'Buyer Invoice',
+  [SUPPLIER_FIELD]: 'Supplier Invoice',
   'Costs_Total__c': 'Total Costs',
+  '_buyerBrokerName': 'Buyer Broker',
+  '_buyerBrokerComm': 'Buyer Broker Comm',
   '_suppBrokerName': 'Supplier Broker',
+  '_suppBrokerComm': 'Supplier Broker Comm',
 };
+
+// Columns to completely hide (used only for internal P&L calc)
+const HIDDEN_COLS = new Set(['__buyerCommCalc', '__suppLumpsumCalc', 'Buyer_Name__c', 'Buyer__c']);
+
+// Columns that are right-aligned (money)
+const MONEY_COLS = new Set([BUYER_FIELD, SUPPLIER_FIELD, COSTS_FIELD, '_buyerBrokerComm', '_suppBrokerComm', '__pnl__']);
 
 const fmtMoney = (val) => {
   if (val == null) return '—';
@@ -21,7 +30,7 @@ const fmtMoney = (val) => {
 const fmtVal = (key, val) => {
   if (val == null || val === '') return '—';
   if (typeof val === 'boolean') return val ? 'Yes' : 'No';
-  if (key === BUYER_FIELD || key === SUPPLIER_FIELD || key === COSTS_FIELD || key.toLowerCase().includes('amount') || key.toLowerCase().includes('invoice') || key.toLowerCase().includes('price')) {
+  if (MONEY_COLS.has(key) || key.toLowerCase().includes('amount') || key.toLowerCase().includes('invoice') || key.toLowerCase().includes('price') || key === '_buyerBrokerComm' || key === '_suppBrokerComm') {
     const n = Number(val);
     if (!isNaN(n)) return fmtMoney(n);
   }
@@ -38,48 +47,39 @@ const colLabel = (key) => {
   return key.replace(/__c$/i, '').replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim();
 };
 
-// Columns to hide from display
-const HIDDEN_COLS = new Set(['_buyerBrokerComm', '_suppBrokerLumpsum', 'Buyer_Name__c', 'Buyer__c']);
+// Desired column order (columns not in this list are appended after)
+const COL_ORDER = [
+  'KeyStem__c',
+  'Name',
+  'Delivery_Date__c',
+  'CreatedDate',
+  BUYER_FIELD,
+  SUPPLIER_FIELD,
+  COSTS_FIELD,
+  '_buyerBrokerName',
+  '_buyerBrokerComm',
+  '_suppBrokerName',
+  '_suppBrokerComm',
+  '__pnl__',
+];
 
 export default function PnlTable({ records = [], onRowClick }) {
   if (!records.length) return (
     <div className="text-center py-8 text-muted-foreground text-sm">No records</div>
   );
 
-  const allCols = Object.keys(records[0]).filter(k => k !== 'Id' && !HIDDEN_COLS.has(k));
+  const rawCols = Object.keys(records[0]).filter(k => k !== 'Id' && !HIDDEN_COLS.has(k));
 
-  const hasBuyer = allCols.includes(BUYER_FIELD);
-  const hasSupplier = allCols.includes(SUPPLIER_FIELD);
-  const hasCosts = allCols.includes(COSTS_FIELD);
+  const hasBuyer = rawCols.includes(BUYER_FIELD);
+  const hasSupplier = rawCols.includes(SUPPLIER_FIELD);
   const showPnl = hasBuyer && hasSupplier;
 
-  // Build display column order; inject Total Costs after Supplier, then P&L after Costs (or after Supplier)
-  const displayCols = [];
-  allCols.forEach(col => {
-    displayCols.push(col);
-    if (col === SUPPLIER_FIELD) {
-      // If costs column exists in data it will be pushed naturally after supplier
-      // but if not in allCols we skip; handled below
-    }
-  });
-
-  // Inject _suppBrokerName after COSTS_FIELD if present, else after SUPPLIER_FIELD
-  const brokerAnchor = hasCosts ? COSTS_FIELD : SUPPLIER_FIELD;
-  const brokerAnchorIdx = displayCols.indexOf(brokerAnchor);
-  if (brokerAnchorIdx !== -1 && !displayCols.includes('_suppBrokerName')) {
-    displayCols.splice(brokerAnchorIdx + 1, 0, '_suppBrokerName');
-  }
-
-  // Inject __pnl__ after _suppBrokerName if present, else after anchor
-  const pnlAnchor = displayCols.includes('_suppBrokerName') ? '_suppBrokerName' : (hasCosts ? COSTS_FIELD : SUPPLIER_FIELD);
-  const anchorIdx = displayCols.indexOf(pnlAnchor);
-  if (showPnl && anchorIdx !== -1) {
-    displayCols.splice(anchorIdx + 1, 0, '__pnl__');
-  } else if (showPnl && !displayCols.includes('__pnl__')) {
-    displayCols.push('__pnl__');
-  }
-
-  const rightAligned = new Set([BUYER_FIELD, SUPPLIER_FIELD, COSTS_FIELD, '__pnl__']);
+  // Build ordered display cols
+  const colSet = new Set(rawCols);
+  const displayCols = [
+    ...COL_ORDER.filter(c => c === '__pnl__' ? showPnl : colSet.has(c)),
+    ...rawCols.filter(c => !COL_ORDER.includes(c)), // any extras not in order list
+  ];
 
   return (
     <div className="overflow-x-auto">
@@ -90,7 +90,7 @@ export default function PnlTable({ records = [], onRowClick }) {
               <th
                 key={col}
                 className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${
-                  rightAligned.has(col) ? 'text-right' : 'text-left'
+                  MONEY_COLS.has(col) ? 'text-right' : 'text-left'
                 }`}
               >
                 {col === '__pnl__' ? 'P&L' : colLabel(col)}
@@ -102,12 +102,12 @@ export default function PnlTable({ records = [], onRowClick }) {
           {records.map((row, i) => {
             const buyer = row[BUYER_FIELD] ?? null;
             const supplier = row[SUPPLIER_FIELD] ?? null;
-            const costs = row[COSTS_FIELD] ?? null;
+            const costs = row[COSTS_FIELD] ?? 0;
             const hasDelivery = !!row[DELIVERY_FIELD];
-            const buyerBrokerComm = row._buyerBrokerComm ?? 0;
-            const suppBrokerLumpsum = row._suppBrokerLumpsum ?? 0;
+            const buyerCommCalc = row.__buyerCommCalc ?? 0;
+            const suppLumpsumCalc = row.__suppLumpsumCalc ?? 0;
             const pnl = showPnl && hasDelivery
-              ? (!buyer || !supplier ? 0 : buyer - supplier - (costs ?? 0) - buyerBrokerComm - suppBrokerLumpsum)
+              ? (!buyer || !supplier ? 0 : buyer - supplier - costs - buyerCommCalc - suppLumpsumCalc)
               : null;
             const pnlPositive = pnl != null && pnl >= 0;
 
@@ -130,7 +130,7 @@ export default function PnlTable({ records = [], onRowClick }) {
                     );
                   }
                   return (
-                    <td key={col} className={`py-2.5 px-3 whitespace-nowrap ${rightAligned.has(col) ? 'text-right text-foreground' : 'text-foreground'}`}>
+                    <td key={col} className={`py-2.5 px-3 whitespace-nowrap ${MONEY_COLS.has(col) ? 'text-right text-foreground' : 'text-foreground'}`}>
                       {fmtVal(col, row[col])}
                     </td>
                   );
