@@ -120,6 +120,8 @@ export default function ReportBuilder() {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [selectedSavedReport, setSelectedSavedReport] = useState(null);
   const [showSoql, setShowSoql] = useState(false);
+  const [fieldsError, setFieldsError] = useState(false);
+  const [fieldsRetry, setFieldsRetry] = useState(0);
   const [compact, setCompact] = useState(() => localStorage.getItem('rb_compact') === 'true');
   const [showReportsPanel, setShowReportsPanel] = useState(false);
 
@@ -138,6 +140,8 @@ export default function ReportBuilder() {
   useEffect(() => {
     if (!selectedObject) return;
     setLoadingFields(true);
+    // fieldsRetry is used to re-trigger this effect on manual retry
+    setFieldsError(false);
     setFields([]);
     setChildRelationships([]);
     setCalcFields([]);
@@ -145,6 +149,7 @@ export default function ReportBuilder() {
     setFilterGroup(defaultFilterGroup());
     setSelectedFields([]);
     base44.functions.invoke('salesforceObjectFields', { objectName: selectedObject }).then(res => {
+      if (res.data?.error) throw new Error(res.data.error);
       const f = res.data?.fields || [];
       setFields(f);
       setChildRelationships(res.data?.childRelationships || []);
@@ -160,10 +165,11 @@ export default function ReportBuilder() {
       }
     }).catch(err => {
       console.error('Failed to load fields:', err);
+      setFieldsError(true);
     }).finally(() => {
       setLoadingFields(false);
     });
-  }, [selectedObject]);
+  }, [selectedObject, fieldsRetry]);
 
   const loadSavedReports = async () => {
     const reports = await base44.entities.SavedReport.list('-updated_date', 50);
@@ -338,20 +344,9 @@ export default function ReportBuilder() {
     setOrderByField('KeyStem__c');
     setRecords([]);
     setError(null);
-    // If object is already stem__c, manually reload fields since useEffect won't re-fire
+    pendingFieldsRef.current = null;
     if (selectedObject === 'stem__c') {
-      setLoadingFields(true);
-      pendingFieldsRef.current = null;
-      base44.functions.invoke('salesforceObjectFields', { objectName: 'stem__c' }).then(res => {
-        const f = res.data?.fields || [];
-        setFields(f);
-        setChildRelationships(res.data?.childRelationships || []);
-        setSelectedFields([]);
-      }).catch(err => {
-        console.error('Failed to load fields:', err);
-      }).finally(() => {
-        setLoadingFields(false);
-      });
+      setFieldsRetry(v => v + 1); // re-trigger fields load via useEffect
     } else {
       setSelectedObject('stem__c');
     }
@@ -497,9 +492,16 @@ export default function ReportBuilder() {
 
           {/* Columns */}
           <div className="mb-5 bg-card rounded-xl border border-border p-4">
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 block">
-              Columns
-            </label>
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Columns
+              </label>
+              {fieldsError && (
+                <button onClick={() => setFieldsRetry(v => v + 1)} className="text-xs text-destructive hover:underline flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> Failed to load — click to retry
+                </button>
+              )}
+            </div>
             <ColumnSelector
               fields={fields.filter(f => !['IsDeleted', 'SystemModstamp'].includes(f.name))}
               selectedFields={selectedFields}
