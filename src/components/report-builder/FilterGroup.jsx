@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -189,8 +189,11 @@ function ObjectPathPicker({ rootFields, rootParentRels, rootChildRels, value, on
     });
   };
 
-  // When root meta changes (object switch), reset
+  // When root meta changes (object switch), reset — but skip the initial mount
+  const prevRootFieldsRef = useRef(rootFields);
   useEffect(() => {
+    if (prevRootFieldsRef.current === rootFields) return; // same reference, no reset
+    prevRootFieldsRef.current = rootFields;
     setLevels([{ meta: { fields: rootFields, parentRels: rootParentRels, childRels: rootChildRels }, loading: false }]);
     setSelectedRels([]);
     setSelectedField('');
@@ -330,12 +333,12 @@ function FilterRow({ condition, fields, relatedObjects, childRelationships, onCh
   const isDate = fieldType === 'date' || fieldType === 'datetime';
   const isBool = fieldType === 'boolean';
 
-  // Root meta for ObjectPathPicker
-  const rootMeta = {
+  // Root meta for ObjectPathPicker — memoized so array refs stay stable across re-renders
+  const rootMeta = useMemo(() => ({
     fields: [...fields].sort((a, b) => a.label.localeCompare(b.label)),
     parentRels: [...(relatedObjects || [])].sort((a, b) => a.label.localeCompare(b.label)),
     childRels: [...(childRelationships || [])].sort((a, b) => a.relationshipName.localeCompare(b.relationshipName)),
-  };
+  }), [fields, relatedObjects, childRelationships]);
 
   return (
     <div className="flex items-start gap-2 flex-wrap">
