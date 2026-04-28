@@ -114,6 +114,13 @@ export default function ExpandableResultsTable({ records }) {
     }
   };
 
+  // Compute totals for numeric columns
+  const numericCols = mainCols.filter(c => records.some(r => typeof r[c] === 'number'));
+  const totals = {};
+  numericCols.forEach(c => {
+    totals[c] = records.reduce((sum, r) => sum + (typeof r[c] === 'number' ? r[c] : 0), 0);
+  });
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -195,6 +202,19 @@ export default function ExpandableResultsTable({ records }) {
               </>
             );
           })}
+          {numericCols.length > 0 && (
+            <tr className="border-t-2 border-border bg-muted/40 font-semibold sticky bottom-0">
+              {hasSubtables && <td className="py-2.5 px-2" />}
+              {mainCols.map(c => {
+                const isNum = numericCols.includes(c);
+                return (
+                  <td key={c} className={`py-2.5 px-3 whitespace-nowrap ${isNum ? 'text-right font-mono text-foreground' : 'text-xs text-muted-foreground'}`}>
+                    {isNum ? fmtVal(c, totals[c]) : (mainCols.indexOf(c) === 0 ? 'TOTAL' : '')}
+                  </td>
+                );
+              })}
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
