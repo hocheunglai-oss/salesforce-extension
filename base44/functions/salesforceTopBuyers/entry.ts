@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
 
     const { accessToken } = await base44.asServiceRole.connectors.getConnection("salesforce");
 
-    const soql = `SELECT Buyer_Name__c, SUM(Total_Invoice_Amount__c) totalInvoice FROM stem__c WHERE Delivery_Date__c >= ${year}-01-01 AND Delivery_Date__c <= ${year}-12-31 AND Buyer_Name__c != null GROUP BY Buyer_Name__c ORDER BY SUM(Total_Invoice_Amount__c) DESC LIMIT ${limit}`;
+    const soql = `SELECT Account__c, Account__r.Name, SUM(Total_Invoice_Amount__c) totalInvoice FROM stem__c WHERE Delivery_Date__c >= ${year}-01-01 AND Delivery_Date__c <= ${year}-12-31 AND Account__c != null GROUP BY Account__c, Account__r.Name ORDER BY SUM(Total_Invoice_Amount__c) DESC LIMIT ${limit}`;
 
     const encoded = encodeURIComponent(soql);
     const res = await fetch(`${SF_INSTANCE}/services/data/${SF_API_VERSION}/query/?q=${encoded}`, {
@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
     }
 
     const buyers = (data.records || []).map(r => ({
-      name: r.Buyer_Name__c,
+      name: r.Name || r.Account__c,
       total: r.totalInvoice ?? 0,
     }));
 
