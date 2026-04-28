@@ -578,6 +578,7 @@ export default function ReportBuilder() {
                       objectName: f.referenceTo?.[0] || f.relationshipName,
                       label: f.label,
                     }))}
+                  childRelationships={childRelationships}
                 />
               )}
               {activeTab === 'lookups' && (

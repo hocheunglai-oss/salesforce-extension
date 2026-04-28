@@ -177,7 +177,7 @@ function FieldPicker({ value, onChange, mainFields, relatedObjects, allowAllType
 }
 
 // ── Formula autocomplete input ────────────────────────────────────────────────
-function FormulaInput({ value, onChange, fields, relatedObjects = [] }) {
+function FormulaInput({ value, onChange, fields, relatedObjects = [], childRelationships = [] }) {
   const [suggestions, setSuggestions] = useState([]);
   const [tokenStart, setTokenStart] = useState(0);
   const [dropStyle, setDropStyle] = useState({});
@@ -193,21 +193,35 @@ function FormulaInput({ value, onChange, fields, relatedObjects = [] }) {
         setRelFieldsCache(prev => ({ ...prev, [r.objectName]: f }));
       }).catch(() => {});
     });
-  }, [relatedObjects]);
+    childRelationships.forEach(r => {
+      if (!r.childSObject || relFieldsCache[r.childSObject]) return;
+      fetchFields(r.childSObject).then(f => {
+        setRelFieldsCache(prev => ({ ...prev, [r.childSObject]: f }));
+      }).catch(() => {});
+    });
+  }, [relatedObjects, childRelationships]);
 
-  // Build a flat list of all tokens: fn names, main fields, rel.field paths
+  // Build a flat list of all tokens: fn names, main fields, rel.field paths, child fields
   const buildAllTokens = () => {
     const tokens = [];
     // Main fields
     fields.forEach(f => {
       tokens.push({ value: f.name, label: `${f.name} — ${f.label}`, isField: true, sub: null });
     });
-    // Related fields as Rel__r.Field__c
+    // Parent lookup fields as Rel__r.Field__c
     relatedObjects.forEach(r => {
       const rFields = relFieldsCache[r.objectName] || [];
       rFields.forEach(f => {
         const soql = `${r.relationshipName}.${f.name}`;
         tokens.push({ value: soql, label: `${soql} — ${r.label} › ${f.label}`, isField: true, sub: r.label });
+      });
+    });
+    // Child relationship fields as RelationshipName.Field__c
+    childRelationships.forEach(r => {
+      const rFields = relFieldsCache[r.childSObject] || [];
+      rFields.forEach(f => {
+        const soql = `${r.relationshipName}.${f.name}`;
+        tokens.push({ value: soql, label: `${soql} — ${r.childSObject} › ${f.label}`, isField: true, sub: r.childSObject });
       });
     });
     return tokens;
@@ -317,7 +331,7 @@ function FormulaInput({ value, onChange, fields, relatedObjects = [] }) {
   );
 }
 
-export default function CalculatedFields({ calcFields, onChange, fields, relatedObjects = [] }) {
+export default function CalculatedFields({ calcFields, onChange, fields, relatedObjects = [], childRelationships = [] }) {
   const numericFields = fields.filter(f => ['double', 'currency', 'integer', 'percent'].includes(f.type));
 
   const add = (type = 'aggregate') => {
@@ -372,6 +386,7 @@ export default function CalculatedFields({ calcFields, onChange, fields, related
                   onChange={v => update(cf.id, { expr: v })}
                   fields={fields}
                   relatedObjects={relatedObjects}
+                  childRelationships={childRelationships}
                 />
               </>
             )}
