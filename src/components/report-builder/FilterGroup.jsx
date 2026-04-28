@@ -34,6 +34,7 @@ const metaCache = {};
 async function fetchMeta(objectName) {
   if (metaCache[objectName]) return metaCache[objectName];
   const res = await base44.functions.invoke('salesforceObjectFields', { objectName });
+  if (res.data?.error) throw new Error(res.data.error);
   const fields = (res.data?.fields || [])
     .filter(f => f.filterable !== false)
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -187,10 +188,14 @@ function FilterRow({ condition, fields, relatedObjects, childRelationships, onCh
       objectName = cr?.childSObject || relName;
     }
     if (!objectName) return;
+    // Only fetch if it looks like a valid Salesforce object name (avoid fetching partial/invalid names)
+    if (!/^[A-Za-z][A-Za-z0-9_]*(__c|__x|__mdt|__e|__b)?$/.test(objectName)) return;
     if (metaCache[objectName]) { setRelFields(metaCache[objectName].fields); return; }
     setLoadingRel(true);
     fetchMeta(objectName).then(meta => {
       setRelFields(meta.fields);
+      setLoadingRel(false);
+    }).catch(() => {
       setLoadingRel(false);
     });
   }, [relType, relName]);
