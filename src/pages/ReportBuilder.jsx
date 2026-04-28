@@ -276,9 +276,12 @@ export default function ReportBuilder() {
             const val = row[field];
             return val != null ? String(val) : '0';
           });
-          enriched[cf.label] = Function(`return ${expr}`)();
+          const result = Function(`return ${expr}`)();
+          enriched[cf.label] = result;
+          // Debug: store the resolved expression for troubleshooting
+          enriched[`_debug_${cf.label}`] = expr;
         } catch (e) {
-          enriched[cf.label] = null;
+          enriched[cf.label] = `ERR: ${e.message}`;
         }
       });
       return enriched;
