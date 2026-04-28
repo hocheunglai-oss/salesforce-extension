@@ -56,6 +56,8 @@ export default function DashboardSettings() {
   const [lastRefresh, setLastRefresh] = useState(null);
   const [tableSearch, setTableSearch] = useState('');
   const [selectedStemId, setSelectedStemId] = useState(null);
+  const [topBuyers, setTopBuyers] = useState([]);
+  const [loadingBuyers, setLoadingBuyers] = useState(false);
   const debounceRef = useRef(null);
 
   const toggleYear = (yr) => setSelectedYears(prev =>
@@ -73,11 +75,23 @@ export default function DashboardSettings() {
   const buildWhereClause = (yrs = selectedYears, mos = selectedMonths) =>
     buildDeliveryWhere(yrs, mos);
 
+  const loadTopBuyers = async (yrs = selectedYears) => {
+    setLoadingBuyers(true);
+    // Use the first selected year for top buyers; if multiple, pick the latest
+    const year = Math.max(...yrs);
+    const res = await base44.functions.invoke('salesforceTopBuyers', { year, limit: 10 });
+    if (!res.data?.error) setTopBuyers(res.data?.buyers || []);
+    setLoadingBuyers(false);
+  };
+
   const load = async (yrs = selectedYears, mos = selectedMonths) => {
     setLoading(true);
     setError(null);
     const where = buildWhereClause(yrs, mos);
-    const res = await base44.functions.invoke('salesforceDashboardFiltered', { where });
+    const [res] = await Promise.all([
+      base44.functions.invoke('salesforceDashboardFiltered', { where }),
+      loadTopBuyers(yrs),
+    ]);
     if (res.data?.error) {
       setError(res.data.error);
     } else {
@@ -267,6 +281,43 @@ export default function DashboardSettings() {
               )}
             </div>
           )}
+
+          {/* Top 10 Buyers */}
+          <div className="bg-card rounded-xl border border-border p-5 mb-8">
+            <h3 className="text-sm font-semibold text-foreground mb-1">
+              Top 10 Buyers by Invoice Amount
+              <span className="ml-2 text-xs font-normal text-muted-foreground">({Math.max(...selectedYears)})</span>
+            </h3>
+            {loadingBuyers ? (
+              <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm justify-center">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+              </div>
+            ) : topBuyers.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-6 text-center">No buyer data available</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {topBuyers.map((b, i) => {
+                  const max = topBuyers[0].total || 1;
+                  const pct = (b.total / max) * 100;
+                  return (
+                    <div key={b.name} className="flex items-center gap-3">
+                      <span className="w-5 text-xs font-bold text-muted-foreground text-right shrink-0">{i + 1}</span>
+                      <span className="w-36 text-xs text-foreground truncate shrink-0" title={b.name}>{b.name}</span>
+                      <div className="flex-1 bg-muted/50 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="h-2 rounded-full bg-primary transition-all"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="text-xs font-semibold text-foreground w-28 text-right shrink-0">
+                        ${b.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* P&L Report */}
           <div className="bg-card rounded-xl border border-border">
