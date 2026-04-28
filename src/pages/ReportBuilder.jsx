@@ -203,13 +203,21 @@ export default function ReportBuilder() {
     }
 
     // Extract fields referenced in formula expressions and add them to the query
-    const formulaReferencedFields = [];
+    const formulaReferencedFields = [];       // flat fields e.g. Costs_Total__c
+    const formulaChildFields = {};            // child subquery fields e.g. { STEM_Line_Items__r: ['Buyers_Brokers_Commission_Lumpsum__c', ...] }
     calcFields.filter(c => c.type === 'formula' && c.expr).forEach(cf => {
-      const matches = cf.expr.matchAll(/[A-Za-z_]+\(([A-Za-z0-9_]+)\)/g);
+      const matches = [...cf.expr.matchAll(/[A-Za-z_]+\(([A-Za-z0-9_.]+)\)/g)];
       for (const m of matches) {
         const field = m[1];
-        if (field && !formulaReferencedFields.includes(field)) {
-          formulaReferencedFields.push(field);
+        if (!field) continue;
+        if (field.includes('.')) {
+          const dotIdx = field.indexOf('.');
+          const rel = field.slice(0, dotIdx);
+          const childField = field.slice(dotIdx + 1);
+          if (!formulaChildFields[rel]) formulaChildFields[rel] = [];
+          if (!formulaChildFields[rel].includes(childField)) formulaChildFields[rel].push(childField);
+        } else {
+          if (!formulaReferencedFields.includes(field)) formulaReferencedFields.push(field);
         }
       }
     });
@@ -235,6 +243,12 @@ export default function ReportBuilder() {
         nonChildFields.push(f);
       }
     }
+    // Merge formula child fields into childFieldsByRel
+    Object.entries(formulaChildFields).forEach(([rel, flds]) => {
+      if (!childFieldsByRel[rel]) childFieldsByRel[rel] = [];
+      flds.forEach(f => { if (!childFieldsByRel[rel].includes(f)) childFieldsByRel[rel].push(f); });
+    });
+
     const childSubqueries = Object.entries(childFieldsByRel).map(
       ([rel, flds]) => `(SELECT ${flds.join(', ')} FROM ${rel})`
     );
@@ -263,7 +277,7 @@ export default function ReportBuilder() {
         try {
           let expr = cf.expr;
           // Replace FN(Field__c) references — first try to resolve via aggregate label map,
-          // then fall back to reading the field directly from the row
+          // then fall back to reading the field directly from the row (or summing child records)
           const fieldRegex = /([A-Za-z_]+)\(([A-Za-z0-9_.]+)\)/gi;
           expr = expr.replace(fieldRegex, (match, fn, field) => {
             const aggKey = `${fn.toUpperCase()}(${field})`;
@@ -271,6 +285,25 @@ export default function ReportBuilder() {
               // This fn(field) corresponds to a named aggregate column
               const val = row[aggLabelMap[aggKey]];
               return val != null ? String(val) : '0';
+            }
+            // Check if it's a child relationship path: Rel__r.Field__c
+            if (field.includes('.')) {
+              const dotIdx = field.indexOf('.');
+              const relName = field.slice(0, dotIdx);
+              const childField = field.slice(dotIdx + 1);
+              const subquery = row[relName];
+              if (subquery && Array.isArray(subquery.records)) {
+                // Sum (or apply fn) across child records
+                const fnUpper = fn.toUpperCase();
+                const childVals = subquery.records.map(r => Number(r[childField]) || 0);
+                if (fnUpper === 'SUM') return String(childVals.reduce((a, b) => a + b, 0));
+                if (fnUpper === 'COUNT' || fnUpper === 'COUNT_DISTINCT') return String(childVals.length);
+                if (fnUpper === 'AVG') return childVals.length ? String(childVals.reduce((a, b) => a + b, 0) / childVals.length) : '0';
+                if (fnUpper === 'MIN') return childVals.length ? String(Math.min(...childVals)) : '0';
+                if (fnUpper === 'MAX') return childVals.length ? String(Math.max(...childVals)) : '0';
+                return String(childVals.reduce((a, b) => a + b, 0));
+              }
+              return '0';
             }
             // Plain field reference wrapped in a pseudo-fn — just use the field value
             const val = row[field];
