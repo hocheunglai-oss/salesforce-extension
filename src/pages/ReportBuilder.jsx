@@ -185,7 +185,8 @@ export default function ReportBuilder() {
       .filter(c => c.type === 'aggregate' && c.fn && c.field)
       .map(c => `${c.fn}(${c.field})${c.label ? ` ${c.label.replace(/\s+/g, '_')}` : ''}`);
 
-    const isAggregateQuery = aggCols.length > 0 || calcFields.some(c => c.type === 'formula');
+    // Only SOQL aggregates (SUM, COUNT etc.) require GROUP BY — formulas are computed client-side after fetching
+    const isAggregateQuery = aggCols.length > 0;
     let cols;
 
     if (isAggregateQuery) {
@@ -235,10 +236,10 @@ export default function ReportBuilder() {
       calcFields.filter(c => c.type === 'formula').forEach(cf => {
         if (!cf.expr || !cf.label) return;
         try {
-          // Replace field references like SUM(Field_Name__c) with actual values
+          // Replace field references like SUM(Field__c) or sum(Field__c) with actual field values
           let expr = cf.expr;
-          const fieldRegex = /([A-Z_]+)\(([A-Za-z0-9_]+)\)/g;
-          expr = expr.replace(fieldRegex, (match, fn, field) => {
+          const fieldRegex = /[A-Za-z_]+\(([A-Za-z0-9_]+)\)/gi;
+          expr = expr.replace(fieldRegex, (match, field) => {
             const val = row[field];
             return val != null ? String(val) : '0';
           });
