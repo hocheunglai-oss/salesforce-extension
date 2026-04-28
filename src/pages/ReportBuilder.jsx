@@ -49,6 +49,20 @@ function buildWhereFromGroup(group) {
       return inner ? `(${inner})` : null;
     }
     if (!cond.field || !cond.operator || cond.value === '') return null;
+
+    // Child relationship filter: __child__rel__:RelName:FieldName
+    // Convert to SOQL semi-join: Id IN (SELECT <lookup_back_field> FROM RelName WHERE FieldName op val)
+    if (cond.field.startsWith('__child__rel__:')) {
+      const rest = cond.field.slice('__child__rel__:'.length);
+      const colon = rest.indexOf(':');
+      const relName = rest.slice(0, colon);
+      const childField = rest.slice(colon + 1);
+      const val = cond.value;
+      const noQuote = ['true', 'false', 'null'].includes(val) || /^-?\d+(\.\d+)?$/.test(val);
+      const formatted = noQuote ? val : `'${val}'`;
+      return `Id IN (SELECT ${relName.replace(/s$/i, '')}__c FROM ${relName} WHERE ${childField} ${cond.operator} ${formatted})`;
+    }
+
     const val = cond.value;
     // Determine if value needs quoting
     const noQuote = ['true', 'false', 'null', 'TODAY', 'YESTERDAY', 'TOMORROW',
@@ -58,7 +72,6 @@ function buildWhereFromGroup(group) {
 
     const op = cond.operator;
     if (op === 'IN' || op === 'NOT IN' || op === 'INCLUDES' || op === 'EXCLUDES') {
-      // Expect comma-separated list
       const items = val.split(',').map(v => v.trim());
       const formatted = items.map(v => (v.startsWith("'") ? v : `'${v}'`)).join(', ');
       return `${cond.field} ${op} (${formatted})`;
@@ -536,6 +549,14 @@ export default function ReportBuilder() {
                 <FilterGroup
                   group={filterGroup}
                   fields={fields.filter(f => f.filterable && !['IsDeleted', 'SystemModstamp'].includes(f.name))}
+                  relatedObjects={fields
+                    .filter(f => f.type === 'reference' && f.relationshipName)
+                    .map(f => ({
+                      relationshipName: f.relationshipName,
+                      objectName: f.referenceTo?.[0] || f.relationshipName,
+                      label: f.label,
+                    }))}
+                  childRelationships={childRelationships}
                   onChange={setFilterGroup}
                   depth={0}
                 />

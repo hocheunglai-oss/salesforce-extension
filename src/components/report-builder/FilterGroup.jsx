@@ -1,7 +1,9 @@
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Trash2, GitBranch } from 'lucide-react';
+import { Plus, Trash2, GitBranch, Loader2 } from 'lucide-react';
+import { base44 } from '@/api/base44Client';
 
 // Operators grouped by field type
 const OPERATORS_BY_TYPE = {
@@ -30,26 +32,166 @@ function getOperators(fieldType) {
   return OPERATORS_BY_TYPE[fieldType] || OPERATORS_BY_TYPE.string;
 }
 
-function FilterRow({ condition, fields, onChange, onRemove }) {
-  const field = fields.find(f => f.name === condition.field);
-  const fieldType = field?.type || 'string';
+// Cache for fetched relationship fields: objectName -> fields[]
+const relFieldsCache = {};
+
+function FilterRow({ condition, fields, relatedObjects, childRelationships, onChange, onRemove }) {
+  // Parse current condition.field into { relKey, fieldName }
+  // relKey: '' = this object, 'parent:RelName' = parent lookup, 'child:ChildRelName' = child
+  const parseField = (f) => {
+    if (!f) return { relKey: '', fieldName: '' };
+    if (f.startsWith('__child__rel__:')) {
+      const rest = f.slice('__child__rel__:'.length);
+      const colon = rest.indexOf(':');
+      return { relKey: 'child:' + rest.slice(0, colon), fieldName: rest.slice(colon + 1) };
+    }
+    if (f.includes('.')) {
+      const dot = f.indexOf('.');
+      return { relKey: 'parent:' + f.slice(0, dot), fieldName: f.slice(dot + 1) };
+    }
+    return { relKey: '', fieldName: f };
+  };
+
+  const { relKey, fieldName } = parseField(condition.field);
+
+  const [selectedRelKey, setSelectedRelKey] = useState(relKey);
+  const [relFields, setRelFields] = useState([]);
+  const [loadingRelFields, setLoadingRelFields] = useState(false);
+
+  // Determine SOQL field path
+  const toSoqlField = (rk, fn) => {
+    if (!rk) return fn;
+    if (rk.startsWith('parent:')) {
+      const relName = rk.slice('parent:'.length);
+      return `${relName}.${fn}`;
+    }
+    if (rk.startsWith('child:')) {
+      const childRel = rk.slice('child:'.length);
+      return `__child__rel__:${childRel}:${fn}`;
+    }
+    return fn;
+  };
+
+  // Fetch fields for a relationship
+  const fetchRelFields = async (rk) => {
+    if (!rk || rk === '') return;
+
+    let objectName = null;
+    if (rk.startsWith('parent:')) {
+      const relName = rk.slice('parent:'.length);
+      // Find the reference field whose relationshipName matches
+      const refField = (relatedObjects || []).find(ro => ro.relationshipName === relName);
+      objectName = refField?.objectName || relName;
+    } else if (rk.startsWith('child:')) {
+      const childRel = rk.slice('child:'.length);
+      const cr = (childRelationships || []).find(c => c.relationshipName === childRel);
+      objectName = cr?.childSObject || childRel;
+    }
+
+    if (!objectName) return;
+
+    if (relFieldsCache[objectName]) {
+      setRelFields(relFieldsCache[objectName]);
+      return;
+    }
+
+    setLoadingRelFields(true);
+    const res = await base44.functions.invoke('salesforceObjectFields', { objectName });
+    const f = (res.data?.fields || []).filter(f => f.filterable !== false);
+    relFieldsCache[objectName] = f;
+    setRelFields(f);
+    setLoadingRelFields(false);
+  };
+
+  useEffect(() => {
+    if (selectedRelKey) {
+      fetchRelFields(selectedRelKey);
+    } else {
+      setRelFields([]);
+    }
+  }, [selectedRelKey]);
+
+  // Load initial rel fields if condition already has a relationship
+  useEffect(() => {
+    if (relKey && relKey !== '') {
+      setSelectedRelKey(relKey);
+      fetchRelFields(relKey);
+    }
+  }, []);
+
+  const activeFields = selectedRelKey ? relFields : fields;
+  const activeField = activeFields.find(f => f.name === fieldName);
+  const fieldType = activeField?.type || 'string';
   const operators = getOperators(fieldType);
   const isDate = fieldType === 'date' || fieldType === 'datetime';
   const isBool = fieldType === 'boolean';
 
+  const handleRelChange = (newRelKey) => {
+    setSelectedRelKey(newRelKey);
+    onChange({ ...condition, field: '', operator: '=', value: '' });
+    if (newRelKey) fetchRelFields(newRelKey);
+    else setRelFields([]);
+  };
+
+  const handleFieldChange = (newField) => {
+    onChange({ ...condition, field: toSoqlField(selectedRelKey, newField), operator: '=', value: '' });
+  };
+
+  // Build relationship options
+  const parentOptions = (relatedObjects || []).map(ro => ({
+    value: 'parent:' + ro.relationshipName,
+    label: `↗ ${ro.label || ro.relationshipName} (${ro.objectName})`,
+  }));
+  const childOptions = (childRelationships || []).map(cr => ({
+    value: 'child:' + cr.relationshipName,
+    label: `↙ ${cr.relationshipName} (${cr.childSObject})`,
+  }));
+
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      {/* Field */}
-      <Select value={condition.field} onValueChange={v => onChange({ ...condition, field: v, operator: '=', value: '' })}>
-        <SelectTrigger className="w-44 h-8 text-xs">
-          <SelectValue placeholder="Field…" />
+      {/* Relationship picker */}
+      <Select value={selectedRelKey || '__this__'} onValueChange={v => handleRelChange(v === '__this__' ? '' : v)}>
+        <SelectTrigger className="w-40 h-8 text-xs">
+          <SelectValue placeholder="Object…" />
         </SelectTrigger>
-        <SelectContent className="max-h-52">
-          {fields.map(f => (
-            <SelectItem key={f.name} value={f.name} className="text-xs">{f.label}</SelectItem>
-          ))}
+        <SelectContent className="max-h-56">
+          <SelectItem value="__this__" className="text-xs font-semibold">This Object</SelectItem>
+          {parentOptions.length > 0 && (
+            <>
+              <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Parent Lookups</div>
+              {parentOptions.map(o => (
+                <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+              ))}
+            </>
+          )}
+          {childOptions.length > 0 && (
+            <>
+              <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Child Relationships</div>
+              {childOptions.map(o => (
+                <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+              ))}
+            </>
+          )}
         </SelectContent>
       </Select>
+
+      {/* Field picker */}
+      {loadingRelFields ? (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground w-44 h-8">
+          <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+        </div>
+      ) : (
+        <Select value={fieldName} onValueChange={handleFieldChange}>
+          <SelectTrigger className="w-44 h-8 text-xs">
+            <SelectValue placeholder="Field…" />
+          </SelectTrigger>
+          <SelectContent className="max-h-52">
+            {activeFields.map(f => (
+              <SelectItem key={f.name} value={f.name} className="text-xs">{f.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
 
       {/* Operator */}
       <Select value={condition.operator} onValueChange={v => onChange({ ...condition, operator: v })}>
@@ -113,7 +255,7 @@ function FilterRow({ condition, fields, onChange, onRemove }) {
 }
 
 // Recursive group component
-export default function FilterGroup({ group, fields, onChange, depth = 0 }) {
+export default function FilterGroup({ group, fields, relatedObjects, childRelationships, onChange, depth = 0 }) {
   const addCondition = () => {
     const defaultField = fields[0]?.name || '';
     onChange({
@@ -186,6 +328,8 @@ export default function FilterGroup({ group, fields, onChange, depth = 0 }) {
               <FilterGroup
                 group={cond}
                 fields={fields}
+                relatedObjects={relatedObjects}
+                childRelationships={childRelationships}
                 onChange={updated => updateCondition(idx, updated)}
                 depth={depth + 1}
               />
@@ -200,6 +344,8 @@ export default function FilterGroup({ group, fields, onChange, depth = 0 }) {
             <FilterRow
               condition={cond}
               fields={fields}
+              relatedObjects={relatedObjects}
+              childRelationships={childRelationships}
               onChange={updated => updateCondition(idx, updated)}
               onRemove={() => removeCondition(idx)}
             />
