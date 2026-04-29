@@ -68,7 +68,6 @@ Deno.serve(async (req) => {
         const inList = chunk.map(id => `'${id}'`).join(',');
         return sfQuery(accessToken, `
           SELECT Id, STEM__c, Quantity__c,
-                 Buyers_Brokers_Commission_Per_Unit__c,
                  Buyers_Brokers_Commission_Lumpsum__c,
                  Suppliers_Brokers_Commission_Lumpsum__c,
                  Suppliers_Brokers_Commission_Per_Unit__c,
@@ -110,7 +109,6 @@ Deno.serve(async (req) => {
       initStem(id);
       const qty = li.Quantity__c ?? 0;
       byId[id].suppBrokerComm += (li.Suppliers_Brokers_Commission_Lumpsum__c ?? 0) + (li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * qty;
-      byId[id].buyerBrokerCommPerUnit += (li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * qty;
       byId[id].buyerBrokerLumpsumLineItem = (byId[id].buyerBrokerLumpsumLineItem ?? 0) + (li.Buyers_Brokers_Commission_Lumpsum__c ?? 0);
       if (!byId[id].suppBrokerName && li['Supplier_Broker__r']?.Name) {
         byId[id].suppBrokerName = li['Supplier_Broker__r'].Name;
@@ -130,7 +128,7 @@ Deno.serve(async (req) => {
       const supplier = s.Total_Invoiced_Amount_From_Suppliers__c ?? 0;
       const agg = byId[s.Id] || {};
       const suppBrokerComm = agg.suppBrokerComm ?? 0;
-      const buyerBrokerComm = (agg.buyerBrokerCommPerUnit ?? 0) + (agg.buyerBrokerLumpsum ?? 0) + (agg.buyerBrokerLumpsumLineItem ?? 0);
+      const buyerBrokerComm = (agg.buyerBrokerLumpsum ?? 0) + (agg.buyerBrokerLumpsumLineItem ?? 0);
       const totalBroker = suppBrokerComm + buyerBrokerComm;
       const grossProfit = buyer - supplier;
       const netProfit = grossProfit - totalBroker;
