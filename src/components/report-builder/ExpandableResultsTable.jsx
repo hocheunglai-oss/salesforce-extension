@@ -28,7 +28,7 @@ function fmtVal(key, val) {
     key.toLowerCase().includes('commission')
   ) {
     const n = Number(val);
-    if (!isNaN(n)) return `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+    if (!isNaN(n)) return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
   if (typeof val === 'number') return val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const s = String(val);
