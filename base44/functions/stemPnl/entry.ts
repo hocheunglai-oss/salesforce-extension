@@ -41,8 +41,8 @@ Deno.serve(async (req) => {
     const stems = await sfQuery(accessToken, `
       SELECT Id, KeyStem__c, Name, Delivery_Date__c,
              Account__r.Name,
-             QLIK_STEM_Line_Item_Total__c,
-             QLIK_Costs_Total__c
+             Total_Invoice_Amount__c,
+             Total_Invoiced_Amount_From_Suppliers__c
       FROM stem__c
       ${whereClause}
       ORDER BY Delivery_Date__c DESC
@@ -63,13 +63,14 @@ Deno.serve(async (req) => {
 
     const idChunks = chunkIds(stemIds);
 
-    const [lineItemArrays, buyerBrokerArrays] = await Promise.all([
+    const [lineItemArrays, buyerBrokerArrays, extraCostArrays] = await Promise.all([
       Promise.all(idChunks.map(chunk => {
         const inList = chunk.map(id => `'${id}'`).join(',');
         return sfQuery(accessToken, `
           SELECT Id, STEM__c, Quantity__c,
                  Buyers_Brokers_Commission_Lumpsum__c,
                  Suppliers_Brokers_Commission_Lumpsum__c,
+                 Suppliers_Brokers_Commission_Per_Unit__c,
                  Supplier_Broker__r.Name
           FROM STEM_Line_Item__c
           WHERE STEM__c IN (${inList})
@@ -79,9 +80,19 @@ Deno.serve(async (req) => {
       Promise.all(idChunks.map(chunk => {
         const inList = chunk.map(id => `'${id}'`).join(',');
         return sfQuery(accessToken, `
-          SELECT STEM_Line_Item__r.STEM__c, Commission_Lumpsum__c
+          SELECT STEM_Line_Item__r.STEM__c, Commission_Lumpsum__c,
+                 STEM_Line_Item__r.Quantity__c
           FROM STEM_Line_Item_Buyer_Broker__c
           WHERE STEM_Line_Item__r.STEM__c IN (${inList})
+          LIMIT 5000
+        `);
+      })),
+      Promise.all(idChunks.map(chunk => {
+        const inList = chunk.map(id => `'${id}'`).join(',');
+        return sfQuery(accessToken, `
+          SELECT STEM__c, Line_Total__c, Line_Total_Buy__c
+          FROM STEM_Extra_Cost__c
+          WHERE STEM__c IN (${inList})
           LIMIT 5000
         `);
       })),
@@ -89,8 +100,17 @@ Deno.serve(async (req) => {
 
     const lineItems = lineItemArrays.flat();
     const buyerBrokerItems = buyerBrokerArrays.flat();
+    const extraCosts = extraCostArrays.flat();
 
-    // (extra costs are now covered by QLIK_STEM_Line_Item_Total__c and QLIK_Costs_Total__c)
+    // Build per-stem extra cost totals (buy side and sell side)
+    const extraCostByStemId = {};
+    const extraCostSellByStemId = {};
+    for (const ec of extraCosts) {
+      const id = ec.STEM__c;
+      if (!id) continue;
+      extraCostByStemId[id] = (extraCostByStemId[id] ?? 0) + (ec.Line_Total_Buy__c ?? 0);
+      extraCostSellByStemId[id] = (extraCostSellByStemId[id] ?? 0) + (ec.Line_Total__c ?? 0);
+    }
 
     // Build per-stem aggregates from line items
     const byId = {};
@@ -109,7 +129,6 @@ Deno.serve(async (req) => {
       const id = li.STEM__c;
       if (!id) continue;
       initStem(id);
-      const qty = li.Quantity__c ?? 0;
       // Lumpsum is a stem-level value repeated on every line item — only take it once
       if (!byId[id].suppBrokerLumpsumSet && (li.Suppliers_Brokers_Commission_Lumpsum__c ?? 0) !== 0) {
         byId[id].suppBrokerLumpsum = li.Suppliers_Brokers_Commission_Lumpsum__c;
@@ -130,8 +149,8 @@ Deno.serve(async (req) => {
 
     // Build final rows
     const rows = stems.map(s => {
-      const buyer = s.QLIK_STEM_Line_Item_Total__c ?? 0;
-      const supplier = s.QLIK_Costs_Total__c ?? 0;
+      const buyer = (s.Total_Invoice_Amount__c ?? 0) + (extraCostSellByStemId[s.Id] ?? 0);
+      const supplier = (s.Total_Invoiced_Amount_From_Suppliers__c ?? 0) + (extraCostByStemId[s.Id] ?? 0);
       const agg = byId[s.Id] || {};
       const suppBrokerComm = agg.suppBrokerLumpsum ?? 0;
       const buyerBrokerComm = (agg.buyerBrokerLumpsum ?? 0) + (agg.buyerBrokerLumpsumLineItem ?? 0);
