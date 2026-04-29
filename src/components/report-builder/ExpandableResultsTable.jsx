@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { ChevronRight, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
@@ -44,35 +44,75 @@ function colLabel(key) {
 
 // ── SubTable ─────────────────────────────────────────────────────────────────
 
-function SubTable({ subqueryResult, label }) {
+function SubTable({ subqueryResult, label, depth = 0 }) {
+  const [expandedSubRows, setExpandedSubRows] = useState(new Set());
   if (!subqueryResult?.records?.length) {
     return <p className="text-xs text-muted-foreground italic px-2 py-1">No {label} records</p>;
   }
   const rows = subqueryResult.records;
-  const cols = Object.keys(rows[0]).filter(k => k !== 'attributes');
+  const allCols = Object.keys(rows[0]).filter(k => k !== 'attributes');
+  const mainCols = allCols.filter(k => !isSubqueryResult(rows[0][k]));
+  const nestedCols = allCols.filter(k => isSubqueryResult(rows[0][k]));
+  const hasNested = nestedCols.length > 0;
+
+  const colors = depth === 0
+    ? { bg: 'bg-purple-50', border: 'border-purple-200', th: 'text-purple-700', header: 'bg-purple-100/60', headerText: 'text-purple-600' }
+    : { bg: 'bg-orange-50', border: 'border-orange-200', th: 'text-orange-700', header: 'bg-orange-100/60', headerText: 'text-orange-600' };
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
-          <tr className="bg-purple-50 border-b border-purple-200">
-            {cols.map(c => (
-              <th key={c} className="py-1.5 px-2.5 text-left font-semibold text-purple-700 whitespace-nowrap">
+          <tr className={`${colors.bg} border-b ${colors.border}`}>
+            {hasNested && <th className="py-1.5 px-2 w-6" />}
+            {mainCols.map(c => (
+              <th key={c} className={`py-1.5 px-2.5 text-left font-semibold ${colors.th} whitespace-nowrap`}>
                 {colLabel(c)}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
-            <tr key={row.Id || i} className="border-b border-purple-100 hover:bg-purple-50/50 transition-colors">
-              {cols.map(c => (
-                <td key={c} className="py-1.5 px-2.5 text-foreground whitespace-nowrap">
-                  {isSubqueryResult(row[c]) ? '(nested)' : fmtVal(c, row[c])}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {rows.map((row, i) => {
+            const isExpanded = expandedSubRows.has(i);
+            return (
+              <>
+                <tr
+                  key={row.Id || i}
+                  className={`border-b ${colors.border} hover:${colors.bg}/50 transition-colors ${hasNested ? 'cursor-pointer' : ''}`}
+                  onClick={hasNested ? () => setExpandedSubRows(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s; }) : undefined}
+                >
+                  {hasNested && (
+                    <td className="py-1.5 px-2 text-muted-foreground">
+                      {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    </td>
+                  )}
+                  {mainCols.map(c => (
+                    <td key={c} className="py-1.5 px-2.5 text-foreground whitespace-nowrap">
+                      {fmtVal(c, row[c])}
+                    </td>
+                  ))}
+                </tr>
+                {hasNested && isExpanded && (
+                  <tr key={`nsub-${i}`} className={`${colors.bg}/30`}>
+                    <td colSpan={mainCols.length + 1} className="p-0">
+                      {nestedCols.map(nc => (
+                        <div key={nc} className={`border-t ${colors.border}`}>
+                          <div className={`px-4 py-1 ${colors.header} flex items-center gap-2`}>
+                            <span className={`text-[9px] font-bold ${colors.headerText} uppercase tracking-wide`}>{colLabel(nc)}</span>
+                            <span className={`text-[9px] ${colors.headerText}/60`}>({row[nc]?.totalSize ?? 0} records)</span>
+                          </div>
+                          <div className="px-2 py-1">
+                            <SubTable subqueryResult={row[nc]} label={colLabel(nc)} depth={depth + 1} />
+                          </div>
+                        </div>
+                      ))}
+                    </td>
+                  </tr>
+                )}
+              </>
+            );
+          })}
         </tbody>
       </table>
     </div>

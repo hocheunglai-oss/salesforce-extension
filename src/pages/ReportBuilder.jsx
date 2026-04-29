@@ -205,16 +205,23 @@ export default function ReportBuilder() {
 
     // Extract fields referenced in formula expressions and add them to the query
     const formulaReferencedFields = [];       // flat fields e.g. Costs_Total__c
-    const formulaChildFields = {};            // child subquery fields e.g. { STEM_Line_Items__r: ['Buyers_Brokers_Commission_Lumpsum__c', ...] }
+    const formulaChildFields = {};            // child subquery fields e.g. { STEM_Line_Items__r: ['Commission__c', ...] }
+    const formulaNestedChildFields = {};      // nested: { ParentRel__r: { ChildRel__r: ['Field__c', ...] } }
     calcFields.filter(c => c.type === 'formula' && c.expr).forEach(cf => {
       const matches = [...cf.expr.matchAll(/[A-Za-z_]+\(([A-Za-z0-9_.]+)\)/g)];
       for (const m of matches) {
         const field = m[1];
         if (!field) continue;
-        if (field.includes('.')) {
-          const dotIdx = field.indexOf('.');
-          const rel = field.slice(0, dotIdx);
-          const childField = field.slice(dotIdx + 1);
+        const parts = field.split('.');
+        if (parts.length === 3) {
+          // ParentRel__r.ChildRel__r.Field__c — nested child
+          const [parentRel, childRel, childField] = parts;
+          if (!formulaNestedChildFields[parentRel]) formulaNestedChildFields[parentRel] = {};
+          if (!formulaNestedChildFields[parentRel][childRel]) formulaNestedChildFields[parentRel][childRel] = [];
+          if (!formulaNestedChildFields[parentRel][childRel].includes(childField))
+            formulaNestedChildFields[parentRel][childRel].push(childField);
+        } else if (parts.length === 2) {
+          const [rel, childField] = parts;
           if (!formulaChildFields[rel]) formulaChildFields[rel] = [];
           if (!formulaChildFields[rel].includes(childField)) formulaChildFields[rel].push(childField);
         } else {
@@ -224,7 +231,8 @@ export default function ReportBuilder() {
     });
 
     // Group child fields by relationship so each relationship becomes one subquery
-    const childFieldsByRel = {};
+    const childFieldsByRel = {};     // { relName: [fieldName, ...] }
+    const nestedChildByParent = {};  // { parentRel: { childRel: [fieldName, ...] } }
     const nonChildFields = [];
     const baseFields = selectedFields.length > 0 ? selectedFields : ['Id', 'Name'];
     // Add formula-referenced fields that aren't already in selectedFields
@@ -233,7 +241,14 @@ export default function ReportBuilder() {
       if (!allFields.includes(f)) allFields.push(f);
     });
     for (const f of allFields) {
-      if (f.startsWith('__child__:')) {
+      if (f.startsWith('__nested_child__:')) {
+        const rest = f.slice('__nested_child__:'.length);
+        const parts = rest.split(':');
+        const parentRel = parts[0], childRel = parts[1], field = parts[2];
+        if (!nestedChildByParent[parentRel]) nestedChildByParent[parentRel] = {};
+        if (!nestedChildByParent[parentRel][childRel]) nestedChildByParent[parentRel][childRel] = [];
+        if (!nestedChildByParent[parentRel][childRel].includes(field)) nestedChildByParent[parentRel][childRel].push(field);
+      } else if (f.startsWith('__child__:')) {
         const rest = f.slice('__child__:'.length);
         const colonIdx = rest.indexOf(':');
         const rel = rest.slice(0, colonIdx);
@@ -250,9 +265,33 @@ export default function ReportBuilder() {
       flds.forEach(f => { if (!childFieldsByRel[rel].includes(f)) childFieldsByRel[rel].push(f); });
     });
 
-    const childSubqueries = Object.entries(childFieldsByRel).map(
-      ([rel, flds]) => `(SELECT ${flds.join(', ')} FROM ${rel})`
-    );
+    // Build child subqueries, merging in any nested subqueries for the same parent rel
+    const childSubqueries = Object.entries(childFieldsByRel).map(([rel, flds]) => {
+      const nested = nestedChildByParent[rel] || {};
+      const nestedSubqueries = Object.entries(nested).map(
+        ([childRel, childFlds]) => `(SELECT ${childFlds.join(', ')} FROM ${childRel})`
+      );
+      const allCols = [...flds, ...nestedSubqueries];
+      return `(SELECT ${allCols.join(', ')} FROM ${rel})`;
+    });
+    // Merge formula nested child fields into nestedChildByParent
+    Object.entries(formulaNestedChildFields).forEach(([parentRel, childRels]) => {
+      if (!nestedChildByParent[parentRel]) nestedChildByParent[parentRel] = {};
+      Object.entries(childRels).forEach(([childRel, flds]) => {
+        if (!nestedChildByParent[parentRel][childRel]) nestedChildByParent[parentRel][childRel] = [];
+        flds.forEach(f => { if (!nestedChildByParent[parentRel][childRel].includes(f)) nestedChildByParent[parentRel][childRel].push(f); });
+      });
+    });
+
+    // Also handle nested children whose parent rel has NO direct fields selected
+    Object.entries(nestedChildByParent).forEach(([parentRel, childRels]) => {
+      if (childFieldsByRel[parentRel]) return; // already handled above
+      const nestedSubqueries = Object.entries(childRels).map(
+        ([childRel, childFlds]) => `(SELECT ${childFlds.join(', ')} FROM ${childRel})`
+      );
+      // Need at least one direct field in the parent subquery — use Id
+      childSubqueries.push(`(SELECT Id, ${nestedSubqueries.join(', ')} FROM ${parentRel})`);
+    });
     const baseCols = [...nonChildFields, ...childSubqueries];
     cols = [...baseCols, ...lookupCols].join(', ');
     let q = `SELECT ${cols} FROM ${selectedObject}`;
@@ -287,22 +326,44 @@ export default function ReportBuilder() {
               const val = row[aggLabelMap[aggKey]];
               return val != null ? String(val) : '0';
             }
-            // Check if it's a child relationship path: Rel__r.Field__c
+            // Check if it's a relationship path: Rel__r.Field or Rel__r.NestedRel__r.Field
             if (field.includes('.')) {
-              const dotIdx = field.indexOf('.');
-              const relName = field.slice(0, dotIdx);
-              const childField = field.slice(dotIdx + 1);
-              const subquery = row[relName];
-              if (subquery && Array.isArray(subquery.records)) {
-                // Sum (or apply fn) across child records
-                const fnUpper = fn.toUpperCase();
-                const childVals = subquery.records.map(r => Number(r[childField]) || 0);
-                if (fnUpper === 'SUM') return String(childVals.reduce((a, b) => a + b, 0));
-                if (fnUpper === 'COUNT' || fnUpper === 'COUNT_DISTINCT') return String(childVals.length);
-                if (fnUpper === 'AVG') return childVals.length ? String(childVals.reduce((a, b) => a + b, 0) / childVals.length) : '0';
-                if (fnUpper === 'MIN') return childVals.length ? String(Math.min(...childVals)) : '0';
-                if (fnUpper === 'MAX') return childVals.length ? String(Math.max(...childVals)) : '0';
-                return String(childVals.reduce((a, b) => a + b, 0));
+              const parts = field.split('.');
+              const fnUpper = fn.toUpperCase();
+
+              if (parts.length === 2) {
+                // One level: Rel__r.Field__c
+                const [relName, childField] = parts;
+                const subquery = row[relName];
+                if (subquery && Array.isArray(subquery.records)) {
+                  const childVals = subquery.records.map(r => Number(r[childField]) || 0);
+                  if (fnUpper === 'SUM') return String(childVals.reduce((a, b) => a + b, 0));
+                  if (fnUpper === 'COUNT' || fnUpper === 'COUNT_DISTINCT') return String(childVals.length);
+                  if (fnUpper === 'AVG') return childVals.length ? String(childVals.reduce((a, b) => a + b, 0) / childVals.length) : '0';
+                  if (fnUpper === 'MIN') return childVals.length ? String(Math.min(...childVals)) : '0';
+                  if (fnUpper === 'MAX') return childVals.length ? String(Math.max(...childVals)) : '0';
+                  return String(childVals.reduce((a, b) => a + b, 0));
+                }
+              } else if (parts.length === 3) {
+                // Two levels: ParentRel__r.ChildRel__r.Field__c (nested child)
+                const [parentRelName, childRelName, leafField] = parts;
+                const parentSubquery = row[parentRelName];
+                if (parentSubquery && Array.isArray(parentSubquery.records)) {
+                  // Collect all leaf values across all parent records' nested children
+                  const allVals = [];
+                  for (const parentRow of parentSubquery.records) {
+                    const childSubquery = parentRow[childRelName];
+                    if (childSubquery && Array.isArray(childSubquery.records)) {
+                      childSubquery.records.forEach(r => allVals.push(Number(r[leafField]) || 0));
+                    }
+                  }
+                  if (fnUpper === 'SUM') return String(allVals.reduce((a, b) => a + b, 0));
+                  if (fnUpper === 'COUNT' || fnUpper === 'COUNT_DISTINCT') return String(allVals.length);
+                  if (fnUpper === 'AVG') return allVals.length ? String(allVals.reduce((a, b) => a + b, 0) / allVals.length) : '0';
+                  if (fnUpper === 'MIN') return allVals.length ? String(Math.min(...allVals)) : '0';
+                  if (fnUpper === 'MAX') return allVals.length ? String(Math.max(...allVals)) : '0';
+                  return String(allVals.reduce((a, b) => a + b, 0));
+                }
               }
               return '0';
             }
