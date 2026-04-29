@@ -105,6 +105,7 @@ export default function ReportBuilder() {
   const [lookups, setLookups] = useState([]);
   const [orderByField, setOrderByField] = useState(() => localStorage.getItem('rb_default_orderby') || 'KeyStem__c');
   const [limitVal, setLimitVal] = useState(() => Number(localStorage.getItem('rb_default_limit') || 100));
+  const LIMIT_OPTIONS = [100, 200, 300, 400, 500];
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleFreq, setScheduleFreq] = useState('weekly');
   const [scheduleEmail, setScheduleEmail] = useState('');
@@ -490,6 +491,16 @@ export default function ReportBuilder() {
               <Button variant="outline" size="sm" onClick={() => setSaveDialogOpen(true)} className="gap-1.5">
                 <Save className="w-3.5 h-3.5" /> Save
               </Button>
+              <Select value={String(limitVal)} onValueChange={v => setLimitVal(Number(v))}>
+                <SelectTrigger className="w-24 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LIMIT_OPTIONS.map(n => (
+                    <SelectItem key={n} value={String(n)} className="text-xs">{n} rows</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button size="sm" onClick={runQuery} disabled={loading} className="gap-1.5">
                 {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                 Run
