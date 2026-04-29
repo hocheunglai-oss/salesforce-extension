@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
 
     const idChunks = chunkIds(stemIds);
 
-    const [lineItemArrays, buyerBrokerArrays] = await Promise.all([
+    const [lineItemArrays, buyerBrokerArrays, extraCostArrays] = await Promise.all([
       Promise.all(idChunks.map(chunk => {
         const inList = chunk.map(id => `'${id}'`).join(',');
         return sfQuery(accessToken, `
@@ -87,10 +87,28 @@ Deno.serve(async (req) => {
           LIMIT 5000
         `);
       })),
+      Promise.all(idChunks.map(chunk => {
+        const inList = chunk.map(id => `'${id}'`).join(',');
+        return sfQuery(accessToken, `
+          SELECT STEM__c, Line_Total_Buy__c
+          FROM STEM_Extra_Cost__c
+          WHERE STEM__c IN (${inList})
+          LIMIT 5000
+        `);
+      })),
     ]);
 
     const lineItems = lineItemArrays.flat();
     const buyerBrokerItems = buyerBrokerArrays.flat();
+    const extraCosts = extraCostArrays.flat();
+
+    // Build per-stem extra cost totals (buy side)
+    const extraCostByStemId = {};
+    for (const ec of extraCosts) {
+      const id = ec.STEM__c;
+      if (!id) continue;
+      extraCostByStemId[id] = (extraCostByStemId[id] ?? 0) + (ec.Line_Total_Buy__c ?? 0);
+    }
 
     // Build per-stem aggregates from line items
     const byId = {};
@@ -131,7 +149,7 @@ Deno.serve(async (req) => {
     // Build final rows
     const rows = stems.map(s => {
       const buyer = s.Total_Invoice_Amount__c ?? 0;
-      const supplier = s.Total_Invoiced_Amount_From_Suppliers__c ?? 0;
+      const supplier = (s.Total_Invoiced_Amount_From_Suppliers__c ?? 0) + (extraCostByStemId[s.Id] ?? 0);
       const agg = byId[s.Id] || {};
       const suppBrokerComm = agg.suppBrokerLumpsum ?? 0;
       const buyerBrokerComm = (agg.buyerBrokerLumpsum ?? 0) + (agg.buyerBrokerLumpsumLineItem ?? 0);
