@@ -26,10 +26,7 @@ const COLUMNS = [
   { key: 'Supplier_Invoice',   label: 'Supplier Invoice',  num: true },
   { key: 'Supplier_Broker_Comm', label: 'Supp. Broker',   num: true },
   { key: 'Buyer_Broker_Comm',  label: 'Buyer Broker',      num: true },
-  { key: 'Gross_Profit',       label: 'Gross P&L',         num: true },
-  { key: 'Net_Profit',         label: 'Net P&L',           num: true },
-  { key: 'Margin_Pct',         label: 'Margin %',          num: true, isPercent: true },
-  { key: 'Qlik_Total_Profit',  label: 'Qlik Total Profit', num: true },
+  { key: 'Qlik_Total_Profit',  label: 'Net P&L (Qlik)',   num: true },
 ];
 
 const YEAR_OPTIONS = ['2026', '2025', '2024', '2023'];
@@ -194,10 +191,10 @@ export default function StemPnlReport() {
             <StatCard label="Supplier Invoices" value={fmt(totals.Supplier_Invoice)} color="amber" />
             <StatCard label="Broker Commissions" value={fmt(totals.Total_Broker_Comm)} color="amber" />
             <StatCard
-              label="Net P&L"
-              value={fmt(totals.Net_Profit)}
-              sub={totals.Buyer_Invoice ? `${((totals.Net_Profit / totals.Buyer_Invoice) * 100).toFixed(1)}% margin` : null}
-              color={totals.Net_Profit >= 0 ? 'green' : 'red'}
+              label="Net P&L (Qlik)"
+              value={fmt(totals.Qlik_Net_Profit)}
+              sub={totals.Buyer_Invoice ? `${((totals.Qlik_Net_Profit / totals.Buyer_Invoice) * 100).toFixed(1)}% margin` : null}
+              color={(totals.Qlik_Net_Profit ?? 0) >= 0 ? 'green' : 'red'}
             />
           </div>
         )}
@@ -230,8 +227,6 @@ export default function StemPnlReport() {
                 </thead>
                 <tbody>
                   {filtered.map((row, i) => {
-                    const netPos = row.Net_Profit != null && row.Net_Profit >= 0;
-                    const netNeg = row.Net_Profit != null && row.Net_Profit < 0;
                     return (
                       <tr key={row.Id || i} className="border-b border-border/40 hover:bg-muted/20 transition-colors">
                         {COLUMNS.map(col => {
@@ -242,7 +237,7 @@ export default function StemPnlReport() {
                           else if (col.num) display = fmt(v);
                           else display = v ?? '—';
 
-                          const isProfit = col.key === 'Net_Profit' || col.key === 'Gross_Profit' || col.key === 'Qlik_Total_Profit';
+                          const isProfit = col.key === 'Qlik_Total_Profit';
                           const isMargin = col.key === 'Margin_Pct';
                           let cellColor = '';
                           if ((isProfit || isMargin) && v != null) {
@@ -266,7 +261,7 @@ export default function StemPnlReport() {
                       {COLUMNS.map((col, i) => {
                         const isNum = col.num && totals[col.key] != null;
                         return (
-                          <td key={col.key} className={`py-2.5 px-3 whitespace-nowrap ${col.num ? 'text-right font-mono' : ''} ${col.key === 'Net_Profit' || col.key === 'Gross_Profit' ? (totals[col.key] >= 0 ? 'text-emerald-600' : 'text-red-500') : ''}`}>
+                          <td key={col.key} className={`py-2.5 px-3 whitespace-nowrap ${col.num ? 'text-right font-mono' : ''} ${col.key === 'Qlik_Total_Profit' ? ((totals.Qlik_Net_Profit ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500') : ''}`}>
                             {i === 0 ? 'TOTAL' : isNum ? (col.isPercent ? fmt(totals.Buyer_Invoice ? (totals.Net_Profit / totals.Buyer_Invoice) * 100 : null, true) : fmt(totals[col.key])) : ''}
                           </td>
                         );

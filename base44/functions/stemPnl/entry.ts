@@ -168,6 +168,7 @@ Deno.serve(async (req) => {
       Total_Broker_Comm: complete.reduce((s, r) => s + (r.Total_Broker_Comm ?? 0), 0),
       Gross_Profit: complete.reduce((s, r) => s + (r.Gross_Profit ?? 0), 0),
       Net_Profit: complete.reduce((s, r) => s + (r.Net_Profit ?? 0), 0),
+      Qlik_Net_Profit: rows.reduce((s, r) => s + (r.Qlik_Total_Profit ?? 0), 0),
     };
 
     return Response.json({ rows, totals });
