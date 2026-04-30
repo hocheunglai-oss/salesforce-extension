@@ -42,7 +42,8 @@ Deno.serve(async (req) => {
       SELECT Id, KeyStem__c, Name, Delivery_Date__c,
              Account__r.Name,
              Total_Invoice_Amount__c,
-             Total_Invoiced_Amount_From_Suppliers__c
+             Total_Invoiced_Amount_From_Suppliers__c,
+             QLIK_Total_Profit__c
       FROM stem__c
       ${whereClause}
       ORDER BY Delivery_Date__c DESC
@@ -153,6 +154,7 @@ Deno.serve(async (req) => {
         Gross_Profit: (buyer && supplier) ? grossProfit : null,
         Net_Profit: (buyer && supplier) ? netProfit : null,
         Margin_Pct: (buyer && supplier) ? margin : null,
+        Qlik_Total_Profit: s.QLIK_Total_Profit__c ?? null,
       };
     });
 

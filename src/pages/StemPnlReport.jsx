@@ -29,6 +29,7 @@ const COLUMNS = [
   { key: 'Gross_Profit',       label: 'Gross P&L',         num: true },
   { key: 'Net_Profit',         label: 'Net P&L',           num: true },
   { key: 'Margin_Pct',         label: 'Margin %',          num: true, isPercent: true },
+  { key: 'Qlik_Total_Profit',  label: 'Qlik Total Profit', num: true },
 ];
 
 const YEAR_OPTIONS = ['2026', '2025', '2024', '2023'];
@@ -241,7 +242,7 @@ export default function StemPnlReport() {
                           else if (col.num) display = fmt(v);
                           else display = v ?? '—';
 
-                          const isProfit = col.key === 'Net_Profit' || col.key === 'Gross_Profit';
+                          const isProfit = col.key === 'Net_Profit' || col.key === 'Gross_Profit' || col.key === 'Qlik_Total_Profit';
                           const isMargin = col.key === 'Margin_Pct';
                           let cellColor = '';
                           if ((isProfit || isMargin) && v != null) {
