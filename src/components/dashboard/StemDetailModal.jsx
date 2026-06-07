@@ -373,7 +373,8 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                             <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Qty</th>
                             <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Sell/Unit</th>
                             <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Buy/Unit</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Total</th>
+                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Sell</th>
+                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Buy</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -387,6 +388,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                               <td className="py-2.5 px-3 text-right text-foreground">{ec.Unit_Price__c != null ? fmtMoney(ec.Unit_Price__c) : '—'}</td>
                               <td className="py-2.5 px-3 text-right text-foreground">{ec.Unit_Cost__c != null ? fmtMoney(ec.Unit_Cost__c) : '—'}</td>
                               <td className="py-2.5 px-3 text-right font-semibold text-foreground">{ec.Line_Total__c != null ? fmtMoney(ec.Line_Total__c) : '—'}</td>
+                              <td className="py-2.5 px-3 text-right font-semibold text-foreground">{ec.Line_Total_Buy__c != null ? fmtMoney(ec.Line_Total_Buy__c) : '—'}</td>
                             </tr>
                           ))}
                         </tbody>
