@@ -17,7 +17,7 @@ const FIELD_LABELS = {
 };
 
 // Columns to completely hide (used only for internal P&L calc)
-const HIDDEN_COLS = new Set(['__buyerCommCalc', '__suppLumpsumCalc', 'Buyer_Name__c', 'Buyer__c', 'KeyStem__c']);
+const HIDDEN_COLS = new Set(['__buyerCommCalc', '__suppLumpsumCalc', 'Buyer_Name__c', 'Buyer__c', 'KeyStem__c', '_buyerBrokerName', '_buyerBrokerComm', '_suppBrokerName', '_suppBrokerComm']);
 
 // Columns that are right-aligned (money)
 const MONEY_COLS = new Set([BUYER_FIELD, SUPPLIER_FIELD, COSTS_FIELD, '_buyerBrokerComm', '_suppBrokerComm', '__pnl__']);
