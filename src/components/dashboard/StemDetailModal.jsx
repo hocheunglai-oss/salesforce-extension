@@ -303,8 +303,14 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                                   ? `${li.Quantity__c ?? '—'}–${li.Quantity_Max__c}`
                                   : (li.Quantity_in_MT__c > 0 ? li.Quantity_in_MT__c.toLocaleString() : (li.Quantity__c != null ? li.Quantity__c.toLocaleString() : '—'))}
                               </td>
-                              <td className="py-2 pr-3 text-right text-foreground">{li.Price_Per_Unit__c != null ? fmtMoney(li.Price_Per_Unit__c) : '—'}</td>
-                              <td className="py-2 pr-3 text-right text-foreground">{li.Cost_Per_Unit__c != null ? fmtMoney(li.Cost_Per_Unit__c) : '—'}</td>
+                              <td className="py-2 pr-3 text-right text-foreground">{
+                                li.Price_Per_Unit__c != null ? fmtMoney(li.Price_Per_Unit__c) :
+                                (li.Total_Price__c != null && li.Quantity__c) ? fmtMoney(li.Total_Price__c / li.Quantity__c) : '—'
+                              }</td>
+                              <td className="py-2 pr-3 text-right text-foreground">{
+                                li.Cost_Per_Unit__c != null ? fmtMoney(li.Cost_Per_Unit__c) :
+                                (li.Total_Cost__c != null && li.Quantity__c) ? fmtMoney(li.Total_Cost__c / li.Quantity__c) : '—'
+                              }</td>
                               <td className="py-2 pr-3 text-right font-semibold text-foreground">{li.Total_Price__c != null ? fmtMoney(li.Total_Price__c) : '—'}</td>
                               <td className="py-2 pr-3 text-right font-semibold text-foreground">{li.Total_Cost__c != null ? fmtMoney(li.Total_Cost__c) : '—'}</td>
                               <td className="py-2 pr-3 text-right text-foreground">{li.Buyers_Brokers_Commission_Per_Unit__c != null ? fmtMoney(li.Buyers_Brokers_Commission_Per_Unit__c) : '—'}</td>
@@ -320,10 +326,10 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                 )}
 
                 {/* STEM Extra Costs */}
-                {extraCosts.length > 0 && (
+                {extraCosts.filter(ec => (ec.Unit_Price__c ?? 0) !== 0 || (ec.Unit_Cost__c ?? 0) !== 0).length > 0 && (
                   <div>
                     <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 pb-1.5 border-b border-border">
-                      Extra Costs ({extraCosts.length})
+                      Extra Costs ({extraCosts.filter(ec => (ec.Unit_Price__c ?? 0) !== 0 || (ec.Unit_Cost__c ?? 0) !== 0).length})
                     </h3>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
@@ -340,7 +346,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {extraCosts.map((ec) => (
+                          {extraCosts.filter(ec => (ec.Unit_Price__c ?? 0) !== 0 || (ec.Unit_Cost__c ?? 0) !== 0).map((ec) => (
                             <tr key={ec.Id} className="border-b border-border/40 hover:bg-muted/20">
                               <td className="py-2 pr-3 font-medium text-foreground">{ec.Name || '—'}</td>
                               <td className="py-2 pr-3 text-muted-foreground">{ec.Description__c || '—'}</td>
