@@ -79,7 +79,6 @@ const SECTIONS = [
   {
     title: 'Other',
     fields: [
-      { key: '_Buyer_Broker_Name', label: 'Buyer Broker' },
       { key: '_Factoring_Invoice_Name', label: 'Factoring Invoice' },
       { key: 'Mailing_Status__c', label: 'Mailing Status' },
       { key: 'Due_Date_Override__c', label: 'Due Date Override', fmt: fmtBool },
@@ -102,10 +101,16 @@ function PnlBanner({ record, lineItems, buyerBrokers }) {
   const supplier = record.Total_Invoiced_Amount_From_Suppliers__c;
   if (!buyer || !supplier) return null;
 
+  // Supplier broker: per_unit × qty (negative = profit)
   const suppBrokerComm = lineItems.reduce((sum, li) => {
     return sum + ((li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0));
   }, 0);
-  const buyerBrokerComm = buyerBrokers.reduce((sum, bb) => sum + (bb.Commission_Lumpsum__c ?? 0), 0);
+  // Buyer broker: per_unit × qty from line items + lumpsum from STEM_Buyer_Broker__c records
+  const buyerBrokerCommPerUnit = lineItems.reduce((sum, li) => {
+    return sum + ((li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0));
+  }, 0);
+  const buyerBrokerLumpsum = buyerBrokers.reduce((sum, bb) => sum + (bb.Commission_Lumpsum__c ?? 0), 0);
+  const buyerBrokerComm = buyerBrokerCommPerUnit + buyerBrokerLumpsum;
   const grossProfit = buyer - supplier;
   const netProfit = grossProfit - suppBrokerComm - buyerBrokerComm;
   const isPositive = netProfit >= 0;
@@ -131,12 +136,21 @@ function PnlBanner({ record, lineItems, buyerBrokers }) {
             </div>
           </>
         )}
-        {buyerBrokerComm !== 0 && (
+        {buyerBrokerCommPerUnit !== 0 && (
           <>
             <div className="text-muted-foreground self-end pb-0.5">−</div>
             <div className="flex flex-col">
               <span className="text-xs text-muted-foreground mb-0.5">Buyer Broker Comm</span>
-              <span className="font-semibold text-foreground">{fmtMoney(buyerBrokerComm)}</span>
+              <span className="font-semibold text-foreground">{fmtMoney(buyerBrokerCommPerUnit)}</span>
+            </div>
+          </>
+        )}
+        {buyerBrokerLumpsum !== 0 && (
+          <>
+            <div className="text-muted-foreground self-end pb-0.5">−</div>
+            <div className="flex flex-col">
+              <span className="text-xs text-muted-foreground mb-0.5">Buyer Broker Lumpsum</span>
+              <span className="font-semibold text-foreground">{fmtMoney(buyerBrokerLumpsum)}</span>
             </div>
           </>
         )}
@@ -194,7 +208,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
     }
   });
 
-  const visibleExtraCosts = extraCosts.filter(ec => (ec.Unit_Price__c ?? 0) !== 0 || (ec.Unit_Cost__c ?? 0) !== 0);
+  const visibleExtraCosts = extraCosts;
 
   return (
     <>
@@ -302,16 +316,19 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                             <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Sell</th>
                             <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Buy</th>
                             <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker Comm</th>
+                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker/Unit</th>
+                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker Lumpsum</th>
                             <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Supp Broker</th>
                             <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Supp Broker/Unit</th>
                           </tr>
                         </thead>
                         <tbody>
                           {lineItems.map((li, idx) => {
+                            // Buyer broker: from STEM_Buyer_Broker__c linked to this line item, fallback to stem-level broker name
                             const bbs = lineItemBuyerBrokerMap[li.Id] || [];
-                            const bbComm = bbs.reduce((s, bb) => s + (bb.Commission_Lumpsum__c ?? 0), 0);
-                            const bbName = bbs.map(bb => bb._Buyer_Broker_Name).filter(Boolean).join(', ');
+                            const bbLumpsum = bbs.reduce((s, bb) => s + (bb.Commission_Lumpsum__c ?? 0), 0);
+                            const bbName = bbs.map(bb => bb._Buyer_Broker_Name).filter(Boolean).join(', ')
+                              || record._Buyer_Broker_Name || null;
                             return (
                               <tr key={li.Id} className={`border-b border-border/40 hover:bg-muted/20 transition-colors ${idx % 2 === 0 ? '' : 'bg-muted/10'}`}>
                                 <td className="py-2.5 px-3 font-medium text-foreground">{li._Product_Name || '—'}</td>
@@ -330,7 +347,8 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                                 <td className="py-2.5 px-3 text-right font-semibold text-foreground">{li.Total_Price__c != null ? fmtMoney(li.Total_Price__c) : '—'}</td>
                                 <td className="py-2.5 px-3 text-right font-semibold text-foreground">{li.Total_Cost__c != null ? fmtMoney(li.Total_Cost__c) : '—'}</td>
                                 <td className="py-2.5 px-3 text-left text-muted-foreground">{bbName || '—'}</td>
-                                <td className="py-2.5 px-3 text-right text-foreground">{bbs.length > 0 ? fmtMoney(bbComm) : '—'}</td>
+                                <td className="py-2.5 px-3 text-right text-foreground">{li.Buyers_Brokers_Commission_Per_Unit__c != null ? fmtMoney(li.Buyers_Brokers_Commission_Per_Unit__c) : '—'}</td>
+                                <td className="py-2.5 px-3 text-right text-foreground">{bbs.length > 0 ? fmtMoney(bbLumpsum) : '—'}</td>
                                 <td className="py-2.5 px-3 text-left text-muted-foreground">{li._Supplier_Broker_Name || '—'}</td>
                                 <td className="py-2.5 px-3 text-right text-foreground">{li.Suppliers_Brokers_Commission_Per_Unit__c != null ? fmtMoney(li.Suppliers_Brokers_Commission_Per_Unit__c) : '—'}</td>
                               </tr>
@@ -343,9 +361,9 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                 )}
 
                 {/* Extra Costs */}
-                {visibleExtraCosts.length > 0 && (
+                {extraCosts.length > 0 && (
                   <div>
-                    <SectionHeader title={`Extra Costs (${visibleExtraCosts.length})`} />
+                    <SectionHeader title={`Extra Costs (${extraCosts.length})`} />
                     <div className="rounded-xl border border-border overflow-hidden">
                       <table className="w-full text-xs">
                         <thead>
