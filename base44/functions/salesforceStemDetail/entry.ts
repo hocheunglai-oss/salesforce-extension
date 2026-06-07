@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
     const [res, lineItems, extraCosts, buyerBrokers] = await Promise.all([
       sfGet(accessToken, `/sobjects/stem__c/${actualStemId}`),
       sfQuery(accessToken, `SELECT Id, Name, Product__c, Product__r.Name, Supplier_Name__c, Quantity__c, Quantity_Max__c, Subtotal_Sell_At__c, Subtotal_Buy_At__c, Total_Price__c, Total_Cost__c, Payment_Term__c, BDN_Number__c, Quantity_in_MT__c, Is_Quantity_Range__c, Buyers_Brokers_Commission_Per_Unit__c, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c, Suppliers_Brokers_Commission_Lumpsum__c, Offer_Line_Item__r.UnitPrice, Offer_Line_Item__r.Supplier_Unit_Price__c FROM STEM_Line_Item__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`),
-      sfQuery(accessToken, `SELECT Id, Name, Description__c, Supplier_Name__c, Quantity__c, Unit_Price__c, Unit_Cost__c, Line_Total__c, Line_Total_Buy__c, Type__c, Payment_Term__c FROM STEM_Extra_Cost__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`),
+      sfQuery(accessToken, `SELECT Id, Name, Product__r.Name, Description__c, Supplier_Name__c, Quantity__c, Unit_Price__c, Unit_Cost__c, Line_Total__c, Line_Total_Buy__c, Lumpsum_Sell_At__c, Lumpsum_Buy_At__c, Type__c, Payment_Term__c FROM STEM_Extra_Cost__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`),
       sfQuery(accessToken, `SELECT Id, Buyer_Broker__c, Refcode_Index__c, Exported__c, Commission_Lumpsum__c, STEM_Line_Item__r.Id FROM STEM_Buyer_Broker__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`),
     ]);
 
@@ -134,7 +134,12 @@ Deno.serve(async (req) => {
       _Factoring_Invoice_Name: factoringInvoiceName,
     };
 
-    return Response.json({ record, lineItems: lineItemsWithBrokerNames, extraCosts, buyerBrokers: buyerBrokersWithNames });
+    const extraCostsWithNames = extraCosts.map(ec => ({
+      ...ec,
+      _Product_Name: ec['Product__r']?.Name ?? null,
+    }));
+
+    return Response.json({ record, lineItems: lineItemsWithBrokerNames, extraCosts: extraCostsWithNames, buyerBrokers: buyerBrokersWithNames });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
