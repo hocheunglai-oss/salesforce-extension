@@ -17,7 +17,7 @@ const FIELD_LABELS = {
 };
 
 // Columns to completely hide (used only for internal P&L calc)
-const HIDDEN_COLS = new Set(['__buyerCommCalc', '__suppLumpsumCalc', 'Buyer_Name__c', 'Buyer__c', 'KeyStem__c', '_buyerBrokerName', '_buyerBrokerComm', '_suppBrokerName', '_suppBrokerComm']);
+const HIDDEN_COLS = new Set(['__buyerCommCalc', '__suppCommPerUnitCalc', 'Buyer_Name__c', 'Buyer__c', 'KeyStem__c', '_buyerBrokerName', '_buyerBrokerComm', '_suppBrokerName', '_suppBrokerComm']);
 
 // Columns that are right-aligned (money)
 const MONEY_COLS = new Set([BUYER_FIELD, SUPPLIER_FIELD, COSTS_FIELD, '_buyerBrokerComm', '_suppBrokerComm', '__pnl__']);
@@ -102,12 +102,11 @@ export default function PnlTable({ records = [], onRowClick }) {
           {records.map((row, i) => {
             const buyer = row[BUYER_FIELD] ?? null;
             const supplier = row[SUPPLIER_FIELD] ?? null;
-            const costs = row[COSTS_FIELD] ?? 0;
             const hasDelivery = !!row[DELIVERY_FIELD];
             const buyerCommCalc = row.__buyerCommCalc ?? 0;
-            const suppLumpsumCalc = row.__suppLumpsumCalc ?? 0;
+            const suppCommPerUnitCalc = row.__suppCommPerUnitCalc ?? 0;
             const pnl = showPnl && hasDelivery
-              ? (!buyer || !supplier ? 0 : buyer - supplier - costs - buyerCommCalc - suppLumpsumCalc)
+              ? (!buyer || !supplier ? 0 : buyer - supplier - suppCommPerUnitCalc - buyerCommCalc)
               : null;
             const pnlPositive = pnl != null && pnl >= 0;
 
