@@ -208,7 +208,9 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
     }
   });
 
-  const visibleExtraCosts = extraCosts;
+  const visibleExtraCosts = extraCosts.filter(ec =>
+    ec.Unit_Price__c != null || ec.Unit_Cost__c != null || ec.Line_Total__c != null || ec.Line_Total_Buy__c != null
+  );
 
   return (
     <>
@@ -322,9 +324,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                             <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker/Unit</th>
                             <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Supp Broker</th>
                             <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Supp Broker/Unit</th>
-                            {lineItems.some(li => li.BDN_Number__c) && (
-                              <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">BDN No.</th>
-                            )}
+
                           </tr>
                         </thead>
                         <tbody>
@@ -358,9 +358,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                                 <td className="py-2.5 px-3 text-right text-foreground">{li.Buyers_Brokers_Commission_Per_Unit__c != null ? fmtMoney(li.Buyers_Brokers_Commission_Per_Unit__c) : '—'}</td>
                                 <td className="py-2.5 px-3 text-left text-muted-foreground">{li._Supplier_Broker_Name || '—'}</td>
                                 <td className="py-2.5 px-3 text-right text-foreground">{li.Suppliers_Brokers_Commission_Per_Unit__c != null ? fmtMoney(li.Suppliers_Brokers_Commission_Per_Unit__c) : '—'}</td>
-                                {lineItems.some(l => l.BDN_Number__c) && (
-                                  <td className="py-2.5 px-3 text-left text-foreground">{li.BDN_Number__c || '—'}</td>
-                                )}
+
                               </tr>
                             );
                           })}
