@@ -209,7 +209,10 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
   });
 
   const visibleExtraCosts = extraCosts.filter(ec =>
-    ec.Unit_Price__c != null || ec.Unit_Cost__c != null || ec.Line_Total__c != null || ec.Line_Total_Buy__c != null
+    (ec.Unit_Price__c != null && ec.Unit_Price__c !== 0) ||
+    (ec.Unit_Cost__c != null && ec.Unit_Cost__c !== 0) ||
+    (ec.Line_Total__c != null && ec.Line_Total__c !== 0) ||
+    (ec.Line_Total_Buy__c != null && ec.Line_Total_Buy__c !== 0)
   );
 
   return (
