@@ -375,6 +375,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                 {extraCosts.length > 0 && (
                   <div>
                     <SectionHeader title={`Extra Costs (${extraCosts.length})`} />
+                    <div className="text-[10px] text-muted-foreground mb-2 font-mono">DEBUG: {JSON.stringify(extraCosts.map(ec => ({Name: ec.Name, _Product_Name: ec._Product_Name, Product2Id__r: ec['Product2Id__r']?.Name}))) }</div>
                     <div className="rounded-xl border border-border overflow-hidden">
                       <table className="w-full text-xs">
                         <thead>
