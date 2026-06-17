@@ -77,7 +77,7 @@ export default function DashboardSettings() {
     setLoading(true);
     setError(null);
     const where = buildWhereClause(yrs, mos);
-    const res = await base44.functions.invoke('salesforceDashboardFiltered', { where });
+    const res = await base44.functions.invoke('salesforceDashboardFiltered', { where, trendYear: THIS_YEAR });
     if (res.data?.error) {
       setError(res.data.error);
     } else {
@@ -241,6 +241,26 @@ export default function DashboardSettings() {
               color="red"
             />
           </div>
+
+          {/* Monthly Net P&L Trend */}
+          {data.monthlyNetPnl?.length > 0 && (
+            <div className="bg-card rounded-xl border border-border p-5 mb-8">
+              <h3 className="text-sm font-semibold text-foreground mb-1">Monthly Net P&amp;L Trend</h3>
+              <p className="text-xs text-muted-foreground mb-4">Total Net P&amp;L by month for {data.monthlyNetPnlYear || THIS_YEAR}</p>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={data.monthlyNetPnl} barSize={44}>
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+                  <Tooltip formatter={(v) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, 'Net P&L']} />
+                  <Bar dataKey="netPnl" radius={[4, 4, 0, 0]}>
+                    {data.monthlyNetPnl.map((item, idx) => (
+                      <Cell key={idx} fill={item.netPnl >= 0 ? '#10b981' : '#ef4444'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           {/* Charts */}
           {(data.stemByStatus?.length > 0 || data.stemByType?.length > 0) && (

@@ -26,7 +26,8 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
-    const { where } = body;
+    const { where, trendYear } = body;
+    const currentYear = Number(trendYear) || new Date().getFullYear();
 
     const { accessToken } = await base44.asServiceRole.connectors.getConnection("salesforce");
 
@@ -107,6 +108,8 @@ Deno.serve(async (req) => {
         : Promise.resolve({ records: [] }),
       // 9: all stems with financial fields (no limit) for accurate profit sum
       sfQuery(accessToken, `SELECT Id, ${buyerAmountField || 'Total_Invoice_Amount__c'}, ${supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'}, ${totalCostsField || 'Costs_Total__c'} FROM stem__c ${whereClause} LIMIT 3000`),
+      // 10: current year stems for monthly Net P&L trend
+      sfQuery(accessToken, `SELECT Id, Delivery_Date__c, ${buyerAmountField || 'Total_Invoice_Amount__c'}, ${supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'} FROM stem__c WHERE Delivery_Date__c >= ${currentYear}-01-01 AND Delivery_Date__c <= ${currentYear}-12-31 LIMIT 3000`),
     ];
 
     const results = await Promise.allSettled(queries);
@@ -122,9 +125,13 @@ Deno.serve(async (req) => {
     const supplierRes       = getValue(results[7]);
     const costsRes          = getValue(results[8]);
     const allStemsRes       = getValue(results[9]);
+    const monthlyStemsRes   = getValue(results[10]);
 
     // Fetch line items for broker commissions using explicit stem IDs (avoids semi-join scope issues)
-    const allStemIds = (allStemsRes.records || []).map(s => s.Id);
+    const allStemIds = [...new Set([
+      ...(allStemsRes.records || []).map(s => s.Id),
+      ...(monthlyStemsRes.records || []).map(s => s.Id),
+    ])];
     const chunkIds = (ids, size = 200) => {
       const chunks = [];
       for (let i = 0; i < ids.length; i += size) chunks.push(ids.slice(i, i + size));
@@ -229,6 +236,23 @@ Deno.serve(async (req) => {
       .slice(0, 10)
       .map(([name, pnl]) => ({ name, netPnl: pnl }));
 
+    const monthlyTotals = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, netPnl: 0 }));
+    for (const stem of (monthlyStemsRes.records || [])) {
+      if (!stem.Delivery_Date__c) continue;
+      const buyer = stem[bf];
+      const supplier = stem[sf2];
+      if (!buyer || !supplier) continue;
+      const month = Number(String(stem.Delivery_Date__c).split('-')[1]);
+      if (!month || month < 1 || month > 12) continue;
+      const { buyerComm = 0, suppCommPerUnit = 0 } = brokerByStem[stem.Id] || {};
+      monthlyTotals[month - 1].netPnl += buyer - supplier - suppCommPerUnit - buyerComm;
+    }
+    const monthlyNetPnl = monthlyTotals.map(item => ({
+      month: item.month,
+      label: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][item.month - 1],
+      netPnl: item.netPnl,
+    }));
+
     return Response.json({
       stemTotal: totalRes.records?.[0]?.total ?? 0,
       accountCount,
@@ -245,6 +269,8 @@ Deno.serve(async (req) => {
       totalCostsField,
       accountField,
       topBuyersByNetPnl,
+      monthlyNetPnl,
+      monthlyNetPnlYear: currentYear,
     });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
