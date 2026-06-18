@@ -101,9 +101,10 @@ function PnlBanner({ record, lineItems, buyerBrokers }) {
   const supplier = record.Total_Invoiced_Amount_From_Suppliers__c;
   if (!buyer || !supplier) return null;
 
-  // Supplier broker: per_unit × qty (negative = profit)
+  // Supplier broker: per_unit × BDN qty when available, otherwise ordered qty (negative = profit)
   const suppBrokerComm = lineItems.reduce((sum, li) => {
-    return sum + ((li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0));
+    const supplierBrokerQty = li.Quantity_Delivered_Per_BDN__c != null ? li.Quantity_Delivered_Per_BDN__c : (li.Quantity__c ?? 0);
+    return sum + ((li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * supplierBrokerQty);
   }, 0);
   // Buyer broker: per_unit × qty from line items + lumpsum from STEM_Buyer_Broker__c records
   const buyerBrokerCommPerUnit = lineItems.reduce((sum, li) => {
@@ -345,9 +346,11 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                                   <td className="py-2.5 px-3 text-muted-foreground">{li.BDN_Company__c || '—'}</td>
                                 )}
                                 <td className="py-2.5 px-3 text-right text-foreground">
-                                  {li.Is_Quantity_Range__c && li.Quantity_Max__c
-                                    ? `${li.Quantity__c ?? '—'}–${li.Quantity_Max__c}`
-                                    : (li.Quantity_in_MT__c > 0 ? li.Quantity_in_MT__c.toLocaleString() : (li.Quantity__c != null ? li.Quantity__c.toLocaleString() : '—'))}
+                                  {li.Quantity_Delivered_Per_BDN__c != null
+                                    ? li.Quantity_Delivered_Per_BDN__c.toLocaleString()
+                                    : (li.Is_Quantity_Range__c && li.Quantity_Max__c
+                                      ? `${li.Quantity__c ?? '—'}–${li.Quantity_Max__c}`
+                                      : (li.Quantity_in_MT__c > 0 ? li.Quantity_in_MT__c.toLocaleString() : (li.Quantity__c != null ? li.Quantity__c.toLocaleString() : '—')))}
                                 </td>
                                 <td className="py-2.5 px-3 text-right text-foreground">
                                   {li['Offer_Line_Item__r']?.UnitPrice != null ? fmtMoney(li['Offer_Line_Item__r'].UnitPrice) : '—'}
