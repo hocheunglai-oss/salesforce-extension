@@ -144,7 +144,7 @@ Deno.serve(async (req) => {
       const [lineItemChunks, buyerBrokerChunks, extraCostChunks] = await Promise.all([
         Promise.all(chunkIds(allStemIds).map(chunk => {
           const inList = chunk.map(id => `'${id}'`).join(',');
-          return sfQuery(accessToken, `SELECT STEM__c, Total_Cost__c, Buyers_Brokers_Commission_Per_Unit__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Suppliers_Brokers_Commission_Per_Unit__c FROM STEM_Line_Item__c WHERE STEM__c IN (${inList}) LIMIT 2000`);
+          return sfQuery(accessToken, `SELECT STEM__c, Total_Cost__c, Supplier_Invoice__c, Buyers_Brokers_Commission_Per_Unit__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Suppliers_Brokers_Commission_Per_Unit__c FROM STEM_Line_Item__c WHERE STEM__c IN (${inList}) LIMIT 2000`);
         })),
         Promise.all(chunkIds(allStemIds).map(chunk => {
           const inList = chunk.map(id => `'${id}'`).join(',');
@@ -168,10 +168,12 @@ Deno.serve(async (req) => {
     }
 
     const supplierLineBuyByStem = {};
+    const hasSupplierInvoiceByStem = {};
     for (const li of (lineItemsRes.records || [])) {
       const id = li.STEM__c;
       if (!id) continue;
       supplierLineBuyByStem[id] = (supplierLineBuyByStem[id] || 0) + (li.Total_Cost__c ?? 0);
+      if (li.Supplier_Invoice__c) hasSupplierInvoiceByStem[id] = true;
     }
 
     // Build per-stem broker commission maps from line items + buyer broker lumpsums
@@ -202,7 +204,7 @@ Deno.serve(async (req) => {
       const { buyerComm = 0, suppCommPerUnit = 0, suppBrokerName = null, buyerBrokerName = null } = brokerByStem[rest.Id] || {};
       const buyer = rest[buyerAmountField || 'Total_Invoice_Amount__c'];
       const invoicedSupplier = rest[supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'] ?? 0;
-      const supplierBase = invoicedSupplier || (supplierLineBuyByStem[rest.Id] || 0);
+      const supplierBase = hasSupplierInvoiceByStem[rest.Id] ? invoicedSupplier : ((supplierLineBuyByStem[rest.Id] || 0) + invoicedSupplier);
       const extraCostBuy = extraCostBuyByStem[rest.Id] || 0;
       const supplier = supplierBase + extraCostBuy;
       const brokerCommissions = buyerComm + suppCommPerUnit;
@@ -235,7 +237,7 @@ Deno.serve(async (req) => {
 
     for (const stem of (allStemsRes.records || [])) {
       const buyer = stem[bf];
-      const supplierBase = (stem[sf2] ?? 0) || (supplierLineBuyByStem[stem.Id] || 0);
+      const supplierBase = hasSupplierInvoiceByStem[stem.Id] ? (stem[sf2] ?? 0) : ((supplierLineBuyByStem[stem.Id] || 0) + (stem[sf2] ?? 0));
       const supplier = supplierBase + (extraCostBuyByStem[stem.Id] || 0);
       const brokerCommissions = (brokerByStem[stem.Id]?.buyerComm || 0) + (brokerByStem[stem.Id]?.suppCommPerUnit || 0);
       if (buyer == null) continue;
@@ -273,7 +275,7 @@ Deno.serve(async (req) => {
     for (const stem of (monthlyStemsRes.records || [])) {
       if (!stem.Delivery_Date__c) continue;
       const buyer = stem[bf];
-      const supplierBase = (stem[sf2] ?? 0) || (supplierLineBuyByStem[stem.Id] || 0);
+      const supplierBase = hasSupplierInvoiceByStem[stem.Id] ? (stem[sf2] ?? 0) : ((supplierLineBuyByStem[stem.Id] || 0) + (stem[sf2] ?? 0));
       const supplier = supplierBase + (extraCostBuyByStem[stem.Id] || 0);
       const brokerCommissions = (brokerByStem[stem.Id]?.buyerComm || 0) + (brokerByStem[stem.Id]?.suppCommPerUnit || 0);
       if (buyer == null) continue;
@@ -291,7 +293,7 @@ Deno.serve(async (req) => {
     for (const stem of (monthlyStemsRes.records || [])) {
       if (!stem.Delivery_Date__c || !buyerNameField || !stem[buyerNameField]) continue;
       const buyer = stem[bf];
-      const supplierBase = (stem[sf2] ?? 0) || (supplierLineBuyByStem[stem.Id] || 0);
+      const supplierBase = hasSupplierInvoiceByStem[stem.Id] ? (stem[sf2] ?? 0) : ((supplierLineBuyByStem[stem.Id] || 0) + (stem[sf2] ?? 0));
       const supplier = supplierBase + (extraCostBuyByStem[stem.Id] || 0);
       const brokerCommissions = (brokerByStem[stem.Id]?.buyerComm || 0) + (brokerByStem[stem.Id]?.suppCommPerUnit || 0);
       if (buyer == null) continue;

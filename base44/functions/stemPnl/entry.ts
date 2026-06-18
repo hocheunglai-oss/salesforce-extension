@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
       Promise.all(idChunks.map(chunk => {
         const inList = chunk.map(id => `'${id}'`).join(',');
         return sfQuery(accessToken, `
-          SELECT Id, STEM__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Total_Cost__c,
+          SELECT Id, STEM__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Total_Cost__c, Supplier_Invoice__c,
                  Buyers_Brokers_Commission_Per_Unit__c,
                  Suppliers_Brokers_Commission_Per_Unit__c,
                  Supplier_Broker__r.Name
@@ -110,6 +110,7 @@ Deno.serve(async (req) => {
         buyerBrokerComm: 0,
         extraCostBuy: 0,
         supplierLineBuy: 0,
+        hasSupplierInvoice: false,
         suppBrokerName: null,
       };
     };
@@ -121,6 +122,7 @@ Deno.serve(async (req) => {
       const qty = li.Quantity__c ?? 0;
       const brokerQty = li.Quantity_Delivered_Per_BDN__c != null ? li.Quantity_Delivered_Per_BDN__c : qty;
       byId[id].supplierLineBuy += (li.Total_Cost__c ?? 0);
+      if (li.Supplier_Invoice__c) byId[id].hasSupplierInvoice = true;
       // Supplier broker: per_unit * BDN qty when available (negative value = profit when subtracted)
       byId[id].suppBrokerComm += (li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * brokerQty;
       // Buyer broker: per_unit * BDN qty when available
@@ -148,7 +150,7 @@ Deno.serve(async (req) => {
     const rows = stems.map(s => {
       const buyer = s.Total_Invoice_Amount__c ?? 0;
       const agg = byId[s.Id] || {};
-      const supplierBase = (s.Total_Invoiced_Amount_From_Suppliers__c ?? 0) || (agg.supplierLineBuy ?? 0);
+      const supplierBase = agg.hasSupplierInvoice ? (s.Total_Invoiced_Amount_From_Suppliers__c ?? 0) : ((agg.supplierLineBuy ?? 0) + (s.Total_Invoiced_Amount_From_Suppliers__c ?? 0));
       const supplier = supplierBase + (agg.extraCostBuy ?? 0);
       const suppBrokerComm = agg.suppBrokerComm ?? 0;   // shown for reference
       const buyerBrokerComm = agg.buyerBrokerComm ?? 0;
