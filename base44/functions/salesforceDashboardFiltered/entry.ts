@@ -180,6 +180,9 @@ Deno.serve(async (req) => {
 
     const recentStems = (recentRes.records || []).map(({ attributes, ...rest }) => {
       const { buyerComm = 0, suppCommPerUnit = 0, suppBrokerName = null, buyerBrokerName = null } = brokerByStem[rest.Id] || {};
+      const buyer = rest[buyerAmountField || 'Total_Invoice_Amount__c'];
+      const supplier = rest[supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'];
+      const netPnl = buyer && supplier ? buyer - supplier - suppCommPerUnit - buyerComm : null;
       return {
         ...rest,
         _buyerBrokerName: buyerBrokerName,
@@ -189,6 +192,7 @@ Deno.serve(async (req) => {
         // hidden fields for P&L calc
         __buyerCommCalc: buyerComm,
         __suppCommPerUnitCalc: suppCommPerUnit,
+        __netPnlCalc: netPnl,
       };
     });
 
