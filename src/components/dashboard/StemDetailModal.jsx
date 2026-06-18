@@ -108,7 +108,8 @@ function PnlBanner({ record, lineItems, buyerBrokers }) {
   }, 0);
   // Buyer broker: per_unit × qty from line items + lumpsum from STEM_Buyer_Broker__c records
   const buyerBrokerCommPerUnit = lineItems.reduce((sum, li) => {
-    return sum + ((li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0));
+    const buyerBrokerQty = li.Quantity_Delivered_Per_BDN__c != null ? li.Quantity_Delivered_Per_BDN__c : (li.Quantity__c ?? 0);
+    return sum + ((li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * buyerBrokerQty);
   }, 0);
   const buyerBrokerLumpsum = buyerBrokers.reduce((sum, bb) => sum + (bb.Commission_Lumpsum__c ?? 0), 0);
   const buyerBrokerComm = buyerBrokerCommPerUnit + buyerBrokerLumpsum;

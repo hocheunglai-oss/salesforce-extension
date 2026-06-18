@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
       Promise.all(idChunks.map(chunk => {
         const inList = chunk.map(id => `'${id}'`).join(',');
         return sfQuery(accessToken, `
-          SELECT Id, STEM__c, Quantity__c,
+          SELECT Id, STEM__c, Quantity__c, Quantity_Delivered_Per_BDN__c,
                  Buyers_Brokers_Commission_Per_Unit__c,
                  Suppliers_Brokers_Commission_Per_Unit__c,
                  Supplier_Broker__r.Name
@@ -107,10 +107,11 @@ Deno.serve(async (req) => {
       if (!id) continue;
       initStem(id);
       const qty = li.Quantity__c ?? 0;
-      // Supplier broker: per_unit * qty (negative value = profit when subtracted)
-      byId[id].suppBrokerComm += (li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * qty;
-      // Buyer broker: per_unit * qty
-      byId[id].buyerBrokerComm += (li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * qty;
+      const brokerQty = li.Quantity_Delivered_Per_BDN__c != null ? li.Quantity_Delivered_Per_BDN__c : qty;
+      // Supplier broker: per_unit * BDN qty when available (negative value = profit when subtracted)
+      byId[id].suppBrokerComm += (li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * brokerQty;
+      // Buyer broker: per_unit * BDN qty when available
+      byId[id].buyerBrokerComm += (li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * brokerQty;
       if (!byId[id].suppBrokerName && li['Supplier_Broker__r']?.Name) {
         byId[id].suppBrokerName = li['Supplier_Broker__r'].Name;
       }

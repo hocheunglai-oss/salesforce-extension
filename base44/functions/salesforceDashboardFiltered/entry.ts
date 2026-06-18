@@ -143,7 +143,7 @@ Deno.serve(async (req) => {
       const [lineItemChunks, buyerBrokerChunks] = await Promise.all([
         Promise.all(chunkIds(allStemIds).map(chunk => {
           const inList = chunk.map(id => `'${id}'`).join(',');
-          return sfQuery(accessToken, `SELECT STEM__c, Buyers_Brokers_Commission_Per_Unit__c, Quantity__c, Suppliers_Brokers_Commission_Per_Unit__c FROM STEM_Line_Item__c WHERE STEM__c IN (${inList}) LIMIT 2000`);
+          return sfQuery(accessToken, `SELECT STEM__c, Buyers_Brokers_Commission_Per_Unit__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Suppliers_Brokers_Commission_Per_Unit__c FROM STEM_Line_Item__c WHERE STEM__c IN (${inList}) LIMIT 2000`);
         })),
         Promise.all(chunkIds(allStemIds).map(chunk => {
           const inList = chunk.map(id => `'${id}'`).join(',');
@@ -160,8 +160,9 @@ Deno.serve(async (req) => {
       const id = li.STEM__c;
       if (!id) continue;
       if (!brokerByStem[id]) brokerByStem[id] = { buyerComm: 0, suppCommPerUnit: 0, suppBrokerName: null, buyerBrokerName: null };
-      brokerByStem[id].buyerComm += (li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0);
-      brokerByStem[id].suppCommPerUnit += (li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * (li.Quantity__c ?? 0);
+      const brokerQty = li.Quantity_Delivered_Per_BDN__c != null ? li.Quantity_Delivered_Per_BDN__c : (li.Quantity__c ?? 0);
+      brokerByStem[id].buyerComm += (li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * brokerQty;
+      brokerByStem[id].suppCommPerUnit += (li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * brokerQty;
       if (!brokerByStem[id].suppBrokerName && li['Supplier_Broker__r']?.Name) {
         brokerByStem[id].suppBrokerName = li['Supplier_Broker__r'].Name;
       }
