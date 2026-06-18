@@ -109,7 +109,7 @@ Deno.serve(async (req) => {
       // 9: all stems with financial fields (no limit) for accurate profit sum
       sfQuery(accessToken, `SELECT Id, ${buyerAmountField || 'Total_Invoice_Amount__c'}, ${supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'}, ${totalCostsField || 'Costs_Total__c'} FROM stem__c ${whereClause} LIMIT 3000`),
       // 10: current year stems for monthly Net P&L trend
-      sfQuery(accessToken, `SELECT Id, Delivery_Date__c, ${buyerAmountField || 'Total_Invoice_Amount__c'}, ${supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'} FROM stem__c WHERE Delivery_Date__c >= ${currentYear}-01-01 AND Delivery_Date__c <= ${currentYear}-12-31 LIMIT 3000`),
+      sfQuery(accessToken, `SELECT Id, Delivery_Date__c, ${buyerNameField ? `${buyerNameField}, ` : ''}${buyerAmountField || 'Total_Invoice_Amount__c'}, ${supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c'} FROM stem__c WHERE Delivery_Date__c >= ${currentYear}-01-01 AND Delivery_Date__c <= ${currentYear}-12-31 LIMIT 3000`),
     ];
 
     const results = await Promise.allSettled(queries);
@@ -275,6 +275,30 @@ Deno.serve(async (req) => {
       netPnl: item.netPnl,
     }));
 
+    const buyerMonthTotals = {};
+    for (const stem of (monthlyStemsRes.records || [])) {
+      if (!stem.Delivery_Date__c || !buyerNameField || !stem[buyerNameField]) continue;
+      const buyer = stem[bf];
+      const supplier = (stem[sf2] ?? 0) + (extraCostBuyByStem[stem.Id] || 0);
+      if (!buyer || !supplier) continue;
+      const month = Number(String(stem.Delivery_Date__c).split('-')[1]);
+      if (!month || month < 1 || month > 12) continue;
+      const { buyerComm = 0, suppCommPerUnit = 0 } = brokerByStem[stem.Id] || {};
+      const buyerName = stem[buyerNameField];
+      if (!buyerMonthTotals[buyerName]) buyerMonthTotals[buyerName] = Array(12).fill(0);
+      buyerMonthTotals[buyerName][month - 1] += buyer - supplier - suppCommPerUnit - buyerComm;
+    }
+    const monthlyBuyerNames = Object.entries(buyerMonthTotals)
+      .map(([name, months]) => ({ name, total: months.reduce((sum, value) => sum + value, 0) }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8)
+      .map(item => item.name);
+    const monthlyBuyerNetPnl = monthlyNetPnl.map((item, idx) => {
+      const row = { month: item.month, label: item.label };
+      for (const buyerName of monthlyBuyerNames) row[buyerName] = buyerMonthTotals[buyerName]?.[idx] || 0;
+      return row;
+    });
+
     return Response.json({
       stemTotal: totalRes.records?.[0]?.total ?? 0,
       accountCount,
@@ -292,6 +316,8 @@ Deno.serve(async (req) => {
       accountField,
       topBuyersByNetPnl,
       monthlyNetPnl,
+      monthlyBuyerNetPnl,
+      monthlyBuyerNames,
       monthlyNetPnlYear: currentYear,
     });
   } catch (error) {

@@ -262,6 +262,24 @@ export default function DashboardSettings() {
             </div>
           )}
 
+          {/* Monthly Buyer Net P&L Trend */}
+          {data.monthlyBuyerNetPnl?.length > 0 && data.monthlyBuyerNames?.length > 0 && (
+            <div className="bg-card rounded-xl border border-border p-5 mb-8">
+              <h3 className="text-sm font-semibold text-foreground mb-1">Monthly Net P&amp;L by Buyer</h3>
+              <p className="text-xs text-muted-foreground mb-4">Top buyer accounts by Net P&amp;L for {data.monthlyNetPnlYear || THIS_YEAR}</p>
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={data.monthlyBuyerNetPnl} barSize={44}>
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+                  <Tooltip formatter={(v, name) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, name]} />
+                  {data.monthlyBuyerNames.map((buyer, idx) => (
+                    <Bar key={buyer} dataKey={buyer} stackId="buyers" fill={COLORS[idx % COLORS.length]} radius={idx === data.monthlyBuyerNames.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           {/* Charts */}
           {(data.stemByStatus?.length > 0 || data.stemByType?.length > 0) && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
