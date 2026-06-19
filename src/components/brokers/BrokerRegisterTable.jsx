@@ -13,6 +13,7 @@ export default function BrokerRegisterTable({ rows, onRowClick }) {
           <thead>
             <tr className="bg-muted/40 border-b border-border">
               <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Stem Name</th>
+              <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Product</th>
               <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Delivery Date</th>
               <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Broker Type</th>
               <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Broker Name</th>
@@ -26,6 +27,7 @@ export default function BrokerRegisterTable({ rows, onRowClick }) {
             {rows.map((row, idx) => (
               <tr key={row.id} onClick={() => onRowClick(row.stemId)} className={`border-b border-border/40 cursor-pointer hover:bg-muted/30 transition-colors ${idx % 2 ? 'bg-muted/10' : ''}`}>
                 <td className="py-3 px-4 font-medium text-foreground whitespace-nowrap">{row.stemName}</td>
+                <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">{row.productName || '—'}</td>
                 <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">{fmtDate(row.deliveryDate)}</td>
                 <td className="py-3 px-4 whitespace-nowrap"><BrokerTypeBadge type={row.brokerType} /></td>
                 <td className="py-3 px-4 text-foreground">{row.brokerName || '—'}</td>
@@ -35,7 +37,7 @@ export default function BrokerRegisterTable({ rows, onRowClick }) {
                 <td className="py-3 px-4 whitespace-nowrap"><PaymentStatusBadge status={row.paymentStatus} /></td>
               </tr>
             ))}
-            {!rows.length && <tr><td colSpan="8" className="py-12 text-center text-muted-foreground">No broker commissions found.</td></tr>}
+            {!rows.length && <tr><td colSpan="9" className="py-12 text-center text-muted-foreground">No broker commissions found.</td></tr>}
           </tbody>
         </table>
       </div>

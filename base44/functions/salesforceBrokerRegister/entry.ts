@@ -64,7 +64,8 @@ Deno.serve(async (req) => {
       Promise.all(chunkIds(stemIds).map(chunk => {
         const ids = chunk.map(id => `'${id}'`).join(',');
         return sfQuery(instanceUrl, accessToken, `
-          SELECT Id, Name, STEM__c, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c,
+          SELECT Id, Name, STEM__c, Product__r.Name, Supplier_Invoice__c,
+                 Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c,
                  Quantity_Delivered_Per_BDN__c, Quantity__c, Commission_Cost__c,
                  Buyers_Broker__c, Buyer_Broker__c, Buyers_Brokers_Commission_Per_Unit__c,
                  Buyers_Brokers_Commission_Lumpsum__c
@@ -102,6 +103,18 @@ Deno.serve(async (req) => {
       accountMap[String(account.Id).slice(0, 15)] = account.Name;
     }
 
+    const supplierInvoiceIds = [...new Set(lineItems.map(item => item.Supplier_Invoice__c).filter(Boolean))];
+    const paymentDateByInvoice = {};
+    const paymentChunks = await Promise.all(chunkIds(supplierInvoiceIds).map(chunk => {
+      const ids = chunk.map(id => `'${id}'`).join(',');
+      return sfQuery(instanceUrl, accessToken, `SELECT Supplier_Invoice__c, Date__c FROM Payment__c WHERE Supplier_Invoice__c IN (${ids}) ORDER BY Date__c DESC`);
+    }));
+    for (const payment of paymentChunks.flat()) {
+      if (payment.Supplier_Invoice__c && !paymentDateByInvoice[payment.Supplier_Invoice__c]) {
+        paymentDateByInvoice[payment.Supplier_Invoice__c] = payment.Date__c;
+      }
+    }
+
     const buyerStatusByStemBroker = {};
     const buyerStatusByStem = {};
     for (const item of buyerBrokers) {
@@ -121,12 +134,13 @@ Deno.serve(async (req) => {
           id: `supplier-${item.Id}`,
           stemId: item.STEM__c,
           stemName: stem.Name,
+          productName: item['Product__r']?.Name || item.Name || '—',
           deliveryDate: stem.Delivery_Date__c,
           brokerType: 'Supplier Broker',
           brokerName: accountMap[item.Supplier_Broker__c] || item.Supplier_Broker__c,
           commissionUnitPrice: item.Suppliers_Brokers_Commission_Per_Unit__c ?? null,
           commissionAmount: supplierAmount,
-          paymentDate: stem.Payment_Date__c,
+          paymentDate: paymentDateByInvoice[item.Supplier_Invoice__c] || null,
           paymentDateLabel: 'Paid Date',
           paymentStatus: null,
         });
@@ -139,6 +153,7 @@ Deno.serve(async (req) => {
           id: `buyer-${item.Id}`,
           stemId: item.STEM__c,
           stemName: stem.Name,
+          productName: item['Product__r']?.Name || item.Name || '—',
           deliveryDate: stem.Delivery_Date__c,
           brokerType: 'Buyer Broker',
           brokerName: accountMap[buyerBrokerId] || buyerBrokerId,
@@ -157,6 +172,7 @@ Deno.serve(async (req) => {
           id: `secondary-${item.Id}`,
           stemId: item.STEM__c,
           stemName: stem.Name,
+          productName: item['Product__r']?.Name || item.Name || '—',
           deliveryDate: stem.Delivery_Date__c,
           brokerType: 'Secondary Buyer Broker',
           brokerName: accountMap[buyerBrokerId] || 'Secondary Buyer Broker',
