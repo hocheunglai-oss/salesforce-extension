@@ -70,6 +70,7 @@ Deno.serve(async (req) => {
         return sfQuery(accessToken, `
           SELECT Id, STEM__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Total_Cost__c, Supplier_Invoice__c,
                  Buyers_Brokers_Commission_Per_Unit__c,
+                 Buyers_Brokers_Commission_Lumpsum__c,
                  Commission_Cost__c,
                  Suppliers_Brokers_Commission_Per_Unit__c,
                  Supplier_Broker__r.Name
@@ -117,8 +118,13 @@ Deno.serve(async (req) => {
       if (li.Supplier_Invoice__c) byId[id].hasSupplierInvoice = true;
       // Supplier broker: per_unit * BDN qty when available (negative value = profit when subtracted)
       byId[id].suppBrokerComm += (li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * brokerQty;
-      // Buyer broker: use Salesforce's full commission cost when present; otherwise per_unit * BDN qty
-      byId[id].buyerBrokerComm += li.Commission_Cost__c != null ? li.Commission_Cost__c : ((li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * brokerQty);
+      // Buyer broker: keep the old per-unit calculation, adding only the clear extra amount from Salesforce commission cost
+      const baseBuyerBrokerComm = (li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * brokerQty;
+      const visibleLumpsum = li.Buyers_Brokers_Commission_Lumpsum__c;
+      const commissionCost = li.Commission_Cost__c;
+      const hasExtraLumpsum = visibleLumpsum != null && commissionCost != null && commissionCost > visibleLumpsum + 0.01;
+      const extraBuyerBrokerComm = hasExtraLumpsum ? commissionCost - baseBuyerBrokerComm : 0;
+      byId[id].buyerBrokerComm += baseBuyerBrokerComm + extraBuyerBrokerComm;
       if (!byId[id].suppBrokerName && li['Supplier_Broker__r']?.Name) {
         byId[id].suppBrokerName = li['Supplier_Broker__r'].Name;
       }
