@@ -7,7 +7,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import StatCard from '@/components/dashboard/StatCard';
 import PnlTable from '@/components/dashboard/PnlTable';
 import StemDetailModal from '@/components/dashboard/StemDetailModal';
-import { Package, Building2, DollarSign, AlertCircle, RefreshCw, SlidersHorizontal, Loader2, Search, X } from 'lucide-react';
+import { Package, Building2, DollarSign, AlertCircle, RefreshCw, SlidersHorizontal, Loader2, Search, X, Percent } from 'lucide-react';
 import { format } from 'date-fns';
 
 const STORAGE_KEY = 'dashboard_filters_v2';
@@ -117,6 +117,15 @@ export default function DashboardSettings() {
     );
   }, [data?.recentStems, tableSearch, selectedYears, selectedMonths]);
 
+  const kpiMetrics = useMemo(() => {
+    const buyerField = data?.buyerAmountField || 'Total_Invoice_Amount__c';
+    const supplierField = data?.supplierAmountField || 'Total_Invoiced_Amount_From_Suppliers__c';
+    const completeStems = (data?.recentStems || []).filter(row => row[buyerField] != null && row[supplierField] != null);
+    const netMarginPct = data?.totalBuyer ? (data.totalProfit / data.totalBuyer) * 100 : null;
+    const avgNetPnl = completeStems.length && data?.totalProfit != null ? data.totalProfit / completeStems.length : null;
+    return { completeStemCount: completeStems.length, netMarginPct, avgNetPnl };
+  }, [data]);
+
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
       {/* Header */}
@@ -207,15 +216,15 @@ export default function DashboardSettings() {
 
 
       {loading && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {[...Array(4)].map((_, i) => <div key={i} className="bg-card rounded-xl border border-border p-5 h-28 animate-pulse" />)}
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
+          {[...Array(6)].map((_, i) => <div key={i} className="bg-card rounded-xl border border-border p-5 h-28 animate-pulse" />)}
         </div>
       )}
 
       {data && !loading && (
         <>
           {/* KPI Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
             <StatCard label="Matching STEMs" value={data.stemTotal?.toLocaleString() ?? '—'} icon={Package} color="blue" />
             <StatCard
               label="Accounts"
@@ -230,6 +239,20 @@ export default function DashboardSettings() {
               sub={data.totalProfit == null ? (data.buyerAmountField ? 'Supplier field not found' : 'Buyer/supplier fields not found') : `Buyer $${(data.totalBuyer ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} − Supplier $${(data.totalSupplier ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} − Brokers $${(data.totalBrokerCommissions ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
               icon={DollarSign}
               color="amber"
+            />
+            <StatCard
+              label="Net Margin %"
+              value={kpiMetrics.netMarginPct != null ? `${kpiMetrics.netMarginPct.toFixed(1)}%` : '—'}
+              sub="Net P&L ÷ Buyer Invoice"
+              icon={Percent}
+              color="purple"
+            />
+            <StatCard
+              label="Avg Net P&L / STEM"
+              value={kpiMetrics.avgNetPnl != null ? `$${kpiMetrics.avgNetPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+              sub={`Across ${kpiMetrics.completeStemCount.toLocaleString()} stems with full invoices`}
+              icon={DollarSign}
+              color="teal"
             />
             <StatCard
               label="Disputed"

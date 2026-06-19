@@ -6,6 +6,7 @@ export default function StatCard({ label, value, sub, icon: Icon, trend, color =
     green: 'bg-emerald-50 text-emerald-600',
     amber: 'bg-amber-50 text-amber-600',
     purple: 'bg-violet-50 text-violet-600',
+    teal: 'bg-cyan-50 text-cyan-600',
     red: 'bg-red-50 text-red-600',
   };
 
