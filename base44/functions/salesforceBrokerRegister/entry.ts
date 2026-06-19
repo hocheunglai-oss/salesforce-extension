@@ -95,12 +95,19 @@ Deno.serve(async (req) => {
 
     const accountChunks = await Promise.all(chunkIds(accountIds).map(chunk => {
       const ids = chunk.map(id => `'${id}'`).join(',');
-      return sfQuery(instanceUrl, accessToken, `SELECT Id, Name FROM Account WHERE Id IN (${ids})`);
+      return sfQuery(instanceUrl, accessToken, `SELECT Id, Name, Hidden_Broker__c, Hidden_Broker_Company__c FROM Account WHERE Id IN (${ids})`);
     }));
     const accountMap = {};
+    const accountFlagMap = {};
     for (const account of accountChunks.flat()) {
+      const flags = {
+        hiddenBrokerIndividual: account.Hidden_Broker__c === true,
+        hiddenBrokerCompany: account.Hidden_Broker_Company__c === true,
+      };
       accountMap[account.Id] = account.Name;
       accountMap[String(account.Id).slice(0, 15)] = account.Name;
+      accountFlagMap[account.Id] = flags;
+      accountFlagMap[String(account.Id).slice(0, 15)] = flags;
     }
 
     const supplierInvoiceIds = [...new Set(lineItems.map(item => item.Supplier_Invoice__c).filter(Boolean))];
@@ -145,6 +152,8 @@ Deno.serve(async (req) => {
           deliveryDate: stem.Delivery_Date__c,
           brokerType: 'Supplier Broker',
           brokerName: accountMap[item.Supplier_Broker__c] || item.Supplier_Broker__c,
+          hiddenBrokerIndividual: accountFlagMap[item.Supplier_Broker__c]?.hiddenBrokerIndividual || false,
+          hiddenBrokerCompany: accountFlagMap[item.Supplier_Broker__c]?.hiddenBrokerCompany || false,
           commissionUnitPrice: item.Suppliers_Brokers_Commission_Per_Unit__c ?? null,
           commissionAmount: supplierAmount,
           paymentDate: paymentDateByInvoice[item.Supplier_Invoice__c] || null,
@@ -167,6 +176,8 @@ Deno.serve(async (req) => {
           deliveryDate: stem.Delivery_Date__c,
           brokerType: 'Buyer Broker',
           brokerName: accountMap[buyerBrokerId] || buyerBrokerId,
+          hiddenBrokerIndividual: accountFlagMap[buyerBrokerId]?.hiddenBrokerIndividual || false,
+          hiddenBrokerCompany: accountFlagMap[buyerBrokerId]?.hiddenBrokerCompany || false,
           commissionUnitPrice: item.Buyers_Brokers_Commission_Per_Unit__c ?? (qty ? buyerAmount / qty : null),
           commissionAmount: buyerAmount,
           paymentDate: stem.Buyer_Pay_Term_Date__c,
@@ -193,6 +204,8 @@ Deno.serve(async (req) => {
             deliveryDate: stem.Delivery_Date__c,
             brokerType: 'Secondary Buyer Broker',
             brokerName: accountMap[broker.Buyer_Broker__c] || broker.Buyer_Broker__c || 'Secondary Buyer Broker',
+            hiddenBrokerIndividual: accountFlagMap[broker.Buyer_Broker__c]?.hiddenBrokerIndividual || false,
+            hiddenBrokerCompany: accountFlagMap[broker.Buyer_Broker__c]?.hiddenBrokerCompany || false,
             commissionUnitPrice: qty ? secondaryAmount / qty : null,
             commissionAmount: secondaryAmount,
             paymentDate: stem.Buyer_Pay_Term_Date__c,

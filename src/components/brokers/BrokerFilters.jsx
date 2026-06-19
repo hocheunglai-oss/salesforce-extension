@@ -2,8 +2,12 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
 const TYPES = ['Supplier Broker', 'Buyer Broker', 'Secondary Buyer Broker'];
+const HIDDEN_BROKER_FLAGS = [
+  { key: 'individual', label: 'Hidden Broker Individual' },
+  { key: 'company', label: 'Hidden Broker Company' },
+];
 
-export default function BrokerFilters({ search, setSearch, selectedTypes, setSelectedTypes, brokerNames, selectedBrokerNames, setSelectedBrokerNames, fromDate, setFromDate, toDate, setToDate }) {
+export default function BrokerFilters({ search, setSearch, selectedTypes, setSelectedTypes, brokerNames, selectedBrokerNames, setSelectedBrokerNames, selectedHiddenBrokerFlags, setSelectedHiddenBrokerFlags, fromDate, setFromDate, toDate, setToDate }) {
   const toggleType = (type) => {
     setSelectedTypes(selectedTypes.includes(type)
       ? selectedTypes.filter(item => item !== type)
@@ -16,6 +20,12 @@ export default function BrokerFilters({ search, setSearch, selectedTypes, setSel
       : [...selectedBrokerNames, name]);
   };
 
+  const toggleHiddenBrokerFlag = (flag) => {
+    setSelectedHiddenBrokerFlags(selectedHiddenBrokerFlags.includes(flag)
+      ? selectedHiddenBrokerFlags.filter(item => item !== flag)
+      : [...selectedHiddenBrokerFlags, flag]);
+  };
+
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-4">
       <Input placeholder="Search stem or broker…" value={search} onChange={e => setSearch(e.target.value)} />
@@ -23,6 +33,13 @@ export default function BrokerFilters({ search, setSearch, selectedTypes, setSel
         {TYPES.map(type => (
           <Button key={type} type="button" size="sm" variant={selectedTypes.includes(type) ? 'default' : 'outline'} onClick={() => toggleType(type)}>
             {type}
+          </Button>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {HIDDEN_BROKER_FLAGS.map(flag => (
+          <Button key={flag.key} type="button" size="sm" variant={selectedHiddenBrokerFlags.includes(flag.key) ? 'default' : 'outline'} onClick={() => toggleHiddenBrokerFlag(flag.key)}>
+            {flag.label} = true
           </Button>
         ))}
       </div>
