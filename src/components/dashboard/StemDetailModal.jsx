@@ -106,12 +106,15 @@ function PnlBanner({ record, lineItems, extraCosts, buyerBrokers }) {
     const qty = li.Quantity_Delivered_Per_BDN__c != null ? li.Quantity_Delivered_Per_BDN__c : (li.Quantity__c ?? 0);
     return sum + ((li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0) * qty);
   }, 0);
-  const buyerBrokerPerUnitComm = lineItems.reduce((sum, li) => {
+  const buyerBrokerLineComm = lineItems.reduce((sum, li) => {
     const qty = li.Quantity_Delivered_Per_BDN__c != null ? li.Quantity_Delivered_Per_BDN__c : (li.Quantity__c ?? 0);
-    return sum + ((li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * qty);
+    const buyerPerUnitTotal = (li.Buyers_Brokers_Commission_Per_Unit__c ?? 0) * qty;
+    const suppBrokerPerUnit = li.Suppliers_Brokers_Commission_Per_Unit__c ?? 0;
+    const buyerComm = suppBrokerPerUnit !== 0 ? buyerPerUnitTotal : (li.Commission_Cost__c ?? buyerPerUnitTotal);
+    return sum + buyerComm;
   }, 0);
   const buyerBrokerLumpsum = buyerBrokers.reduce((sum, bb) => sum + (bb.Commission_Lumpsum__c ?? 0), 0);
-  const buyerBrokerComm = buyerBrokerPerUnitComm + buyerBrokerLumpsum;
+  const buyerBrokerComm = buyerBrokerLineComm + buyerBrokerLumpsum;
   if (buyer == null) return null;
 
   const netProfit = buyer - supplierBase - supplierExtraCosts - buyerBrokerComm - supplierBrokerComm;
