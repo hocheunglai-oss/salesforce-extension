@@ -4,6 +4,7 @@ import { BrokerTypeBadge, PaymentStatusBadge } from './BrokerBadges';
 const fmtDate = (value) => { try { return value ? format(new Date(value), 'dd MMM yyyy') : '—'; } catch { return value || '—'; } };
 const fmtMoney = (value) => `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtUnit = (value) => value != null ? `${fmtMoney(value)} / MT` : '—';
+const fmtDelay = (value) => value != null ? `${Number(value).toLocaleString()} day${Math.abs(Number(value)) === 1 ? '' : 's'}` : '—';
 
 export default function BrokerRegisterTable({ rows, onRowClick }) {
   const payableTotal = rows.reduce((sum, row) => sum + (row.brokerType === 'Supplier Broker' ? Number(row.commissionAmount || 0) : 0), 0);
@@ -24,6 +25,7 @@ export default function BrokerRegisterTable({ rows, onRowClick }) {
               <th className="text-right py-3 px-4 font-semibold text-muted-foreground">Payable Balance</th>
               <th className="text-right py-3 px-4 font-semibold text-muted-foreground">Receivable Balance</th>
               <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Payment Date</th>
+              <th className="text-right py-3 px-4 font-semibold text-muted-foreground">Payment Delay</th>
               <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Payment Status</th>
             </tr>
           </thead>
@@ -39,10 +41,11 @@ export default function BrokerRegisterTable({ rows, onRowClick }) {
                 <td className="py-3 px-4 text-right font-semibold text-foreground whitespace-nowrap">{row.brokerType === 'Supplier Broker' ? fmtMoney(row.commissionAmount) : '—'}</td>
                 <td className="py-3 px-4 text-right font-semibold text-foreground whitespace-nowrap">{row.brokerType !== 'Supplier Broker' ? fmtMoney(row.commissionAmount) : '—'}</td>
                 <td className="py-3 px-4 text-muted-foreground whitespace-nowrap"><span className="block text-[11px] uppercase tracking-wide">{row.paymentDateLabel}</span>{fmtDate(row.paymentDate)}</td>
+                <td className="py-3 px-4 text-right text-foreground whitespace-nowrap">{row.brokerType === 'Buyer Broker' || row.brokerType === 'Secondary Buyer Broker' ? fmtDelay(row.paymentDelay) : '—'}</td>
                 <td className="py-3 px-4 whitespace-nowrap"><PaymentStatusBadge status={row.paymentStatus} /></td>
               </tr>
             ))}
-            {!rows.length && <tr><td colSpan="10" className="py-12 text-center text-muted-foreground">No broker commissions found.</td></tr>}
+            {!rows.length && <tr><td colSpan="11" className="py-12 text-center text-muted-foreground">No broker commissions found.</td></tr>}
           </tbody>
           {rows.length > 0 && (
             <tfoot>
@@ -50,7 +53,7 @@ export default function BrokerRegisterTable({ rows, onRowClick }) {
                 <td colSpan="6" className="py-3 px-4 text-right text-foreground">Summary</td>
                 <td className="py-3 px-4 text-right text-foreground whitespace-nowrap">{fmtMoney(payableTotal)}</td>
                 <td className="py-3 px-4 text-right text-foreground whitespace-nowrap">{fmtMoney(receivableTotal)}</td>
-                <td colSpan="2" className="py-3 px-4" />
+                <td colSpan="3" className="py-3 px-4" />
               </tr>
             </tfoot>
           )}

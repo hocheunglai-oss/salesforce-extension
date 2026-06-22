@@ -10,6 +10,7 @@ import StemDetailModal from '@/components/dashboard/StemDetailModal';
 const fmtMoney = (value) => `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (value) => { try { return value ? format(new Date(value), 'dd MMM yyyy') : ''; } catch { return value || ''; } };
 const fmtUnit = (value) => value != null ? `${fmtMoney(value)} / MT` : '';
+const fmtDelay = (value) => value != null ? `${Number(value).toLocaleString()} day${Math.abs(Number(value)) === 1 ? '' : 's'}` : '';
 const csvValue = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
 
 export default function BrokerRegister() {
@@ -57,7 +58,7 @@ export default function BrokerRegister() {
   const total = filteredRows.reduce((sum, row) => sum + Number(row.commissionAmount || 0), 0);
 
   const exportCsv = () => {
-    const headers = ['Stem Name', 'Product', 'Delivery Date', 'Broker Type', 'Broker Name', 'Commission / Unit', 'Payable Balance', 'Receivable Balance', 'Payment Date Label', 'Payment Date', 'Payment Status'];
+    const headers = ['Stem Name', 'Product', 'Delivery Date', 'Broker Type', 'Broker Name', 'Commission / Unit', 'Payable Balance', 'Receivable Balance', 'Payment Date Label', 'Payment Date', 'Payment Delay', 'Payment Status'];
     const csvRows = filteredRows.map(row => [
       row.stemName,
       row.productName,
@@ -69,6 +70,7 @@ export default function BrokerRegister() {
       row.brokerType !== 'Supplier Broker' ? fmtMoney(row.commissionAmount) : '',
       row.paymentDateLabel,
       fmtDate(row.paymentDate),
+      row.brokerType === 'Buyer Broker' || row.brokerType === 'Secondary Buyer Broker' ? fmtDelay(row.paymentDelay) : '',
       row.paymentStatus || '',
     ]);
     const csv = [headers, ...csvRows].map(row => row.map(csvValue).join(',')).join('\n');

@@ -37,6 +37,14 @@ function brokerAmount(value, qty) {
   return unit * quantity;
 }
 
+function paymentDelayDays(paymentDate, dueDate) {
+  if (!paymentDate || !dueDate) return null;
+  const payment = new Date(paymentDate);
+  const due = new Date(dueDate);
+  if (Number.isNaN(payment.getTime()) || Number.isNaN(due.getTime())) return null;
+  return Math.round((payment - due) / 86400000);
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -180,8 +188,9 @@ Deno.serve(async (req) => {
           hiddenBrokerCompany: accountFlagMap[buyerBrokerId]?.hiddenBrokerCompany || false,
           commissionUnitPrice: item.Buyers_Brokers_Commission_Per_Unit__c ?? (qty ? buyerAmount / qty : null),
           commissionAmount: buyerAmount,
-          paymentDate: stem.Buyer_Pay_Term_Date__c,
+          paymentDate: stem.Payment_Date__c,
           paymentDateLabel: 'Received Date',
+          paymentDelay: paymentDelayDays(stem.Payment_Date__c, stem.Buyer_Pay_Term_Date__c),
           paymentStatus: buyerStatusByStemBroker[`${item.STEM__c}:${buyerBrokerId}`] || buyerStatusByStem[item.STEM__c] || 'Pending',
         });
       }
@@ -208,8 +217,9 @@ Deno.serve(async (req) => {
             hiddenBrokerCompany: accountFlagMap[broker.Buyer_Broker__c]?.hiddenBrokerCompany || false,
             commissionUnitPrice: qty ? secondaryAmount / qty : null,
             commissionAmount: secondaryAmount,
-            paymentDate: stem.Buyer_Pay_Term_Date__c,
+            paymentDate: stem.Payment_Date__c,
             paymentDateLabel: 'Received Date',
+            paymentDelay: paymentDelayDays(stem.Payment_Date__c, stem.Buyer_Pay_Term_Date__c),
             paymentStatus: buyerStatusByStemBroker[`${item.STEM__c}:${broker.Buyer_Broker__c}`] || 'Pending',
           });
         }
