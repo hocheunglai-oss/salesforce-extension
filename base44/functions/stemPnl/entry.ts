@@ -102,7 +102,6 @@ Deno.serve(async (req) => {
         suppBrokerComm: 0,       // SUM(per_unit * qty) — negative = profit, positive = cost
         buyerBrokerComm: 0,
         extraCostBuy: 0,
-        cancelledExtraCostBuy: 0,
         supplierLineBuy: 0,
         hasSupplierInvoice: false,
         suppBrokerName: null,
@@ -144,10 +143,7 @@ Deno.serve(async (req) => {
       const id = ec.STEM__c;
       if (!id) continue;
       initStem(id);
-      if (ec.Cancelled__c) {
-        byId[id].cancelledExtraCostBuy += (ec.Line_Total_Buy__c ?? 0);
-        continue;
-      }
+      if (ec.Cancelled__c) continue;
       byId[id].extraCostBuy += (ec.Line_Total_Buy__c ?? 0);
     }
 
@@ -155,8 +151,7 @@ Deno.serve(async (req) => {
     const rows = stems.map(s => {
       const buyer = s.Total_Invoice_Amount__c ?? 0;
       const agg = byId[s.Id] || {};
-      const supplierBaseRaw = agg.hasSupplierInvoice ? (s.Total_Invoiced_Amount_From_Suppliers__c ?? 0) : ((agg.supplierLineBuy ?? 0) + (s.Total_Invoiced_Amount_From_Suppliers__c ?? 0));
-      const supplierBase = supplierBaseRaw - (agg.cancelledExtraCostBuy ?? 0);
+      const supplierBase = agg.hasSupplierInvoice ? (s.Total_Invoiced_Amount_From_Suppliers__c ?? 0) : ((agg.supplierLineBuy ?? 0) + (s.Total_Invoiced_Amount_From_Suppliers__c ?? 0));
       const supplier = supplierBase + (agg.extraCostBuy ?? 0);
       const suppBrokerComm = agg.suppBrokerComm ?? 0;   // shown for reference
       const buyerBrokerComm = agg.buyerBrokerComm ?? 0;

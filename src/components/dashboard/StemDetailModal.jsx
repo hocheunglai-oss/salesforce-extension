@@ -101,8 +101,7 @@ function PnlBanner({ record, lineItems, extraCosts, buyerBrokers }) {
   const supplierExtraCosts = extraCosts.reduce((sum, ec) => ec.Supplier_Invoice__c || ec.Cancelled__c ? sum : sum + (ec.Line_Total_Buy__c ?? 0), 0);
   const supplierLineTotal = lineItems.reduce((sum, li) => li.Cancelled__c ? sum : sum + (li.Total_Cost__c ?? 0), 0);
   const supplierInvoiceTotal = record.Total_Invoiced_Amount_From_Suppliers__c ?? 0;
-  const cancelledExtraCostBuy = extraCosts.reduce((sum, ec) => ec.Cancelled__c ? sum + (ec.Line_Total_Buy__c ?? 0) : sum, 0);
-  const supplierBase = supplierInvoiceTotal ? supplierInvoiceTotal - cancelledExtraCostBuy : supplierLineTotal;
+  const supplierBase = supplierInvoiceTotal || supplierLineTotal;
   const supplierBrokerComm = lineItems.reduce((sum, li) => {
     if (li.Cancelled__c) return sum;
     const qty = li.Quantity_Delivered_Per_BDN__c != null ? li.Quantity_Delivered_Per_BDN__c : (li.Quantity__c ?? 0);
