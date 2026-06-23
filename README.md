@@ -28,6 +28,21 @@ VITE_BASE44_APP_BASE_URL=https://my-to-do-list-81bfaad7.base44.app
 
 Run the app: `npm run dev`
 
+**Vercel Salesforce connection**
+
+This app can call Salesforce directly from Vercel serverless functions. Add these Environment Variables in Vercel before deploying:
+
+```
+SALESFORCE_CLIENT_ID=your_connected_app_client_id
+SALESFORCE_CLIENT_SECRET=your_connected_app_client_secret
+SALESFORCE_REFRESH_TOKEN=your_salesforce_refresh_token
+SALESFORCE_INSTANCE_URL=https://fratellicosulich.my.salesforce.com
+SALESFORCE_LOGIN_URL=https://login.salesforce.com
+SALESFORCE_API_VERSION=v59.0
+```
+
+For a temporary test, `SALESFORCE_ACCESS_TOKEN` can be used instead of the OAuth refresh-token variables, but it will expire.
+
 **Publish your changes**
 
 Open [Base44.com](http://Base44.com) and click on Publish.
