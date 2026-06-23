@@ -1,4 +1,4 @@
-import { chunkIds, cleanRecord, sendJson, sfQuery, sfRequest } from '../../../_salesforce.js';
+import { chunkIds, cleanRecord, sendJson, sfQuery, sfRequest } from '../../_salesforce.js';
 
 async function readBody(req) {
   if (req.method === 'GET') return {};
