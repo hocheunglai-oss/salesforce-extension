@@ -786,9 +786,19 @@ async function salesforceStemDetailFull(body) {
     ...ec,
     _Product_Name: ec['Product2Id__r']?.Name ?? null,
   }));
+  const calculatedUndatedBuyerInvoice = lineItems.reduce((sum, li) => {
+    if (li.Cancelled__c) return sum;
+    return sum + (li.Total_Cost__c ?? 0);
+  }, 0);
+  const shouldUseCalculatedBuyerInvoice = !recordRaw.Delivery_Date__c
+    && calculatedUndatedBuyerInvoice > 0
+    && !recordRaw.Total_Invoice_Amount__c;
 
   const record = {
     ...recordRaw,
+    Total_Invoice_Amount__c: shouldUseCalculatedBuyerInvoice
+      ? calculatedUndatedBuyerInvoice
+      : recordRaw.Total_Invoice_Amount__c,
     _Buyer_Name: recordRaw.Buyer_Name__c || accountName || recordRaw.Buyer__c || null,
     _Vessel_Name: vesselName,
     _Port_Name: portName,
