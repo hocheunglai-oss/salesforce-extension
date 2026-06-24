@@ -41,6 +41,7 @@ export default function ExplorerResultsTable({ records = [] }) {
   const [hoverInfo, setHoverInfo] = useState(null);
 
   const columns = records.length > 0 ? Object.keys(records[0]).filter(k => k !== 'Id') : [];
+  const isNumericColumn = (key) => records.some(row => row[key] !== null && row[key] !== undefined && row[key] !== '' && !isNaN(Number(row[key])));
 
   const handleSort = (key) => {
     if (sortKey === key) setSortDir(d => d * -1);
@@ -91,7 +92,7 @@ export default function ExplorerResultsTable({ records = [] }) {
           className="h-8 text-xs w-64"
         />
       </div>
-      <div className="overflow-x-auto">
+      <div className="max-h-[620px] overflow-auto rounded-lg">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border bg-muted/30">
@@ -101,9 +102,9 @@ export default function ExplorerResultsTable({ records = [] }) {
                   onClick={() => handleSort(col)}
                   onMouseEnter={() => showColumnInfo(col)}
                   onMouseLeave={() => setHoverInfo(null)}
-                  className={`py-2.5 px-3 text-left font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-foreground transition-colors ${sortKey === col ? 'text-foreground' : ''}`}
+                  className={`sticky top-0 z-10 bg-card py-2.5 px-3 font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-foreground transition-colors ${isNumericColumn(col) ? 'text-right' : 'text-left'} ${sortKey === col ? 'text-foreground' : ''}`}
                 >
-                  <span className="flex items-center gap-1">
+                  <span className={`flex items-center gap-1 ${isNumericColumn(col) ? 'justify-end' : ''}`}>
                     {colLabel(col)}
                     {sortKey === col
                       ? (sortDir === 1 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)
@@ -117,7 +118,7 @@ export default function ExplorerResultsTable({ records = [] }) {
             {filtered.map((row, i) => (
               <tr key={row.Id || i} className="border-b border-border/40 hover:bg-muted/20 transition-colors">
                 {columns.map(col => (
-                  <td key={col} className="py-2.5 px-3 whitespace-nowrap text-foreground">
+                  <td key={col} className={`py-2.5 px-3 whitespace-nowrap text-foreground ${isNumericColumn(col) ? 'text-right tabular-nums' : ''}`}>
                     {fmtVal(col, row[col])}
                   </td>
                 ))}

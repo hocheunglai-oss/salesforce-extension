@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import ObjectSchemaTree from '@/components/settings/ObjectSchemaTree';
+import PageHeader from '@/components/common/PageHeader';
 
 const SETTINGS_KEY = 'report_builder_config';
 
@@ -87,17 +88,18 @@ export default function SettingsPage() {
 
   return (
     <div className="p-6 lg:p-8 max-w-4xl mx-auto">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
-        <Settings className="w-4 h-4" />
-        <span>Settings</span>
-      </div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-foreground font-dm tracking-tight">Settings</h1>
-        <Button onClick={saveAll} disabled={saving || loading} className="gap-2">
+      <PageHeader
+        icon={Settings}
+        eyebrow="Admin / Reporting"
+        title="Settings"
+        description="Configure report builder access, allowed Salesforce objects, and default query behavior."
+        actions={(
+          <Button onClick={saveAll} disabled={saving || loading} className="gap-2">
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : saved ? <Check className="w-3.5 h-3.5" /> : null}
           {saved ? 'Saved!' : 'Save All Settings'}
-        </Button>
-      </div>
+          </Button>
+        )}
+      />
 
       {/* ── Allowed Objects & Fields ── */}
       <div className="bg-card rounded-xl border border-border p-5 mb-6">

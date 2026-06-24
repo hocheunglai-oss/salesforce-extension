@@ -7,6 +7,9 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import StatCard from '@/components/dashboard/StatCard';
 import PnlTable from '@/components/dashboard/PnlTable';
 import StemDetailModal from '@/components/dashboard/StemDetailModal';
+import PageHeader from '@/components/common/PageHeader';
+import FilterSummary, { FilterChip } from '@/components/common/FilterSummary';
+import TableShell from '@/components/common/TableShell';
 import { Package, Building2, DollarSign, AlertCircle, RefreshCw, SlidersHorizontal, Loader2, Search, X, Percent } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -129,26 +132,31 @@ export default function DashboardSettings() {
     return { grossMarginPct };
   }, [data]);
 
+  const selectedYearLabel = selectedYears.slice().sort((a, b) => a - b).join(', ');
+  const selectedMonthLabel = selectedMonths.length === 12
+    ? 'All months'
+    : selectedMonths
+        .slice()
+        .sort((a, b) => a - b)
+        .map(m => MONTHS.find(x => x.value === m)?.label)
+        .filter(Boolean)
+        .join(', ');
+
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
-            <SlidersHorizontal className="w-4 h-4" />
-            <span>Dashboard</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-foreground font-dm tracking-tight">Dashboard</h1>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">Auto-saved</span>
-          </div>
-          {lastRefresh && <p className="text-xs text-muted-foreground mt-0.5">Last updated {format(lastRefresh, 'HH:mm:ss')}</p>}
-        </div>
-        <Button variant="outline" onClick={() => load()} disabled={loading} className="gap-2">
-          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        icon={SlidersHorizontal}
+        eyebrow="Dashboard"
+        title="Dashboard"
+        description="Review STEM performance, delivery-date filters, gross profit trends, and exceptions from Salesforce."
+        meta={lastRefresh ? `Last updated ${format(lastRefresh, 'HH:mm:ss')} · Auto-saved` : 'Auto-saved filters'}
+        actions={(
+          <Button variant="outline" onClick={() => load()} disabled={loading} className="gap-2">
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            Refresh
+          </Button>
+        )}
+      />
 
       {/* Filter panel */}
       <div className="bg-card rounded-xl border border-border p-5 mb-6">
@@ -202,12 +210,11 @@ export default function DashboardSettings() {
           </div>
         </div>
 
-        {/* Active filter summary */}
-        <div className="mt-4 p-2.5 bg-muted/40 rounded-lg">
-          <p className="text-xs font-mono text-muted-foreground truncate">
-            <span className="font-semibold text-foreground">WHERE</span> {buildWhereClause() || '(all records)'}
-          </p>
-        </div>
+        <FilterSummary className="mt-4" title="Active Delivery Filter">
+          <FilterChip label="Year" value={selectedYearLabel || 'None'} tone="active" />
+          <FilterChip label="Month" value={selectedMonthLabel || 'None'} tone="active" />
+          <FilterChip label="Fallback" value="Expected Delivery when Delivery Date is blank" />
+        </FilterSummary>
       </div>
 
       {error && (
@@ -341,7 +348,7 @@ export default function DashboardSettings() {
             <h3 className="text-sm font-semibold text-foreground mb-1">
               Top 10 Buyers by Gross Profit
               <span className="ml-2 text-xs font-normal text-muted-foreground">
-                ({selectedYears.sort((a,b) => a-b).join(', ')} · {selectedMonths.length === 12 ? 'All months' : selectedMonths.map(m => MONTHS.find(x => x.value === m)?.label).join(', ')})
+                ({selectedYearLabel} · {selectedMonthLabel})
               </span>
             </h3>
             <div className="mt-4 space-y-2">
@@ -372,10 +379,11 @@ export default function DashboardSettings() {
           )}
 
           {/* P&L Report */}
-          <div className="bg-card rounded-xl border border-border">
-            <div className="px-5 py-4 border-b border-border flex items-center gap-3">
-              <h3 className="text-sm font-semibold text-foreground shrink-0">Filtered STEMs</h3>
-              <div className="relative flex-1 max-w-sm">
+          <TableShell
+            title="Filtered STEMs"
+            meta={`${filteredStems.length}${filteredStems.length !== data.recentStems?.length ? ` of ${data.recentStems?.length}` : ''} shown`}
+            actions={(
+              <div className="relative w-full sm:w-80">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <Input
                   placeholder="Search by vessel, stem name, or buyer…"
@@ -389,14 +397,10 @@ export default function DashboardSettings() {
                   </button>
                 )}
               </div>
-              <span className="text-xs text-muted-foreground ml-auto shrink-0">
-                {filteredStems.length}{filteredStems.length !== data.recentStems?.length ? ` of ${data.recentStems?.length}` : ''} shown
-              </span>
-            </div>
-            <div className="p-2">
-              <PnlTable records={filteredStems} onRowClick={(row) => setSelectedStemId(row.Id)} />
-            </div>
-          </div>
+            )}
+          >
+            <PnlTable records={filteredStems} onRowClick={(row) => setSelectedStemId(row.Id)} />
+          </TableShell>
         </>
       )}
       <StemDetailModal

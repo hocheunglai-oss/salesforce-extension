@@ -6,6 +6,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AlertCircle, Loader2, Download, Play, TrendingUp, BarChart2 } from 'lucide-react';
 import { format } from 'date-fns';
 import StemDetailModal from '@/components/dashboard/StemDetailModal';
+import PageHeader from '@/components/common/PageHeader';
+import FilterSummary, { FilterChip } from '@/components/common/FilterSummary';
+import TableShell from '@/components/common/TableShell';
+import StateBlock from '@/components/common/StateBlock';
 
 const fmt = (v, isPercent = false) => {
   if (v == null) return '—';
@@ -121,6 +125,10 @@ export default function StemPnlReport() {
       return av < bv ? -sortDir : sortDir;
     });
 
+  const periodLabel = month === 'all'
+    ? `${year} full year`
+    : `${MONTH_OPTIONS.find(m => m.value === month)?.label || month} ${year}`;
+
   const exportCsv = () => {
     if (!rows.length) return;
     const headers = COLUMNS.map(c => c.label);
@@ -139,54 +147,56 @@ export default function StemPnlReport() {
   return (
     <div className="flex flex-col h-full overflow-auto">
       <div className="p-6 lg:p-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
-              <BarChart2 className="w-4 h-4" />
-              <span>Stem P&L Report</span>
-            </div>
-            <h1 className="text-2xl font-bold font-dm text-foreground">Stem Profit & Loss</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Shows calculated stem Gross Profit with Qlik reference</p>
-          </div>
-          {rows.length > 0 && (
+        <PageHeader
+          icon={BarChart2}
+          eyebrow="Stem P&L Report"
+          title="Stem Profit & Loss"
+          description="Validate calculated Gross Profit against Qlik reference values and inspect the underlying STEM detail."
+          meta={rows.length > 0 ? `${filtered.length.toLocaleString()} of ${rows.length.toLocaleString()} stems shown` : undefined}
+          actions={rows.length > 0 && (
             <Button variant="outline" size="sm" onClick={exportCsv} className="gap-1.5">
               <Download className="w-3.5 h-3.5" /> Export CSV
             </Button>
           )}
-        </div>
+        />
 
         {/* Filters */}
-        <div className="flex items-center gap-3 mb-6 flex-wrap">
-          <Select value={year} onValueChange={setYear}>
-            <SelectTrigger className="w-24 h-9">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {YEAR_OPTIONS.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={month} onValueChange={setMonth}>
-            <SelectTrigger className="w-36 h-9">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Full Year</SelectItem>
-              {MONTH_OPTIONS.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Button size="sm" onClick={run} disabled={loading} className="gap-1.5">
-            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            Run
-          </Button>
-          {rows.length > 0 && (
-            <Input
-              className="w-48 h-9 text-xs"
-              placeholder="Search stem, buyer…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          )}
+        <div className="mb-6 rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <Select value={year} onValueChange={setYear}>
+              <SelectTrigger className="w-24 h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {YEAR_OPTIONS.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={month} onValueChange={setMonth}>
+              <SelectTrigger className="w-36 h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Full Year</SelectItem>
+                {MONTH_OPTIONS.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button size="sm" onClick={run} disabled={loading} className="gap-1.5">
+              {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+              Run
+            </Button>
+            {rows.length > 0 && (
+              <Input
+                className="w-56 h-9 text-xs"
+                placeholder="Search stem, buyer..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            )}
+          </div>
+          <FilterSummary className="mt-4" title="Report Period">
+            <FilterChip label="Period" value={periodLabel} tone="active" />
+            <FilterChip label="Fallback" value="Expected Delivery when Delivery Date is blank" />
+          </FilterSummary>
         </div>
 
         {/* Error */}
@@ -220,15 +230,9 @@ export default function StemPnlReport() {
 
         {/* Table */}
         {loading ? (
-          <div className="flex flex-col items-center gap-3 py-20 text-muted-foreground">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            <span className="text-sm">Fetching stem P&L data…</span>
-          </div>
+          <StateBlock icon={Loader2} title="Fetching stem P&L data..." description="Loading calculated Salesforce amounts and Qlik reference values." />
         ) : rows.length > 0 ? (
-          <div className="bg-card rounded-xl border border-border overflow-hidden">
-            <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-              <span className="text-sm font-semibold">{filtered.length.toLocaleString()} stems</span>
-            </div>
+          <TableShell title="Stem P&L Results" meta={`${filtered.length.toLocaleString()} stems`} bodyClassName="p-0">
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -237,7 +241,7 @@ export default function StemPnlReport() {
                       <th
                         key={col.key}
                         onClick={() => handleSort(col.key)}
-                        className={`py-2.5 px-3 font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap cursor-pointer hover:text-foreground transition-colors select-none ${col.num ? 'text-right' : 'text-left'} ${sortKey === col.key ? 'text-foreground' : ''}`}
+                        className={`sticky top-0 z-10 bg-card py-2.5 px-3 font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap cursor-pointer hover:text-foreground transition-colors select-none ${col.num ? 'text-right' : 'text-left'} ${sortKey === col.key ? 'text-foreground' : ''}`}
                       >
                         {col.label} {sortKey === col.key ? (sortDir === -1 ? '↓' : '↑') : ''}
                       </th>
@@ -293,12 +297,9 @@ export default function StemPnlReport() {
                 )}
               </table>
             </div>
-          </div>
+          </TableShell>
         ) : !loading && !error ? (
-          <div className="flex flex-col items-center gap-3 py-20 text-muted-foreground">
-            <TrendingUp className="w-10 h-10 opacity-20" />
-            <span className="text-sm">Select a period and click Run to load P&L data</span>
-          </div>
+          <StateBlock icon={TrendingUp} title="No P&L data loaded" description="Select a period and click Run to load results." />
         ) : null}
       </div>
       <StemDetailModal

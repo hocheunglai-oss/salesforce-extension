@@ -4,9 +4,12 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Search, Download, AlertCircle, Loader2, Database, Copy, Check } from 'lucide-react';
+import { Search, Download, AlertCircle, Loader2, Database, Copy, Check, ChevronDown } from 'lucide-react';
 import ExplorerResultsTable from '@/components/data-explorer/ExplorerResultsTable';
 import FieldHoverInfo from '@/components/common/FieldHoverInfo';
+import PageHeader from '@/components/common/PageHeader';
+import TableShell from '@/components/common/TableShell';
+import StateBlock from '@/components/common/StateBlock';
 
 export default function DataExplorer() {
   const [objects, setObjects] = useState([]);
@@ -24,6 +27,8 @@ export default function DataExplorer() {
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [hoverInfo, setHoverInfo] = useState(null);
+  const [showSoql, setShowSoql] = useState(false);
+  const [showFields, setShowFields] = useState(true);
 
   useEffect(() => {
     appClient.functions.invoke('salesforceSchema', {}).then(res => {
@@ -120,10 +125,30 @@ export default function DataExplorer() {
 
   return (
     <div className="p-6 lg:p-8 max-w-full">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-foreground font-dm tracking-tight">Data Explorer</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Query any Salesforce object and export results</p>
-      </div>
+      <PageHeader
+        icon={Database}
+        eyebrow="Admin / Reporting"
+        title="Data Explorer"
+        description="Build a focused Salesforce query, preview SOQL when needed, then inspect or export the result set."
+        meta={records.length > 0 ? `${records.length.toLocaleString()} rows loaded${totalSize > records.length ? ` of ${totalSize.toLocaleString()}` : ''}` : undefined}
+        actions={(
+          <>
+            <Button variant="outline" onClick={() => setShowSoql(v => !v)} className="gap-1.5">
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showSoql ? 'rotate-180' : ''}`} />
+              SOQL
+            </Button>
+            {records.length > 0 && (
+              <Button variant="outline" onClick={exportCsv} className="gap-1.5">
+                <Download className="w-3.5 h-3.5" /> Export CSV
+              </Button>
+            )}
+            <Button onClick={runQuery} disabled={loading || !selectedObject} className="gap-2">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              Run Query
+            </Button>
+          </>
+        )}
+      />
 
       <div className="flex flex-col lg:flex-row gap-6">
         {/* Left panel */}
@@ -154,14 +179,19 @@ export default function DataExplorer() {
 
           {/* Fields */}
           <div className="bg-card rounded-xl border border-border p-4">
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">
-              Fields ({selectedFields.length} selected)
-            </label>
+            <button
+              type="button"
+              onClick={() => setShowFields(v => !v)}
+              className="mb-2 flex w-full items-center justify-between gap-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+            >
+              <span>Fields ({selectedFields.length} selected)</span>
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showFields ? 'rotate-180' : ''}`} />
+            </button>
             {loadingFields ? (
               <div className="space-y-1.5">
                 {[...Array(6)].map((_, i) => <div key={i} className="h-7 bg-muted animate-pulse rounded" />)}
               </div>
-            ) : (
+            ) : showFields ? (
               <div className="max-h-64 overflow-y-auto space-y-0.5">
                 {fields.filter(f => !['IsDeleted', 'SystemModstamp'].includes(f.name)).map(f => (
                   <label
@@ -181,12 +211,14 @@ export default function DataExplorer() {
                   </label>
                 ))}
               </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">{selectedFields.length ? selectedFields.join(', ') : 'No fields selected'}</p>
             )}
           </div>
 
           {/* Filters */}
           <div className="bg-card rounded-xl border border-border p-4 space-y-3">
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block">Filters</label>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block">Query Controls</label>
             <div>
               <p className="text-xs text-muted-foreground mb-1">WHERE clause (SOQL)</p>
               <Input
@@ -233,7 +265,7 @@ export default function DataExplorer() {
         {/* Results */}
         <div className="flex-1 min-w-0 space-y-4">
           {/* SOQL Preview */}
-          <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
+          {showSoql && <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700">
               <span className="text-xs font-semibold text-emerald-400 font-mono">SOQL Preview</span>
               <Button
@@ -249,7 +281,7 @@ export default function DataExplorer() {
             <div className="px-4 py-3 overflow-x-auto">
               <code className="text-xs text-emerald-300 font-mono whitespace-pre-wrap break-all">{soql}</code>
             </div>
-          </div>
+          </div>}
 
           {error && (
             <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm flex gap-2">
@@ -257,39 +289,18 @@ export default function DataExplorer() {
             </div>
           )}
 
-          <div className="bg-card rounded-xl border border-border">
-            <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm font-semibold text-foreground">
-                  {records.length > 0 ? `${records.length.toLocaleString()} rows` : 'Results'}
-                </span>
-                {totalSize > records.length && (
-                  <span className="text-xs text-muted-foreground">(of {totalSize.toLocaleString()} total)</span>
-                )}
-              </div>
-              {records.length > 0 && (
-                <Button variant="outline" size="sm" onClick={exportCsv} className="gap-1.5">
-                  <Download className="w-3.5 h-3.5" /> Export CSV
-                </Button>
-              )}
-            </div>
-            <div className="p-2">
+          <TableShell
+            title={records.length > 0 ? `${records.length.toLocaleString()} rows` : 'Results'}
+            meta={totalSize > records.length ? `of ${totalSize.toLocaleString()} total Salesforce rows` : undefined}
+          >
               {loading ? (
-                <div className="py-16 flex flex-col items-center gap-3 text-muted-foreground">
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                  <span className="text-sm">Querying Salesforce…</span>
-                </div>
+                <StateBlock icon={Loader2} title="Querying Salesforce..." description="Running the generated SOQL against the selected object." />
               ) : records.length > 0 ? (
                 <ExplorerResultsTable records={records} />
               ) : (
-                <div className="py-16 flex flex-col items-center gap-3 text-muted-foreground">
-                  <Database className="w-8 h-8 opacity-30" />
-                  <span className="text-sm">Run a query to see results</span>
-                </div>
+                <StateBlock icon={Database} title="No results loaded" description="Build your query and click Run Query." />
               )}
-            </div>
-          </div>
+          </TableShell>
         </div>
       </div>
       <FieldHoverInfo info={hoverInfo} />

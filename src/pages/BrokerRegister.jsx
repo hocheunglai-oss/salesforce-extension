@@ -6,6 +6,9 @@ import { Button } from '@/components/ui/button';
 import BrokerFilters from '@/components/brokers/BrokerFilters';
 import BrokerRegisterTable from '@/components/brokers/BrokerRegisterTable';
 import StemDetailModal from '@/components/dashboard/StemDetailModal';
+import PageHeader from '@/components/common/PageHeader';
+import TableShell from '@/components/common/TableShell';
+import StateBlock from '@/components/common/StateBlock';
 
 const fmtMoney = (value) => `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (value) => { try { return value ? format(new Date(value), 'dd MMM yyyy') : ''; } catch { return value || ''; } };
@@ -90,20 +93,22 @@ export default function BrokerRegister() {
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">Salesforce broker commissions</p>
-          <h1 className="text-2xl font-bold font-dm text-foreground">Broker Register</h1>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <PageHeader
+        eyebrow="Salesforce broker commissions"
+        title="Broker Register"
+        description="Review supplier, buyer, and secondary buyer broker commissions with payment status and hidden broker flags."
+        meta={`${filteredRows.length.toLocaleString()} rows · ${fmtMoney(total)} filtered commission total`}
+        actions={(
+          <>
           <Button variant="outline" onClick={exportCsv} disabled={loading || !filteredRows.length} className="gap-2 w-fit">
             <Download className="w-4 h-4" /> Export CSV
           </Button>
           <Button variant="outline" onClick={loadRows} disabled={loading} className="gap-2 w-fit">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </Button>
-        </div>
-      </div>
+          </>
+        )}
+      />
 
       <BrokerFilters search={search} setSearch={setSearch} selectedTypes={selectedTypes} setSelectedTypes={setSelectedTypes} brokerNames={brokerNames} selectedBrokerNames={selectedBrokerNames} setSelectedBrokerNames={setSelectedBrokerNames} selectedHiddenBrokerFlags={selectedHiddenBrokerFlags} setSelectedHiddenBrokerFlags={setSelectedHiddenBrokerFlags} fromDate={fromDate} setFromDate={setFromDate} toDate={toDate} setToDate={setToDate} />
 
@@ -112,9 +117,13 @@ export default function BrokerRegister() {
         <div><div className="text-xs text-muted-foreground uppercase tracking-wide">Commission Total</div><div className="text-xl font-bold">{fmtMoney(total)}</div></div>
       </div>
 
-      {loading && <div className="py-16 flex items-center justify-center text-muted-foreground gap-3"><Loader2 className="w-5 h-5 animate-spin" /> Loading broker register…</div>}
+      {loading && <StateBlock icon={Loader2} title="Loading broker register..." description="Fetching commissions, payment status, and broker flags from Salesforce." />}
       {error && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
-      {!loading && !error && <BrokerRegisterTable rows={filteredRows} onRowClick={setSelectedStemId} />}
+      {!loading && !error && (
+        <TableShell title="Broker Commission Rows" meta={`${filteredRows.length.toLocaleString()} matching rows`} bodyClassName="p-0">
+          <BrokerRegisterTable rows={filteredRows} onRowClick={setSelectedStemId} />
+        </TableShell>
+      )}
 
       <StemDetailModal stemId={selectedStemId} open={!!selectedStemId} onClose={() => setSelectedStemId(null)} onUpdated={loadRows} />
     </div>

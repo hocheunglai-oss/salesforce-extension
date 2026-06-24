@@ -69,65 +69,80 @@ export default function BrokerFilters({ search, setSearch, selectedTypes, setSel
   };
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4 space-y-4">
-      <Input placeholder="Search stem or broker…" value={search} onChange={e => setSearch(e.target.value)} />
-      <div className="flex flex-wrap gap-2">
-        {TYPES.map(type => (
-          <Button key={type} type="button" size="sm" variant={selectedTypes.includes(type) ? 'default' : 'outline'} onClick={() => toggleType(type)}>
-            {type}
-          </Button>
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {HIDDEN_BROKER_FLAGS.map(flag => (
-          <Button key={flag.key} type="button" size="sm" variant={selectedHiddenBrokerFlags.includes(flag.key) ? 'default' : 'outline'} onClick={() => toggleHiddenBrokerFlag(flag.key)}>
-            {flag.label} = true
-          </Button>
-        ))}
-      </div>
-      {brokerNames.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Broker names</p>
-            {selectedBrokerNames.length > 0 && (
-              <button type="button" className="text-xs text-primary hover:underline" onClick={() => setSelectedBrokerNames([])}>
-                Clear selection
-              </button>
-            )}
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(260px,1fr)_minmax(360px,1.4fr)]">
+        <div className="space-y-3">
+          <div>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Search</p>
+            <Input placeholder="Search stem or broker..." value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <div className="max-h-36 overflow-y-auto rounded-lg border border-border p-2 flex flex-wrap gap-2">
-            {brokerNames.map(name => (
-              <Button key={name} type="button" size="sm" variant={selectedBrokerNames.includes(name) ? 'default' : 'outline'} onClick={() => toggleBroker(name)}>
-                {name}
-              </Button>
-            ))}
+          <div>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Broker Type</p>
+            <div className="flex flex-wrap gap-2">
+              {TYPES.map(type => (
+                <Button key={type} type="button" size="sm" variant={selectedTypes.includes(type) ? 'default' : 'outline'} onClick={() => toggleType(type)}>
+                  {type}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Hidden Flags</p>
+            <div className="flex flex-wrap gap-2">
+              {HIDDEN_BROKER_FLAGS.map(flag => (
+                <Button key={flag.key} type="button" size="sm" variant={selectedHiddenBrokerFlags.includes(flag.key) ? 'default' : 'outline'} onClick={() => toggleHiddenBrokerFlag(flag.key)}>
+                  {flag.label} = true
+                </Button>
+              ))}
+            </div>
           </div>
         </div>
-      )}
-      <div className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Date range</p>
-        <div className="flex flex-wrap items-center gap-2">
-          {RANGE_OPTIONS.map(option => (
-            <Button key={option.key} type="button" size="sm" variant="outline" onClick={() => applyDateRange(option.key)}>
-              {option.label}
-            </Button>
-          ))}
-          <select
-            value={selectedYear}
-            onChange={event => setSelectedYear(Number(event.target.value))}
-            className="h-8 rounded-md border border-input bg-transparent px-3 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            {YEAR_OPTIONS.map(year => <option key={year} value={year}>{year}</option>)}
-          </select>
-          {QUARTER_OPTIONS.map(option => (
-            <Button key={option.key} type="button" size="sm" variant="outline" onClick={() => applyQuarterRange(option)}>
-              {option.label}
-            </Button>
-          ))}
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <BrokerDatePicker value={fromDate} onChange={setFromDate} placeholder="dd/mm/yyyy" aria-label="From date" />
-          <BrokerDatePicker value={toDate} onChange={setToDate} placeholder="dd/mm/yyyy" aria-label="To date" />
+        <div className="space-y-4">
+          {brokerNames.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Broker names</p>
+                {selectedBrokerNames.length > 0 && (
+                  <button type="button" className="text-xs text-primary hover:underline" onClick={() => setSelectedBrokerNames([])}>
+                    Clear selection
+                  </button>
+                )}
+              </div>
+              <div className="max-h-32 overflow-y-auto rounded-lg border border-border bg-background/40 p-2 flex flex-wrap gap-2">
+                {brokerNames.map(name => (
+                  <Button key={name} type="button" size="sm" variant={selectedBrokerNames.includes(name) ? 'default' : 'outline'} onClick={() => toggleBroker(name)}>
+                    {name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Date range</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {RANGE_OPTIONS.map(option => (
+                <Button key={option.key} type="button" size="sm" variant="outline" onClick={() => applyDateRange(option.key)}>
+                  {option.label}
+                </Button>
+              ))}
+              <select
+                value={selectedYear}
+                onChange={event => setSelectedYear(Number(event.target.value))}
+                className="h-8 rounded-md border border-input bg-transparent px-3 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {YEAR_OPTIONS.map(year => <option key={year} value={year}>{year}</option>)}
+              </select>
+              {QUARTER_OPTIONS.map(option => (
+                <Button key={option.key} type="button" size="sm" variant="outline" onClick={() => applyQuarterRange(option)}>
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <BrokerDatePicker value={fromDate} onChange={setFromDate} placeholder="dd/mm/yyyy" aria-label="From date" />
+              <BrokerDatePicker value={toDate} onChange={setToDate} placeholder="dd/mm/yyyy" aria-label="To date" />
+            </div>
+          </div>
         </div>
       </div>
     </div>

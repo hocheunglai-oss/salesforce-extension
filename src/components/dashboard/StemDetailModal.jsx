@@ -258,7 +258,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
       <Dialog open={open} onOpenChange={onClose}>
         <DialogContent className="max-w-[95vw] w-[1400px] max-h-[92vh] overflow-hidden flex flex-col p-0">
           {/* Sticky Header */}
-          <DialogHeader className="px-7 pt-6 pb-4 border-b border-border shrink-0 bg-card">
+          <DialogHeader className="sticky top-0 z-20 px-7 pt-6 pb-4 border-b border-border shrink-0 bg-card/95 backdrop-blur">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs text-muted-foreground mb-0.5">Stem Detail</p>
@@ -316,7 +316,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
             {record && !loading && (
               <div className="space-y-7">
                 {/* Info sections in a 3-col grid */}
-                <div className="grid grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {SECTIONS.map(section => {
                     const rows = section.fields.filter(f => {
                       const v = record[f.key];
@@ -347,27 +347,27 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                 {lineItems.length > 0 && (
                   <div>
                     <SectionHeader title={`Line Items (${lineItems.length})`} />
-                    <div className="rounded-xl border border-border overflow-hidden">
+                    <div className="max-h-[360px] overflow-auto rounded-xl border border-border">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="bg-muted/40 border-b border-border">
-                            <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Product</th>
-                            <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Supplier</th>
+                            <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Product</th>
+                            <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Supplier</th>
                             {lineItems.some(li => li.BDN_Company__c) && (
-                              <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">BDN Company</th>
+                              <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">BDN Company</th>
                             )}
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Qty (MT)</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Sell/Unit</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Buy/Unit</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Sell</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Buy</th>
-                            <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker/Unit</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Qty (MT)</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Sell/Unit</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Buy/Unit</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Sell</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Buy</th>
+                            <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker/Unit</th>
                             {showSecondaryBuyerBrokerUnit && (
-                              <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker (Secondary)/Unit</th>
+                              <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Buyer Broker (Secondary)/Unit</th>
                             )}
-                            <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Supp Broker</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Supp Broker/Unit</th>
+                            <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Supp Broker</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Supp Broker/Unit</th>
 
                           </tr>
                         </thead>
@@ -422,19 +422,19 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                   <div>
                     <SectionHeader title={`Extra Costs (${visibleExtraCosts.length})`} />
 
-                    <div className="rounded-xl border border-border overflow-hidden">
+                    <div className="max-h-[320px] overflow-auto rounded-xl border border-border">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="bg-muted/40 border-b border-border">
-                            <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Name</th>
-                            <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Product</th>
-                            <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground">Supplier</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Qty</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Sell/Unit</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Buy/Unit</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Sell</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Buy</th>
-                            <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground">Net</th>
+                            <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Name</th>
+                            <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Product</th>
+                            <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Supplier</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Qty</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Sell/Unit</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Buy/Unit</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Sell</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Buy</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Net</th>
                           </tr>
                         </thead>
                         <tbody>

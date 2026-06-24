@@ -120,7 +120,7 @@ export default function ReportBuilder() {
   const [error, setError] = useState(null);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [selectedSavedReport, setSelectedSavedReport] = useState(null);
-  const [showSoql, setShowSoql] = useState(true);
+  const [showSoql, setShowSoql] = useState(false);
   const [soqlCopied, setSoqlCopied] = useState(false);
   const [rawSoqlMode, setRawSoqlMode] = useState(false);
   const [rawSoql, setRawSoql] = useState('');
@@ -557,7 +557,7 @@ export default function ReportBuilder() {
       <div className="flex-1 overflow-auto">
         <div className="p-6 lg:p-8">
           {/* Header */}
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-start justify-between mb-4 gap-4">
             <div className="flex-1 min-w-0 mr-4">
               <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
                 <FileBarChart2 className="w-4 h-4" />
@@ -570,6 +570,7 @@ export default function ReportBuilder() {
                 onChange={e => setReportName(e.target.value)}
                 className="text-xl font-bold border-none shadow-none px-0 h-auto font-dm focus-visible:ring-0 text-foreground placeholder:text-muted-foreground/40"
               />
+              <p className="mt-1 text-sm text-muted-foreground">Build, preview, run, inspect, and export Salesforce reports.</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <Button
@@ -598,6 +599,16 @@ export default function ReportBuilder() {
               >
                 <Code className="w-3.5 h-3.5" /> {rawSoqlMode ? 'Builder' : 'Raw SOQL'}
               </Button>
+              {!rawSoqlMode && (
+                <Button
+                  variant={showSoql ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setShowSoql(v => !v)}
+                  className="gap-1.5 text-muted-foreground"
+                >
+                  <Copy className="w-3.5 h-3.5" /> SOQL
+                </Button>
+              )}
               {records.length > 0 && (
                 <Button variant="outline" size="sm" onClick={exportCsv} className="gap-1.5">
                   <Download className="w-3.5 h-3.5" /> Export CSV
@@ -621,6 +632,14 @@ export default function ReportBuilder() {
                 Run
               </Button>
             </div>
+          </div>
+
+          <div className="mb-4 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+            {['Build columns and filters', 'Preview SOQL when needed', 'Run against Salesforce', 'Inspect or export rows'].map((step, idx) => (
+              <div key={step} className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-muted-foreground">
+                <span className="mr-2 font-semibold text-foreground">{idx + 1}</span>{step}
+              </div>
+            ))}
           </div>
 
           {/* Saved Reports dropdown panel */}
@@ -694,7 +713,7 @@ export default function ReportBuilder() {
           )}
 
           {/* SOQL Preview (builder mode only) */}
-          {!rawSoqlMode && !compact && (
+          {!rawSoqlMode && showSoql && (
             <div className="mb-5 bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
               <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
                 <span className="text-xs font-semibold text-emerald-400 font-mono">SOQL Preview</span>

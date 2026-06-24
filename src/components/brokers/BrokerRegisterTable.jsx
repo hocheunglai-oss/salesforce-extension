@@ -11,22 +11,22 @@ export default function BrokerRegisterTable({ rows, onRowClick }) {
   const receivableTotal = rows.reduce((sum, row) => sum + (row.brokerType !== 'Supplier Broker' ? Number(row.commissionAmount || 0) : 0), 0);
 
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <div className="overflow-x-auto">
+    <div className="overflow-hidden">
+      <div className="max-h-[620px] overflow-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-muted/40 border-b border-border">
-              <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Stem Name</th>
-              <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Product</th>
-              <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Delivery Date</th>
-              <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Broker Type</th>
-              <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Broker Name</th>
-              <th className="text-right py-3 px-4 font-semibold text-muted-foreground">Commission / Unit</th>
-              <th className="text-right py-3 px-4 font-semibold text-muted-foreground">Payable Balance</th>
-              <th className="text-right py-3 px-4 font-semibold text-muted-foreground">Receivable Balance</th>
-              <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Payment Date</th>
-              <th className="text-right py-3 px-4 font-semibold text-muted-foreground">Payment Delay</th>
-              <th className="text-left py-3 px-4 font-semibold text-muted-foreground">Payment Status</th>
+              <th className="sticky top-0 z-10 bg-card text-left py-3 px-4 font-semibold text-muted-foreground">Stem Name</th>
+              <th className="sticky top-0 z-10 bg-card text-left py-3 px-4 font-semibold text-muted-foreground">Product</th>
+              <th className="sticky top-0 z-10 bg-card text-left py-3 px-4 font-semibold text-muted-foreground">Delivery Date</th>
+              <th className="sticky top-0 z-10 bg-card text-left py-3 px-4 font-semibold text-muted-foreground">Broker Type</th>
+              <th className="sticky top-0 z-10 bg-card text-left py-3 px-4 font-semibold text-muted-foreground">Broker Name</th>
+              <th className="sticky top-0 z-10 bg-card text-right py-3 px-4 font-semibold text-muted-foreground">Commission / Unit</th>
+              <th className="sticky top-0 z-10 bg-card text-right py-3 px-4 font-semibold text-muted-foreground">Payable Balance</th>
+              <th className="sticky top-0 z-10 bg-card text-right py-3 px-4 font-semibold text-muted-foreground">Receivable Balance</th>
+              <th className="sticky top-0 z-10 bg-card text-left py-3 px-4 font-semibold text-muted-foreground">Payment Date</th>
+              <th className="sticky top-0 z-10 bg-card text-right py-3 px-4 font-semibold text-muted-foreground">Payment Delay</th>
+              <th className="sticky top-0 z-10 bg-card text-left py-3 px-4 font-semibold text-muted-foreground">Payment Status</th>
             </tr>
           </thead>
           <tbody>

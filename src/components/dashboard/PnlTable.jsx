@@ -103,14 +103,14 @@ export default function PnlTable({ records = [], onRowClick }) {
   ];
 
   return (
-    <div className="overflow-x-auto">
+    <div className="max-h-[520px] overflow-auto rounded-lg">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border">
             {displayCols.map(col => (
               <th
                  key={col}
-                 className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${
+                 className={`sticky top-0 z-10 bg-card py-2.5 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${
                    MONEY_COLS.has(col) ? 'text-right' : 'text-left'
                  }`}
                >
