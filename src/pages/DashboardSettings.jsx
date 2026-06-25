@@ -12,46 +12,11 @@ import FilterSummary, { FilterChip } from '@/components/common/FilterSummary';
 import TableShell from '@/components/common/TableShell';
 import { Package, Building2, DollarSign, AlertCircle, RefreshCw, SlidersHorizontal, Loader2, Search, X, Percent } from 'lucide-react';
 import { format } from 'date-fns';
+import { MONTHS, THIS_MONTH, THIS_YEAR, buildDeliveryWhere, formatSelectedMonths, getRecentYears } from '@/lib/dashboardFilters';
 
 const STORAGE_KEY = 'dashboard_filters_v2';
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899'];
-
-const MONTHS = [
-  { value: 1, label: 'Jan' }, { value: 2, label: 'Feb' }, { value: 3, label: 'Mar' },
-  { value: 4, label: 'Apr' }, { value: 5, label: 'May' }, { value: 6, label: 'Jun' },
-  { value: 7, label: 'Jul' }, { value: 8, label: 'Aug' }, { value: 9, label: 'Sep' },
-  { value: 10, label: 'Oct' }, { value: 11, label: 'Nov' }, { value: 12, label: 'Dec' },
-];
-
-const now = new Date();
-const THIS_YEAR = now.getFullYear();
-const THIS_MONTH = now.getMonth() + 1; // 1-based
-const YEARS = [THIS_YEAR, THIS_YEAR - 1, THIS_YEAR - 2];
-
-// Build WHERE clause from selected years + months using Delivery_Date__c,
-// falling back to Expected_Delivery_Date__c only when Delivery_Date__c is blank.
-function buildEffectiveDateRange(startDate, endDate) {
-  return `((Delivery_Date__c >= ${startDate} AND Delivery_Date__c <= ${endDate}) OR (Delivery_Date__c = null AND Expected_Delivery_Date__c >= ${startDate} AND Expected_Delivery_Date__c <= ${endDate}))`;
-}
-
-function buildDeliveryWhere(years, months) {
-  if (!years.length) return '';
-  const conditions = [];
-  for (const yr of years) {
-    if (!months.length || months.length === 12) {
-      // Whole year
-      conditions.push(buildEffectiveDateRange(`${yr}-01-01`, `${yr}-12-31`));
-    } else {
-      // Specific months within this year
-      for (const mo of months) {
-        const mm = String(mo).padStart(2, '0');
-        const lastDay = new Date(yr, mo, 0).getDate();
-        conditions.push(buildEffectiveDateRange(`${yr}-${mm}-01`, `${yr}-${mm}-${lastDay}`));
-      }
-    }
-  }
-  return conditions.join(' OR ');
-}
+const YEARS = getRecentYears();
 
 export default function DashboardSettings() {
   const savedFilters = (() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; } })();
@@ -134,14 +99,7 @@ export default function DashboardSettings() {
   }, [data]);
 
   const selectedYearLabel = selectedYears.slice().sort((a, b) => a - b).join(', ');
-  const selectedMonthLabel = selectedMonths.length === 12
-    ? 'All months'
-    : selectedMonths
-        .slice()
-        .sort((a, b) => a - b)
-        .map(m => MONTHS.find(x => x.value === m)?.label)
-        .filter(Boolean)
-        .join(', ');
+  const selectedMonthLabel = formatSelectedMonths(selectedMonths);
 
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">

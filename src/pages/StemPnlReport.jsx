@@ -10,6 +10,7 @@ import PageHeader from '@/components/common/PageHeader';
 import FilterSummary, { FilterChip } from '@/components/common/FilterSummary';
 import TableShell from '@/components/common/TableShell';
 import StateBlock from '@/components/common/StateBlock';
+import { buildDeliveryWhere } from '@/lib/dashboardFilters';
 
 const fmt = (v, isPercent = false) => {
   if (v == null) return '—';
@@ -83,16 +84,7 @@ export default function StemPnlReport() {
   const [selectedStemId, setSelectedStemId] = useState(null);
 
   const buildWhere = useCallback(() => {
-    const parts = [];
-    if (month !== 'all') {
-      const from = `${year}-${month}-01`;
-      const lastDay = new Date(Number(year), Number(month), 0).getDate();
-      const to = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
-      parts.push(`((Delivery_Date__c >= ${from} AND Delivery_Date__c <= ${to}) OR (Delivery_Date__c = null AND Expected_Delivery_Date__c >= ${from} AND Expected_Delivery_Date__c <= ${to}))`);
-    } else {
-      parts.push(`((Delivery_Date__c >= ${year}-01-01 AND Delivery_Date__c <= ${year}-12-31) OR (Delivery_Date__c = null AND Expected_Delivery_Date__c >= ${year}-01-01 AND Expected_Delivery_Date__c <= ${year}-12-31))`);
-    }
-    return parts.join(' AND ');
+    return buildDeliveryWhere([year], month === 'all' ? [] : [month]);
   }, [year, month]);
 
   const run = async () => {

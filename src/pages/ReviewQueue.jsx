@@ -12,21 +12,12 @@ import StateBlock from '@/components/common/StateBlock';
 import StatCard from '@/components/dashboard/StatCard';
 import StemDetailModal from '@/components/dashboard/StemDetailModal';
 import { cn } from '@/lib/utils';
+import { MONTHS, THIS_MONTH, THIS_YEAR, buildDeliveryWhere, formatSelectedMonths, getRecentYears } from '@/lib/dashboardFilters';
 
 const BUYER_FIELD = 'Total_Invoice_Amount__c';
 const SUPPLIER_FIELD = 'Total_Invoiced_Amount_From_Suppliers__c';
 const STORAGE_KEY = 'review_queue_filters_v1';
-
-const now = new Date();
-const THIS_YEAR = now.getFullYear();
-const THIS_MONTH = now.getMonth() + 1;
-const YEARS = [THIS_YEAR, THIS_YEAR - 1, THIS_YEAR - 2];
-const MONTHS = [
-  { value: 1, label: 'Jan' }, { value: 2, label: 'Feb' }, { value: 3, label: 'Mar' },
-  { value: 4, label: 'Apr' }, { value: 5, label: 'May' }, { value: 6, label: 'Jun' },
-  { value: 7, label: 'Jul' }, { value: 8, label: 'Aug' }, { value: 9, label: 'Sep' },
-  { value: 10, label: 'Oct' }, { value: 11, label: 'Nov' }, { value: 12, label: 'Dec' },
-];
+const YEARS = getRecentYears();
 
 const REVIEW_FILTERS = [
   { key: 'all', label: 'All review items' },
@@ -45,27 +36,6 @@ const fmtDate = (value) => {
   if (!value) return '-';
   try { return format(new Date(value), 'dd MMM yyyy'); } catch { return value; }
 };
-
-function buildEffectiveDateRange(startDate, endDate) {
-  return `((Delivery_Date__c >= ${startDate} AND Delivery_Date__c <= ${endDate}) OR (Delivery_Date__c = null AND Expected_Delivery_Date__c >= ${startDate} AND Expected_Delivery_Date__c <= ${endDate}))`;
-}
-
-function buildDeliveryWhere(years, months) {
-  if (!years.length) return '';
-  const conditions = [];
-  for (const yr of years) {
-    if (!months.length || months.length === 12) {
-      conditions.push(buildEffectiveDateRange(`${yr}-01-01`, `${yr}-12-31`));
-    } else {
-      for (const mo of months) {
-        const mm = String(mo).padStart(2, '0');
-        const lastDay = new Date(yr, mo, 0).getDate();
-        conditions.push(buildEffectiveDateRange(`${yr}-${mm}-01`, `${yr}-${mm}-${lastDay}`));
-      }
-    }
-  }
-  return conditions.join(' OR ');
-}
 
 function classifyStem(row) {
   const buyer = row[BUYER_FIELD];
@@ -168,9 +138,7 @@ export default function ReviewQueue() {
   }, [selectedYears, selectedMonths]);
 
   const selectedYearLabel = selectedYears.slice().sort((a, b) => a - b).join(', ');
-  const selectedMonthLabel = selectedMonths.length === 12
-    ? 'All months'
-    : selectedMonths.slice().sort((a, b) => a - b).map(m => MONTHS.find(x => x.value === m)?.label).filter(Boolean).join(', ');
+  const selectedMonthLabel = formatSelectedMonths(selectedMonths);
 
   const reviewRows = useMemo(() => {
     const rows = (data?.recentStems || []).map(classifyStem).filter(row => row.reviewReasons.length > 0);
