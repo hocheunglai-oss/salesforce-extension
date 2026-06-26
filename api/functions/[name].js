@@ -778,6 +778,7 @@ async function stemPnlFull(body) {
 
 async function salesforceBuyerInvoicesDue(body) {
   const daysAhead = Math.max(0, Math.min(Number(body.daysAhead) || 30, 365));
+  const rowLimit = 10000;
   const today = dateOnly(new Date());
   const dueThrough = addDays(today, daysAhead);
   const describe = await salesforceObjectFields({ objectName: 'stem__c' });
@@ -806,8 +807,8 @@ async function salesforceBuyerInvoicesDue(body) {
     FROM stem__c
     WHERE ${whereParts.join(' AND ')}
     ORDER BY ${dueFields[0]} ASC NULLS LAST, Name ASC
-    LIMIT 3000
-  `, { limit: 3000, softFail: true });
+    LIMIT ${rowLimit}
+  `, { limit: rowLimit, softFail: true });
 
   const accountIds = [...new Set(stems.map((stem) => stem.Account__c).filter(Boolean))];
   const accountMap = {};
