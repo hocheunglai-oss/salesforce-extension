@@ -349,26 +349,11 @@ function earliestDate(values) {
   return values.filter(Boolean).sort()[0] || null;
 }
 
-const TRADER_CODE_NAMES = {
-  KZ: 'Kelvin Zeng',
-  OL: 'Oleh Kulyk',
-  SC: 'Stanley Chui',
-  VL: 'Vincent Lee',
-};
+const MIN_BUYER_INVOICE_DUE_DATE = '2026-01-01';
 
 function formatStemName(stem) {
   const parts = [stem.KeyStem__c, stem['Vessel__r']?.Name, stem['Port__r']?.Name].filter(Boolean);
   return parts.length ? parts.join(' - ') : stem.Name;
-}
-
-function formatTraderInCharge(accountManager, ownerName) {
-  const codes = String(accountManager || '')
-    .split(/[\/,;&\s]+/)
-    .map((code) => code.trim().toUpperCase())
-    .filter(Boolean);
-  const names = codes.map((code) => TRADER_CODE_NAMES[code] || code);
-  if (names.length) return names.join(', ');
-  return ownerName && ownerName !== 'Production Support' ? ownerName : null;
 }
 
 async function resolveViaQuery(objectType, id, nameField = 'Name') {
@@ -819,12 +804,12 @@ async function salesforceBuyerInvoicesDue(body) {
   if (fieldNames.includes('Total_Invoice_Amount__c')) fields.push('Total_Invoice_Amount__c');
   if (fieldNames.includes('Receivable_Balance__c')) fields.push('Receivable_Balance__c');
   if (fieldNames.includes('Account__c')) {
-    fields.push('Account__c', 'Account__r.Name', 'Account__r.Account_Manager__c', 'Account__r.Owner.Name');
+    fields.push('Account__c', 'Account__r.Name');
   }
   if (fieldNames.includes('Payment_Date__c')) fields.push('Payment_Date__c');
 
   const dueCondition = dueFields
-    .map((field) => `(${field} != null AND ${field} <= ${dueThrough})`)
+    .map((field) => `(${field} != null AND ${field} >= ${MIN_BUYER_INVOICE_DUE_DATE} AND ${field} <= ${dueThrough})`)
     .join(' OR ');
   const outstandingConditions = [];
   if (fieldNames.includes('Payment_Date__c')) outstandingConditions.push('Payment_Date__c = null');
@@ -839,14 +824,42 @@ async function salesforceBuyerInvoicesDue(body) {
     LIMIT ${rowLimit}
   `, { limit: rowLimit, softFail: true });
 
+  const stemIds = stems.map((stem) => stem.Id);
+  const traderByStem = {};
+  if (stemIds.length) {
+    const nominationArrays = await Promise.all(chunkIds(stemIds).map((chunk) => {
+      const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
+      return queryRows(`
+        SELECT Id, Name, STEM__c, Buyer_Supplier_Trader__c
+        FROM Nomination__c
+        WHERE STEM__c IN (${inList}) AND Buyer_Supplier_Trader__c != null
+        ORDER BY CreatedDate ASC
+        LIMIT 5000
+      `, { limit: 5000, softFail: true });
+    }));
+
+    for (const nomination of nominationArrays.flat()) {
+      if (!nomination.STEM__c || !nomination.Buyer_Supplier_Trader__c) continue;
+      if (!traderByStem[nomination.STEM__c]) traderByStem[nomination.STEM__c] = { supplier: [], all: [] };
+      const name = String(nomination.Name || '');
+      const value = nomination.Buyer_Supplier_Trader__c;
+      if (!traderByStem[nomination.STEM__c].all.includes(value)) traderByStem[nomination.STEM__c].all.push(value);
+      if (name.startsWith('Nomination to ') && !traderByStem[nomination.STEM__c].supplier.includes(value)) {
+        traderByStem[nomination.STEM__c].supplier.push(value);
+      }
+    }
+  }
+
   const rows = stems
     .map((stem) => {
       const dueDate = earliestDate(dueFields.map((field) => stem[field]));
       if (!dueDate || dueDate > dueThrough) return null;
+      if (dueDate < MIN_BUYER_INVOICE_DUE_DATE) return null;
       if (stem.KeyStem__c && stem.KeyStem__c.startsWith('T')) return null;
       if (stem.Receivable_Balance__c != null && Number(stem.Receivable_Balance__c) < 50) return null;
       const daysUntilDue = daysBetween(today, dueDate);
       const account = stem['Account__r'] || {};
+      const traderInfo = traderByStem[stem.Id] || {};
       return {
         id: stem.Id,
         stemId: stem.Id,
@@ -856,7 +869,7 @@ async function salesforceBuyerInvoicesDue(body) {
         invoiceAmount: stem.Total_Invoice_Amount__c ?? null,
         receivableBalance: stem.Receivable_Balance__c ?? null,
         buyerInvoiceDueDate: dueDate,
-        buyerTraderInCharge: formatTraderInCharge(account.Account_Manager__c, account.Owner?.Name),
+        buyerTraderInCharge: (traderInfo.supplier?.length ? traderInfo.supplier : traderInfo.all || []).join(', ') || null,
         daysUntilDue,
         status: daysUntilDue == null ? 'Due' : daysUntilDue < 0 ? 'Overdue' : 'Due Soon',
       };
