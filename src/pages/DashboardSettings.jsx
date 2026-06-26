@@ -8,7 +8,6 @@ import StatCard from '@/components/dashboard/StatCard';
 import PnlTable from '@/components/dashboard/PnlTable';
 import StemDetailModal from '@/components/dashboard/StemDetailModal';
 import PageHeader from '@/components/common/PageHeader';
-import FilterSummary, { FilterChip } from '@/components/common/FilterSummary';
 import TableShell from '@/components/common/TableShell';
 import { Package, Building2, DollarSign, AlertCircle, RefreshCw, SlidersHorizontal, Loader2, Search, X, Percent } from 'lucide-react';
 import { format } from 'date-fns';
@@ -118,13 +117,10 @@ export default function DashboardSettings() {
       />
 
       {/* Filter panel */}
-      <div className="bg-card rounded-xl border border-border p-5 mb-6">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">Filters</h2>
-
-        {/* Year selector */}
-        <div className="mb-4">
-          <Label className="text-xs font-medium text-muted-foreground mb-2 block">Year</Label>
-          <div className="flex gap-2 flex-wrap">
+      <div className="bg-card rounded-xl border border-border p-4 mb-6 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Label className="w-16 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Year</Label>
+          <div className="flex flex-wrap gap-2">
             {YEARS.map(yr => (
               <button
                 key={yr}
@@ -139,39 +135,7 @@ export default function DashboardSettings() {
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Month selector */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <Label className="text-xs font-medium text-muted-foreground">Month</Label>
-            <button
-              onClick={toggleAllMonths}
-              className="text-xs text-primary hover:underline"
-            >
-              {selectedMonths.length === 12 ? 'Clear all' : 'Select all'}
-            </button>
-          </div>
-          <div className="flex gap-1.5 flex-wrap">
-            {MONTHS.map(m => (
-              <button
-                key={m.value}
-                onClick={() => toggleMonth(m.value)}
-                className={`px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
-                  selectedMonths.includes(m.value)
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-muted/40 text-muted-foreground border-border hover:border-primary/50'
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-4">
-          <Label className="text-xs font-medium text-muted-foreground mb-2 block">Dispute</Label>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setDisputeOnly(false)}
               className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
@@ -195,12 +159,28 @@ export default function DashboardSettings() {
           </div>
         </div>
 
-        <FilterSummary className="mt-4" title="Active Delivery Filter">
-          <FilterChip label="Year" value={selectedYearLabel || 'None'} tone="active" />
-          <FilterChip label="Month" value={selectedMonthLabel || 'None'} tone="active" />
-          <FilterChip label="Dispute" value={disputeOnly ? 'Disputed only' : 'All STEMs'} tone={disputeOnly ? 'active' : 'default'} />
-          <FilterChip label="Fallback" value="Expected Delivery when Delivery Date is blank" />
-        </FilterSummary>
+        <div className="flex flex-wrap items-center gap-3">
+          <Label className="w-16 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Month</Label>
+          <div className="flex flex-wrap gap-1.5">
+            {MONTHS.map(m => (
+              <button
+                key={m.value}
+                onClick={() => toggleMonth(m.value)}
+                className={`px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
+                  selectedMonths.includes(m.value)
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-muted/40 text-muted-foreground border-border hover:border-primary/50'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <button onClick={toggleAllMonths} className="text-xs text-primary hover:underline">
+            {selectedMonths.length === 12 ? 'Clear all' : 'Select all'}
+          </button>
+          <span className="text-xs text-muted-foreground">Fallback: Expected Delivery when Delivery Date is blank</span>
+        </div>
       </div>
 
       {error && (

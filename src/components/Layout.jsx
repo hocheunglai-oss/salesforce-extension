@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
-import { LayoutDashboard, FileBarChart2, Database, PanelLeftClose, PanelLeftOpen, Settings, TrendingUp, DollarSign, ClipboardCheck, ReceiptText } from 'lucide-react';
+import { LayoutDashboard, FileBarChart2, Database, PanelLeftClose, PanelLeftOpen, Settings, TrendingUp, DollarSign, ClipboardCheck, ReceiptText, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/review', label: 'Exception Review', icon: ClipboardCheck },
+  { to: '/disputes', label: 'Dispute Management', icon: AlertTriangle },
   { to: '/buyer-invoices', label: 'Outstanding Buyer Invoices', icon: ReceiptText },
   { to: '/reports', label: 'Report Builder', icon: FileBarChart2 },
   { to: '/pnl', label: 'Stem P&L', icon: TrendingUp },

@@ -376,6 +376,8 @@ async function salesforceDashboardFilteredFull(body) {
   const hasType = fieldNames.includes('Type__c');
   const hasDispute = fieldNames.includes('Dispute__c');
   const hasDisputeStatus = fieldNames.includes('Dispute_Status__c');
+  const hasDisputeType = fieldNames.includes('Dispute_Type__c');
+  const hasDisputeParticular = fieldNames.includes('Dispute_Particular__c');
   const accountField = fieldNames.includes('Account__c') ? 'Account__c' : fieldNames.includes('AccountId') ? 'AccountId' : null;
   const buyerAmountField = fieldNames.includes('Total_Invoice_Amount__c') ? 'Total_Invoice_Amount__c' : null;
   const supplierAmountField = fieldNames.includes('Total_Invoiced_Amount_From_Suppliers__c') ? 'Total_Invoiced_Amount_From_Suppliers__c' : null;
@@ -399,6 +401,8 @@ async function salesforceDashboardFilteredFull(body) {
   if (buyerNameField) plFields.push(buyerNameField);
   if (hasDisputeStatus) plFields.push('Dispute_Status__c');
   if (hasDispute) plFields.push('Dispute__c');
+  if (hasDisputeType) plFields.push('Dispute_Type__c');
+  if (hasDisputeParticular) plFields.push('Dispute_Particular__c');
   if (buyerAmountField) plFields.push(buyerAmountField);
   if (supplierAmountField) plFields.push(supplierAmountField);
   if (totalCostsField) plFields.push(totalCostsField);
@@ -573,6 +577,7 @@ async function salesforceDashboardFilteredFull(body) {
   const buyerPnlMap = {};
   for (const stem of recentStems) {
     const buyerName = stem[buyerNameField] || null;
+    if (buyerName && buyerName.toUpperCase().includes('COSULICH')) continue;
     if (!buyerName || stem[bf] == null || stem.__netPnlCalc == null) continue;
     buyerPnlMap[buyerName] = (buyerPnlMap[buyerName] || 0) + stem.__netPnlCalc;
   }
@@ -591,7 +596,7 @@ async function salesforceDashboardFilteredFull(body) {
     const month = Number(String(effectiveDate).split('-')[1]);
     if (!month || month < 1 || month > 12) continue;
     monthlyTotals[month - 1].netPnl += calc.netPnl || 0;
-    if (buyerNameField && stem[buyerNameField]) {
+    if (buyerNameField && stem[buyerNameField] && !String(stem[buyerNameField]).toUpperCase().includes('COSULICH')) {
       const buyerName = stem[buyerNameField];
       if (!buyerMonthTotals[buyerName]) buyerMonthTotals[buyerName] = Array(12).fill(0);
       buyerMonthTotals[buyerName][month - 1] += calc.netPnl || 0;
@@ -881,6 +886,57 @@ async function salesforceBuyerInvoicesDue(body) {
     });
 
   return { rows, today, dueThrough, daysAhead };
+}
+
+async function salesforceDisputeStems(body) {
+  const limit = Math.max(100, Math.min(Number(body.limit) || 5000, 10000));
+  const describe = await salesforceObjectFields({ objectName: 'stem__c' });
+  const fieldNames = describe.fields.map((f) => f.name);
+  const hasDispute = fieldNames.includes('Dispute__c');
+  const hasDisputeStatus = fieldNames.includes('Dispute_Status__c');
+  if (!hasDispute && !hasDisputeStatus) return { rows: [] };
+
+  const fields = ['Id', 'Name', 'CreatedDate', 'LastModifiedDate'];
+  for (const field of [
+    'KeyStem__c',
+    'Delivery_Date__c',
+    'Expected_Delivery_Date__c',
+    'ETA_Start_Date__c',
+    'Buyer_Name__c',
+    'Buyer__c',
+    'Dispute__c',
+    'Dispute_Status__c',
+    'Dispute_Type__c',
+    'Dispute_Particular__c',
+    'Total_Invoice_Amount__c',
+    'Total_Invoiced_Amount_From_Suppliers__c',
+    'Receivable_Balance__c',
+  ]) {
+    if (fieldNames.includes(field)) fields.push(field);
+  }
+  if (fieldNames.includes('Vessel__c')) fields.push('Vessel__r.Name');
+  if (fieldNames.includes('Port__c')) fields.push('Port__r.Name');
+  if (fieldNames.includes('Account__c')) fields.push('Account__r.Name');
+
+  const disputeConditions = [];
+  if (hasDisputeStatus) disputeConditions.push("(Dispute_Status__c != null AND Dispute_Status__c != 'No Dispute')");
+  if (hasDispute) disputeConditions.push('Dispute__c = true');
+  const rows = await queryRows(`
+    SELECT ${[...new Set(fields)].join(', ')}
+    FROM stem__c
+    WHERE ${disputeConditions.join(' OR ')}
+    ORDER BY LastModifiedDate DESC
+    LIMIT ${limit}
+  `, { limit, softFail: true });
+
+  return {
+    rows: rows.map((stem) => ({
+      ...stem,
+      _Display_Name: formatStemName(stem),
+      _Buyer_Name: stem.Buyer_Name__c || stem['Account__r']?.Name || stem.Buyer__c || null,
+      _Effective_Date: stem.Delivery_Date__c || stem.Expected_Delivery_Date__c || null,
+    })),
+  };
 }
 
 async function salesforceStemDetailFull(body) {
@@ -1186,6 +1242,7 @@ const handlers = {
   salesforceTopBuyers,
   salesforceBrokerRegister: salesforceBrokerRegisterFull,
   salesforceBuyerInvoicesDue,
+  salesforceDisputeStems,
   stemPnl: stemPnlFull,
 };
 
