@@ -829,7 +829,7 @@ async function salesforceBuyerInvoicesDue(body) {
   const outstandingConditions = [];
   if (fieldNames.includes('Payment_Date__c')) outstandingConditions.push('Payment_Date__c = null');
   if (fieldNames.includes('Receivable_Balance__c')) outstandingConditions.push('Receivable_Balance__c >= 50');
-  if (fieldNames.includes('KeyStem__c')) outstandingConditions.push("(KeyStem__c = null OR KeyStem__c NOT LIKE 'T%')");
+  if (fieldNames.includes('KeyStem__c')) outstandingConditions.push("(KeyStem__c = null OR NOT (KeyStem__c LIKE 'T%'))");
   const whereParts = [`(${dueCondition})`, ...outstandingConditions];
 
   const stems = await queryRows(`
