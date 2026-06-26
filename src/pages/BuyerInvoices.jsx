@@ -22,7 +22,7 @@ const fmtDate = (value) => {
 
 const csvValue = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
 
-function SummaryCard({ label, value, sub, tone = 'default' }) {
+function SummaryCard({ label, value, tone = 'default' }) {
   const toneClass = {
     default: 'text-foreground',
     red: 'text-red-600',
@@ -34,7 +34,6 @@ function SummaryCard({ label, value, sub, tone = 'default' }) {
     <div className="rounded-xl border border-border bg-card p-4">
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className={`mt-1 font-dm text-2xl font-bold ${toneClass}`}>{value}</p>
-      {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
     </div>
   );
 }
@@ -76,11 +75,9 @@ export default function BuyerInvoices() {
     const dueSoon = rows.filter((row) => row.status !== 'Overdue');
     return {
       overdueCount: overdue.length,
-      overdueAmount: overdue.reduce((sum, row) => sum + Number(row.invoiceAmount || 0), 0),
+      overdueReceivable: overdue.reduce((sum, row) => sum + Number(row.receivableBalance || 0), 0),
       dueSoonCount: dueSoon.length,
-      dueSoonAmount: dueSoon.reduce((sum, row) => sum + Number(row.invoiceAmount || 0), 0),
-      totalAmount: rows.reduce((sum, row) => sum + Number(row.invoiceAmount || 0), 0),
-      totalReceivable: rows.reduce((sum, row) => sum + Number(row.receivableBalance || 0), 0),
+      dueSoonReceivable: dueSoon.reduce((sum, row) => sum + Number(row.receivableBalance || 0), 0),
     };
   }, [rows]);
 
@@ -150,10 +147,9 @@ export default function BuyerInvoices() {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <SummaryCard label="Overdue" value={totals.overdueCount.toLocaleString()} sub={fmtMoney(totals.overdueAmount)} tone="red" />
-        <SummaryCard label="Due Soon" value={totals.dueSoonCount.toLocaleString()} sub={fmtMoney(totals.dueSoonAmount)} tone="blue" />
-        <SummaryCard label="Total Invoice Amount" value={fmtMoney(totals.totalAmount)} sub={`${fmtMoney(totals.totalReceivable)} receivable balance`} tone="green" />
+      <div className="grid gap-3 md:grid-cols-2">
+        <SummaryCard label="Overdue" value={`${fmtMoney(totals.overdueReceivable)} (${totals.overdueCount.toLocaleString()})`} tone="red" />
+        <SummaryCard label="Due Soon" value={`${fmtMoney(totals.dueSoonReceivable)} (${totals.dueSoonCount.toLocaleString()})`} tone="blue" />
       </div>
 
       {error && (
