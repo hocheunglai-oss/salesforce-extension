@@ -177,18 +177,10 @@ export default function DisputeManagement() {
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</Label>
+            <button type="button" onClick={toggleNotClosed} className="text-xs text-primary hover:underline">
+              {notClosedActive ? 'Clear all' : 'Select Not Closed'}
+            </button>
             <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={toggleNotClosed}
-                className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                  notClosedActive
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
-                }`}
-              >
-                Not Closed
-              </button>
               {ACTIVE_DISPUTE_STATUSES.map(status => (
                 <button
                   key={status}
