@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils';
 
 export default function TableShell({ title, meta, actions, children, className, bodyClassName = 'p-2' }) {
   return (
-    <div className={cn('overflow-hidden rounded-xl border border-border bg-card', className)}>
+    <div className={cn('glass-surface overflow-hidden rounded-xl border border-border bg-card', className)}>
       {(title || meta || actions) && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3.5">
           <div className="min-w-0">

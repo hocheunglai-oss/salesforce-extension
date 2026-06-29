@@ -11,7 +11,7 @@ export default function StatCard({ label, value, sub, icon: Icon, trend, color =
   };
 
   return (
-    <div className="bg-card rounded-xl border border-border p-5 flex flex-col gap-3">
+    <div className="glass-surface bg-card rounded-xl border border-border p-5 flex flex-col gap-3">
       <div className="flex items-start justify-between">
         <p className="text-sm font-medium text-muted-foreground">{label}</p>
         {Icon && (

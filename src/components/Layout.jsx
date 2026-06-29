@@ -25,9 +25,9 @@ export default function Layout() {
   }, [density]);
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="app-shell flex h-screen overflow-hidden">
       {/* Sidebar */}
-      <aside className={cn('bg-sidebar flex flex-col shrink-0 transition-all duration-200', collapsed ? 'w-14' : 'w-60')}>
+      <aside className={cn('glass-sidebar flex flex-col shrink-0 transition-all duration-200', collapsed ? 'w-14' : 'w-60')}>
         {/* Logo + collapse button */}
         <div className={cn('flex items-center border-b border-sidebar-border', collapsed ? 'px-2 py-4 justify-center' : 'px-5 py-5 justify-between')}>
           {!collapsed && (
@@ -57,7 +57,7 @@ export default function Layout() {
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150',
                 collapsed ? 'justify-center px-2' : '',
                 isActive
-                  ? 'bg-sidebar-accent text-sidebar-primary'
+                  ? 'bg-white/10 text-sidebar-primary shadow-sm ring-1 ring-white/10'
                   : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
               )}
             >
@@ -72,7 +72,7 @@ export default function Layout() {
           <button
             onClick={() => setDensity(d => d === 'compact' ? 'comfort' : 'compact')}
             className={cn(
-              'rounded-md border border-sidebar-border text-xs font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors',
+              'rounded-md border border-white/10 bg-white/5 text-xs font-medium text-sidebar-foreground/70 shadow-sm transition-colors hover:bg-white/10 hover:text-sidebar-foreground',
               collapsed ? 'w-8 h-8' : 'w-full px-3 py-2'
             )}
             title={`Table view: ${density === 'compact' ? 'Compact' : 'Comfort'}`}

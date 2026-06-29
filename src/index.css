@@ -80,6 +80,9 @@
   }
   body {
     @apply bg-background text-foreground font-inter antialiased;
+    background:
+      linear-gradient(135deg, hsl(214 42% 96%) 0%, hsl(178 32% 95%) 48%, hsl(36 44% 96%) 100%);
+    min-height: 100vh;
   }
 
   html[data-density='compact'] table th,
@@ -96,5 +99,121 @@
     padding-bottom: 0.75rem;
     font-size: 0.875rem;
     line-height: 1.25rem;
+  }
+}
+
+@layer components {
+  .app-shell {
+    background:
+      linear-gradient(90deg, hsl(214 44% 96% / 0.9), hsl(188 35% 96% / 0.72), hsl(38 44% 96% / 0.68)),
+      linear-gradient(hsl(220 30% 82% / 0.18) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(220 30% 82% / 0.14) 1px, transparent 1px);
+    background-size: auto, 32px 32px, 32px 32px;
+  }
+
+  .glass-surface,
+  .bg-card.border-border,
+  .border.bg-card {
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.82), hsl(0 0% 100% / 0.62));
+    border-color: hsl(0 0% 100% / 0.72);
+    box-shadow:
+      0 18px 48px hsl(218 42% 22% / 0.08),
+      inset 0 1px 0 hsl(0 0% 100% / 0.72);
+    backdrop-filter: blur(22px) saturate(1.18);
+    -webkit-backdrop-filter: blur(22px) saturate(1.18);
+  }
+
+  .glass-page-header {
+    background:
+      linear-gradient(135deg, hsl(0 0% 100% / 0.68), hsl(192 45% 98% / 0.46));
+    border: 1px solid hsl(0 0% 100% / 0.7);
+    box-shadow:
+      0 16px 42px hsl(218 42% 22% / 0.07),
+      inset 0 1px 0 hsl(0 0% 100% / 0.76);
+    backdrop-filter: blur(24px) saturate(1.2);
+    -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  }
+
+  .glass-sidebar {
+    background:
+      linear-gradient(180deg, hsl(220 24% 13% / 0.88), hsl(205 22% 10% / 0.76));
+    border-right: 1px solid hsl(0 0% 100% / 0.1);
+    box-shadow: 18px 0 48px hsl(218 44% 18% / 0.14);
+    backdrop-filter: blur(24px) saturate(1.12);
+    -webkit-backdrop-filter: blur(24px) saturate(1.12);
+  }
+
+  .glass-control,
+  .glass-control.bg-transparent {
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.7), hsl(0 0% 100% / 0.48));
+    border-color: hsl(214 30% 78% / 0.65);
+    box-shadow:
+      0 8px 22px hsl(218 42% 22% / 0.05),
+      inset 0 1px 0 hsl(0 0% 100% / 0.68);
+    backdrop-filter: blur(14px) saturate(1.14);
+    -webkit-backdrop-filter: blur(14px) saturate(1.14);
+  }
+
+  .glass-floating,
+  .glass-floating.bg-popover,
+  .glass-floating.bg-background {
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.9), hsl(0 0% 100% / 0.74));
+    border-color: hsl(0 0% 100% / 0.76);
+    box-shadow:
+      0 24px 64px hsl(218 42% 18% / 0.18),
+      inset 0 1px 0 hsl(0 0% 100% / 0.82);
+    backdrop-filter: blur(28px) saturate(1.22);
+    -webkit-backdrop-filter: blur(28px) saturate(1.22);
+  }
+
+  .glass-surface .sticky.bg-card,
+  .glass-surface thead .bg-card,
+  .bg-card.border-border .sticky.bg-card,
+  .border.bg-card .sticky.bg-card {
+    background: hsl(0 0% 100% / 0.78);
+    backdrop-filter: blur(18px) saturate(1.12);
+    -webkit-backdrop-filter: blur(18px) saturate(1.12);
+  }
+
+  .dark body {
+    background:
+      linear-gradient(135deg, hsl(220 26% 8%) 0%, hsl(192 24% 10%) 48%, hsl(30 24% 9%) 100%);
+  }
+
+  .dark .app-shell {
+    background:
+      linear-gradient(90deg, hsl(220 28% 8% / 0.94), hsl(193 24% 9% / 0.78), hsl(28 23% 9% / 0.72)),
+      linear-gradient(hsl(210 22% 70% / 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(210 22% 70% / 0.07) 1px, transparent 1px);
+    background-size: auto, 32px 32px, 32px 32px;
+  }
+
+  .dark .glass-surface,
+  .dark .bg-card.border-border,
+  .dark .border.bg-card {
+    background:
+      linear-gradient(180deg, hsl(220 22% 15% / 0.78), hsl(220 24% 10% / 0.58));
+    border-color: hsl(0 0% 100% / 0.12);
+    box-shadow:
+      0 18px 48px hsl(0 0% 0% / 0.28),
+      inset 0 1px 0 hsl(0 0% 100% / 0.08);
+  }
+
+  .dark .glass-page-header,
+  .dark .glass-floating,
+  .dark .glass-control {
+    background:
+      linear-gradient(180deg, hsl(220 22% 15% / 0.84), hsl(220 24% 10% / 0.68));
+    border-color: hsl(0 0% 100% / 0.12);
+  }
+
+  .dark .glass-surface .sticky.bg-card,
+  .dark .glass-surface thead .bg-card,
+  .dark .bg-card.border-border .sticky.bg-card,
+  .dark .border.bg-card .sticky.bg-card {
+    background: hsl(220 22% 12% / 0.8);
   }
 }
