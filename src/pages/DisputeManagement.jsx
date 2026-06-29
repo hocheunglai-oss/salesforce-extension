@@ -17,6 +17,7 @@ const ACTIVE_DISPUTE_STATUSES = [
   'Closed with Buyer only',
   'Closed',
 ];
+const NOT_CLOSED_STATUSES = ACTIVE_DISPUTE_STATUSES.filter(status => status !== 'Closed');
 
 const normalizeStatus = (value) => String(value || '').toLowerCase();
 const displayStatus = (value) =>
@@ -50,7 +51,7 @@ export default function DisputeManagement() {
   const [error, setError] = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedStatuses, setSelectedStatuses] = useState(ACTIVE_DISPUTE_STATUSES);
   const [typeFilter, setTypeFilter] = useState('all');
   const [selectedStemId, setSelectedStemId] = useState(null);
 
@@ -71,12 +72,29 @@ export default function DisputeManagement() {
   useEffect(() => { loadRows(); }, []);
 
   const types = useMemo(() => [...new Set(rows.map(row => row.Dispute_Type__c).filter(Boolean))].sort(), [rows]);
+  const selectedStatusKeys = useMemo(() => new Set(selectedStatuses.map(normalizeStatus)), [selectedStatuses]);
+  const notClosedActive = NOT_CLOSED_STATUSES.every(status => selectedStatusKeys.has(normalizeStatus(status)))
+    && !selectedStatusKeys.has(normalizeStatus('Closed'));
+
+  const toggleStatus = (status) => {
+    const statusKey = normalizeStatus(status);
+    setSelectedStatuses(prev => {
+      const hasStatus = prev.some(item => normalizeStatus(item) === statusKey);
+      return hasStatus
+        ? prev.filter(item => normalizeStatus(item) !== statusKey)
+        : [...prev, status];
+    });
+  };
+
+  const toggleNotClosed = () => {
+    setSelectedStatuses(notClosedActive ? [] : NOT_CLOSED_STATUSES);
+  };
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(row => {
       const isActiveDispute = normalizeStatus(row.Dispute_Status__c) !== 'no dispute';
-      const statusMatch = statusFilter === 'all' || normalizeStatus(row.Dispute_Status__c) === normalizeStatus(statusFilter);
+      const statusMatch = selectedStatusKeys.has(normalizeStatus(row.Dispute_Status__c));
       const typeMatch = typeFilter === 'all' || row.Dispute_Type__c === typeFilter;
       const textMatch = !q || [
         row._Display_Name,
@@ -87,7 +105,7 @@ export default function DisputeManagement() {
       ].some(value => value != null && String(value).toLowerCase().includes(q));
       return isActiveDispute && statusMatch && typeMatch && textMatch;
     });
-  }, [rows, search, statusFilter, typeFilter]);
+  }, [rows, search, selectedStatusKeys, typeFilter]);
 
   const totals = useMemo(() => ({
     count: filteredRows.length,
@@ -162,22 +180,22 @@ export default function DisputeManagement() {
             <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
-                onClick={() => setStatusFilter('all')}
+                onClick={toggleNotClosed}
                 className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                  statusFilter === 'all'
+                  notClosedActive
                     ? 'border-primary bg-primary text-primary-foreground'
                     : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
                 }`}
               >
-                All active
+                Not Closed
               </button>
               {ACTIVE_DISPUTE_STATUSES.map(status => (
                 <button
                   key={status}
                   type="button"
-                  onClick={() => setStatusFilter(status)}
+                  onClick={() => toggleStatus(status)}
                   className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                    normalizeStatus(statusFilter) === normalizeStatus(status)
+                    selectedStatusKeys.has(normalizeStatus(status))
                       ? 'border-primary bg-primary text-primary-foreground'
                       : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
                   }`}
