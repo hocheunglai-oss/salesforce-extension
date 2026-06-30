@@ -13,13 +13,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { hasUsableSmtpSettings, readSmtpSettings } from '@/lib/smtpSettings';
 
 const EMAIL_SETTINGS_KEY = 'salesforce_extension:buyer_invoice_email_settings';
+const OLD_DEFAULT_EMAIL_INTRO = 'Please find below the latest overdue buyer invoices and buyer invoices due soon.';
 const DEFAULT_EMAIL_SETTINGS = {
   from: 'Fratelli Cosulich <info@cosulich.com.hk>',
   to: 'bt@cosulich.com.hk',
   cc: 'lousia@cosulich.com.hk, laureen@cosulich.com.hk',
   daysAhead: 7,
   subject: 'Outstanding Buyer Invoices Report',
-  intro: 'Please find below the latest overdue buyer invoices and buyer invoices due soon.',
+  intro: 'Outstanding Buyer Invoices\n\nPlease find below the latest overdue buyer invoices and buyer invoices due in {{daysAhead}} days.\n\nReport window: {{reportStart}} to {{reportEnd}}. Overdue invoices are always included.',
   includeSummary: true,
   includeTable: true,
   weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
@@ -98,6 +99,7 @@ function readEmailSettings() {
     const raw = localStorage.getItem(EMAIL_SETTINGS_KEY);
     const saved = raw ? { ...DEFAULT_EMAIL_SETTINGS, ...JSON.parse(raw) } : DEFAULT_EMAIL_SETTINGS;
     if (String(saved.from || '').includes('admin@fcuno.com')) saved.from = DEFAULT_EMAIL_SETTINGS.from;
+    if (!saved.intro || saved.intro === OLD_DEFAULT_EMAIL_INTRO) saved.intro = DEFAULT_EMAIL_SETTINGS.intro;
     return saved;
   } catch {
     return DEFAULT_EMAIL_SETTINGS;
@@ -355,8 +357,11 @@ export default function BuyerInvoices() {
             <Input value={emailSettings.sendTimes} onChange={(event) => updateEmailSetting('sendTimes', event.target.value)} placeholder="08:00, 14:00" />
           </div>
           <div className="space-y-1.5 lg:col-span-2">
-            <Label className="text-xs text-muted-foreground">Email intro</Label>
-            <Textarea value={emailSettings.intro} onChange={(event) => updateEmailSetting('intro', event.target.value)} className="min-h-20" />
+            <Label className="text-xs text-muted-foreground">Email content</Label>
+            <Textarea value={emailSettings.intro} onChange={(event) => updateEmailSetting('intro', event.target.value)} className="min-h-32" />
+            <p className="text-xs text-muted-foreground">
+              Available placeholders: {'{{reportStart}}'}, {'{{reportEnd}}'}, {'{{daysAhead}}'}.
+            </p>
           </div>
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">Weekdays</Label>

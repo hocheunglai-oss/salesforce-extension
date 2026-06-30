@@ -357,7 +357,7 @@ const DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS = {
   cc: ['lousia@cosulich.com.hk', 'laureen@cosulich.com.hk'],
   daysAhead: 7,
   subject: 'Outstanding Buyer Invoices Report',
-  intro: 'Please find below the latest overdue buyer invoices and buyer invoices due soon.',
+  intro: 'Outstanding Buyer Invoices\n\nPlease find below the latest overdue buyer invoices and buyer invoices due in {{daysAhead}} days.\n\nReport window: {{reportStart}} to {{reportEnd}}. Overdue invoices are always included.',
   includeSummary: true,
   includeTable: true,
   weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
@@ -1081,11 +1081,29 @@ function overdueEmailStyles(daysUntilDue) {
   return styles[severity] || { row: '', border: '#e5e7eb', text: '#2563eb', pill: 'background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8' };
 }
 
+function renderBuyerInvoiceEmailContent(template, report, settings) {
+  return String(template || DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS.intro)
+    .replaceAll('{{reportStart}}', prettyDate(report.today))
+    .replaceAll('{{reportEnd}}', prettyDate(report.dueThrough))
+    .replaceAll('{{daysAhead}}', String(settings.daysAhead ?? report.daysAhead ?? DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS.daysAhead));
+}
+
+function emailContentHtml(content) {
+  const blocks = String(content || '').split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  if (!blocks.length) return '';
+  return blocks.map((block, index) => {
+    const html = escapeHtml(block).replaceAll('\n', '<br>');
+    if (index === 0) return `<h2 style="margin:0 0 6px;font-size:20px">${html}</h2>`;
+    return `<p style="margin:0 0 14px;color:#667085">${html}</p>`;
+  }).join('');
+}
+
 function buildBuyerInvoiceReportEmail(report, settings) {
   const rows = report.rows || [];
   const overdue = rows.filter((row) => row.status === 'Overdue');
   const dueSoon = rows.filter((row) => row.status !== 'Overdue');
   const dueSoonLabel = `Due in ${Number(settings.daysAhead || report.daysAhead || 7).toLocaleString()} Days`;
+  const content = renderBuyerInvoiceEmailContent(settings.intro, report, settings);
   const totals = {
     overdueCount: overdue.length,
     overdueReceivable: overdue.reduce((sum, row) => sum + Number(row.receivableBalance || 0), 0),
@@ -1143,16 +1161,12 @@ function buildBuyerInvoiceReportEmail(report, settings) {
     </div>` : '';
   const html = `
     <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">
-      <h2 style="margin:0 0 6px;font-size:20px">Outstanding Buyer Invoices</h2>
-      <p style="margin:0 0 14px;color:#667085">${escapeHtml(settings.intro)}</p>
-      <p style="margin:0 0 14px;color:#667085">Report window: ${prettyDate(report.today)} to ${prettyDate(report.dueThrough)}. Overdue invoices are always included.</p>
+      ${emailContentHtml(content)}
       ${summaryHtml}
       ${tableHtml}
     </div>`;
   const textLines = [
-    'Outstanding Buyer Invoices',
-    settings.intro,
-    `Report window: ${prettyDate(report.today)} to ${prettyDate(report.dueThrough)}`,
+    content,
     `Overdue: ${money(totals.overdueReceivable)} (${totals.overdueCount})`,
     `${dueSoonLabel}: ${money(totals.dueSoonReceivable)} (${totals.dueSoonCount})`,
     '',
@@ -1163,7 +1177,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
 
 async function sendWithResend({ from, to, cc, subject, html, text }) {
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error('Missing RESEND_API_KEY in Vercel. Add it before sending email reports.');
+  if (!apiKey) throw new Error('Missing RESEND_API_KEY in Vercel. Add it for scheduled email reports, or enable a saved SMTP account in Settings for Send Now.');
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
