@@ -999,7 +999,7 @@ async function salesforceBuyerInvoicesDue(body) {
         buyerInvoiceDueDate: dueDate,
         buyerTraderInCharge: (traderInfo.supplier?.length ? traderInfo.supplier : traderInfo.all || []).join(', ') || null,
         daysUntilDue,
-        status: daysUntilDue == null ? 'Due' : daysUntilDue < 0 ? 'Overdue' : 'Due Soon',
+        status: daysUntilDue == null ? 'Due' : daysUntilDue < 0 ? 'Overdue' : daysUntilDue === 0 ? 'Due Today' : 'Due Soon',
       };
     })
     .filter(Boolean)
@@ -1066,12 +1066,17 @@ function overdueSeverity(daysUntilDue) {
   return 'yellow';
 }
 
+function overdueDisplayValue(daysUntilDue) {
+  if (daysUntilDue == null) return '-';
+  return String(-Number(daysUntilDue));
+}
+
 function overdueEmailStyles(daysUntilDue) {
   const severity = overdueSeverity(daysUntilDue);
   const styles = {
-    red: { row: 'background:#fef2f2', border: '#fecaca', text: '#b91c1c', pill: 'background:#fee2e2;border-color:#fecaca;color:#991b1b' },
-    orange: { row: 'background:#fff7ed', border: '#fed7aa', text: '#c2410c', pill: 'background:#ffedd5;border-color:#fed7aa;color:#9a3412' },
-    yellow: { row: 'background:#fefce8', border: '#fde68a', text: '#a16207', pill: 'background:#fef3c7;border-color:#fde68a;color:#854d0e' },
+    red: { row: 'background:#fee2e2', border: '#fca5a5', text: '#991b1b', pill: 'background:#fecaca;border-color:#f87171;color:#7f1d1d' },
+    orange: { row: 'background:#fed7aa', border: '#fb923c', text: '#9a3412', pill: 'background:#fdba74;border-color:#f97316;color:#7c2d12' },
+    yellow: { row: 'background:#fde68a', border: '#facc15', text: '#854d0e', pill: 'background:#fcd34d;border-color:#eab308;color:#713f12' },
   };
   return styles[severity] || { row: '', border: '#e5e7eb', text: '#2563eb', pill: 'background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8' };
 }
@@ -1114,7 +1119,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
       <td style="${cellStyle}">
         <span style="display:inline-block;border:1px solid;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;white-space:nowrap;${severity.pill}">${escapeHtml(row.status)}</span>
       </td>
-      <td style="${cellStyle};text-align:right;font-weight:600;color:${severity.text};white-space:nowrap">${row.daysUntilDue == null ? '-' : row.daysUntilDue}</td>
+      <td style="${cellStyle};text-align:right;font-weight:600;color:${severity.text};white-space:nowrap">${overdueDisplayValue(row.daysUntilDue)}</td>
     </tr>`;
   }).join('');
   const tableHtml = settings.includeTable ? `
@@ -1129,7 +1134,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Due Date</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Trader</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Status</th>
-            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right;position:sticky;top:0;background:#f8fafc">Days</th>
+            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right;position:sticky;top:0;background:#f8fafc">Overdue</th>
           </tr>
         </thead>
         <tbody>${tableRows || '<tr><td colspan="8" style="padding:18px;text-align:center;color:#667085">No outstanding buyer invoices found.</td></tr>'}</tbody>
@@ -1150,7 +1155,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
     `Overdue: ${money(totals.overdueReceivable)} (${totals.overdueCount})`,
     `Due Soon: ${money(totals.dueSoonReceivable)} (${totals.dueSoonCount})`,
     '',
-    ...rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | ${row.status} | Trader ${row.buyerTraderInCharge || '-'}`),
+    ...rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Trader ${row.buyerTraderInCharge || '-'}`),
   ];
   return { subject, html, text: textLines.join('\n'), totals };
 }

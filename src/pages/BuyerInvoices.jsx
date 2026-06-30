@@ -63,9 +63,9 @@ function overdueSeverity(daysUntilDue) {
 
 function rowSeverityClass(daysUntilDue, idx) {
   const severity = overdueSeverity(daysUntilDue);
-  if (severity === 'red') return 'bg-red-50 hover:bg-red-100/80';
-  if (severity === 'orange') return 'bg-orange-50 hover:bg-orange-100/80';
-  if (severity === 'yellow') return 'bg-yellow-50 hover:bg-yellow-100/80';
+  if (severity === 'red') return 'bg-red-100 hover:bg-red-200/80';
+  if (severity === 'orange') return 'bg-orange-200 hover:bg-orange-300/80';
+  if (severity === 'yellow') return 'bg-yellow-200 hover:bg-yellow-300/80';
   return `${idx % 2 ? 'bg-muted/10' : ''} hover:bg-muted/30`;
 }
 
@@ -79,11 +79,16 @@ function dueTextClass(daysUntilDue) {
 
 function statusPill(status, daysUntilDue) {
   const severity = overdueSeverity(daysUntilDue);
-  if (severity === 'red') return 'bg-red-100 text-red-800 border-red-200';
-  if (severity === 'orange') return 'bg-orange-100 text-orange-800 border-orange-200';
-  if (severity === 'yellow') return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+  if (severity === 'red') return 'bg-red-200 text-red-900 border-red-300';
+  if (severity === 'orange') return 'bg-orange-300 text-orange-950 border-orange-400';
+  if (severity === 'yellow') return 'bg-yellow-300 text-yellow-950 border-yellow-400';
   if (status === 'Overdue') return 'bg-red-50 text-red-700 border-red-200';
   return 'bg-blue-50 text-blue-700 border-blue-200';
+}
+
+function overdueDisplayValue(daysUntilDue) {
+  if (daysUntilDue == null) return '—';
+  return (-Number(daysUntilDue)).toLocaleString();
 }
 
 function readEmailSettings() {
@@ -178,7 +183,7 @@ export default function BuyerInvoices() {
   }, [rows]);
 
   const exportCsv = () => {
-    const headers = ['Stem Name', 'Buyer Name', 'Invoice Amount', 'Receivable Balance', 'Buyer Invoice Due Date', "Buyer's Trader in Charge", 'Status', 'Days Until Due'];
+    const headers = ['Stem Name', 'Buyer Name', 'Invoice Amount', 'Receivable Balance', 'Buyer Invoice Due Date', "Buyer's Trader in Charge", 'Status', 'Overdue'];
     const csvRows = rows.map((row) => [
       row.stemName,
       row.buyerName,
@@ -187,7 +192,7 @@ export default function BuyerInvoices() {
       row.buyerInvoiceDueDate,
       row.buyerTraderInCharge,
       row.status,
-      row.daysUntilDue,
+      row.daysUntilDue == null ? '' : -Number(row.daysUntilDue),
     ]);
     const csv = [headers, ...csvRows].map((row) => row.map(csvValue).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -454,7 +459,7 @@ export default function BuyerInvoices() {
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Invoice Due Date</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer's Trader in Charge</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
-                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Days</th>
+                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -476,7 +481,7 @@ export default function BuyerInvoices() {
                         </span>
                       </td>
                       <td className={`px-4 py-3 text-right font-medium ${dueTextClass(row.daysUntilDue)}`}>
-                        {row.daysUntilDue == null ? '—' : row.daysUntilDue.toLocaleString()}
+                        {overdueDisplayValue(row.daysUntilDue)}
                       </td>
                     </tr>
                   ))}
