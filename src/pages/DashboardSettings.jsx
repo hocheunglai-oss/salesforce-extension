@@ -323,7 +323,7 @@ export default function DashboardSettings() {
                   autoComplete="off"
                 />
                 {companySuggestionsOpen && companySuggestions.length > 0 && (
-                  <div className="absolute left-0 top-full z-[100] mt-1 max-h-64 w-80 overflow-auto rounded-lg border border-border bg-card py-1 shadow-lg">
+                  <div className="absolute left-0 top-full z-[100] mt-1 max-h-64 w-80 overflow-auto rounded-lg border border-border bg-background py-1 text-foreground shadow-2xl">
                     {companySuggestions.map((name) => (
                       <button
                         key={name}
