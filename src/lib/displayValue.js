@@ -1,3 +1,7 @@
+const PREFERRED_NUMERIC_OBJECT_KEYS = [
+  'Receivable_Balance__c',
+];
+
 const PREFERRED_OBJECT_KEYS = [
   'Name',
   'name',
@@ -25,6 +29,13 @@ export function textValue(value, fallback = '—') {
   if ('totalSize' in value && Array.isArray(value.records)) {
     const count = value.totalSize ?? value.records.length;
     return `${Number(count || 0).toLocaleString()} record${Number(count) === 1 ? '' : 's'}`;
+  }
+
+  for (const key of PREFERRED_NUMERIC_OBJECT_KEYS) {
+    const number = numericValue(value[key]);
+    if (number != null) {
+      return number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
   }
 
   for (const key of PREFERRED_OBJECT_KEYS) {

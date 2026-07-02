@@ -7,6 +7,8 @@ import { compactTextValue, numericValue, textValue } from '@/lib/displayValue';
 
 const isMoneyKey = (key) =>
   key.toLowerCase().includes('amount') ||
+  key.toLowerCase().includes('balance') ||
+  key.toLowerCase().includes('receivable') ||
   key.toLowerCase().includes('invoice') ||
   key.toLowerCase().includes('price') ||
   key.toLowerCase().includes('profit') ||

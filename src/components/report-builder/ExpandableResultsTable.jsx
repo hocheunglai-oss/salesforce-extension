@@ -22,6 +22,8 @@ function fmtVal(key, val) {
   }
   if (
     key.toLowerCase().includes('amount') ||
+    key.toLowerCase().includes('balance') ||
+    key.toLowerCase().includes('receivable') ||
     key.toLowerCase().includes('price') ||
     key.toLowerCase().includes('invoice') ||
     key.toLowerCase().includes('total') ||

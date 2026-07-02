@@ -11,6 +11,7 @@ const DELIVERY_FIELD = 'Delivery_Date__c';
 const FIELD_LABELS = {
   [BUYER_FIELD]: 'Buyer Invoice',
   [SUPPLIER_FIELD]: 'Supplier Invoice',
+  'Receivable_Balance__c': 'Receivable Balance',
   'Buyer_Name__c': 'Buyer Name',
   '_Buyer_Group': 'Buyer Group',
   '_Supplier_Names': 'Supplier Names',
@@ -52,7 +53,7 @@ const BASE_HIDDEN_COLS = new Set([
 ]);
 
 // Columns that are right-aligned (money)
-const MONEY_COLS = new Set([BUYER_FIELD, SUPPLIER_FIELD, COSTS_FIELD, '__extraCostBuyCalc', '_buyerBrokerComm', '_suppBrokerComm', '__pnl__']);
+const MONEY_COLS = new Set([BUYER_FIELD, SUPPLIER_FIELD, COSTS_FIELD, 'Receivable_Balance__c', '__extraCostBuyCalc', '_buyerBrokerComm', '_suppBrokerComm', '__pnl__']);
 
 const fmtMoney = (val) => {
   const number = numericValue(val);
@@ -63,7 +64,7 @@ const fmtMoney = (val) => {
 const fmtVal = (key, val) => {
   if (val == null || val === '') return '—';
   if (typeof val === 'boolean') return val ? 'Yes' : 'No';
-  if (MONEY_COLS.has(key) || key.toLowerCase().includes('amount') || key.toLowerCase().includes('invoice') || key.toLowerCase().includes('price') || key === '_buyerBrokerComm' || key === '_suppBrokerComm') {
+  if (MONEY_COLS.has(key) || key.toLowerCase().includes('amount') || key.toLowerCase().includes('balance') || key.toLowerCase().includes('receivable') || key.toLowerCase().includes('invoice') || key.toLowerCase().includes('price') || key === '_buyerBrokerComm' || key === '_suppBrokerComm') {
     const n = Number(val);
     if (!isNaN(n)) return fmtMoney(n);
   }
