@@ -733,6 +733,7 @@ async function salesforceDashboardFilteredFull(body) {
       ...stem,
       [bf]: calc.buyer ?? null,
       [sf2]: calc.supplier || null,
+      _Supplier_Name_List: supplierNames,
       _Supplier_Names: supplierNames.join(', ') || null,
       _buyerBrokerName: brokerByStem[stem.Id]?.buyerBrokerName || null,
       _buyerBrokerComm: calc.buyerComm || null,

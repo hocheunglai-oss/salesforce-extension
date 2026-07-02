@@ -123,11 +123,13 @@ export default function DashboardSettings() {
     });
     if (!tableSearch.trim()) return stems;
     const q = tableSearch.toLowerCase();
-    const SEARCH_FIELDS = ['Name', 'KeyStem__c', 'Vessel__c', 'Buyer_Name__c', 'Buyer__c', '_Supplier_Names'];
+    const SEARCH_FIELDS = counterpartyMode === 'supplier'
+      ? ['Name', 'KeyStem__c', 'Vessel__c', '_Supplier_Names']
+      : ['Name', 'KeyStem__c', 'Vessel__c', 'Buyer_Name__c', 'Buyer__c'];
     return stems.filter(row =>
       SEARCH_FIELDS.some(f => row[f] != null && String(row[f]).toLowerCase().includes(q))
     );
-  }, [data?.recentStems, tableSearch, selectedYears, selectedMonths]);
+  }, [data?.recentStems, tableSearch, selectedYears, selectedMonths, counterpartyMode]);
 
   const kpiMetrics = useMemo(() => {
     const grossMarginPct = data?.totalBuyer ? (data.totalProfit / data.totalBuyer) * 100 : null;
@@ -467,7 +469,7 @@ export default function DashboardSettings() {
               <div className="relative w-full sm:w-80">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <Input
-                  placeholder="Search by vessel, stem name, buyer, or supplier…"
+                  placeholder={`Search by vessel, stem name, or ${activeCounterparty.label.toLowerCase()}…`}
                   value={tableSearch}
                   onChange={e => setTableSearch(e.target.value)}
                   className="pl-8 h-8 text-xs"
@@ -480,7 +482,7 @@ export default function DashboardSettings() {
               </div>
             )}
           >
-            <PnlTable records={filteredStems} onRowClick={(row) => setSelectedStemId(row.Id)} />
+            <PnlTable records={filteredStems} counterpartyMode={counterpartyMode} onRowClick={(row) => setSelectedStemId(row.Id)} />
           </TableShell>
         </>
       )}

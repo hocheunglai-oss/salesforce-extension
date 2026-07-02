@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 
 const BUYER_FIELD = 'Total_Invoice_Amount__c';
@@ -22,7 +22,7 @@ const FIELD_LABELS = {
 };
 
 // Columns to completely hide (some are still used behind the scenes for Gross Profit)
-const HIDDEN_COLS = new Set([
+const BASE_HIDDEN_COLS = new Set([
   BUYER_FIELD,
   SUPPLIER_FIELD,
   COSTS_FIELD,
@@ -42,6 +42,7 @@ const HIDDEN_COLS = new Set([
   '_buyerBrokerComm',
   '_suppBrokerName',
   '_suppBrokerComm',
+  '_Supplier_Name_List',
 ]);
 
 // Columns that are right-aligned (money)
@@ -117,11 +118,17 @@ const COL_ORDER = [
   '__pnl__',
 ];
 
-export default function PnlTable({ records = [], onRowClick }) {
+export default function PnlTable({ records = [], onRowClick, counterpartyMode = 'buyer' }) {
   const [sortKey, setSortKey] = useState(DELIVERY_FIELD);
   const [sortDir, setSortDir] = useState(-1);
   const firstRecord = records[0] || {};
-  const rawCols = Object.keys(firstRecord).filter(k => k !== 'Id' && !HIDDEN_COLS.has(k));
+  const hiddenCols = useMemo(() => {
+    const cols = new Set(BASE_HIDDEN_COLS);
+    if (counterpartyMode === 'supplier') cols.add('Buyer_Name__c');
+    else cols.add('_Supplier_Names');
+    return cols;
+  }, [counterpartyMode]);
+  const rawCols = Object.keys(firstRecord).filter(k => k !== 'Id' && !hiddenCols.has(k));
   const hasBuyer = Object.prototype.hasOwnProperty.call(firstRecord, BUYER_FIELD);
   const hasSupplier = Object.prototype.hasOwnProperty.call(firstRecord, SUPPLIER_FIELD);
   const showPnl = hasBuyer && hasSupplier;
@@ -137,6 +144,13 @@ export default function PnlTable({ records = [], onRowClick }) {
   const sortedRecords = useMemo(() => {
     return records.slice().sort((a, b) => compareValues(a, b, sortKey, sortDir));
   }, [records, sortKey, sortDir]);
+
+  useEffect(() => {
+    if (hiddenCols.has(sortKey)) {
+      setSortKey(DELIVERY_FIELD);
+      setSortDir(-1);
+    }
+  }, [hiddenCols, sortKey]);
 
   const handleSort = (key) => {
     if (sortKey === key) setSortDir(current => current * -1);
@@ -200,6 +214,24 @@ export default function PnlTable({ records = [], onRowClick }) {
                             <span className="text-[11px] text-amber-600">Expected: {fmtVal('Expected_Delivery_Date__c', row.Expected_Delivery_Date__c)}</span>
                           )}
                         </div>
+                      </td>
+                    );
+                  }
+                  if (col === '_Supplier_Names') {
+                    const supplierNames = Array.isArray(row._Supplier_Name_List)
+                      ? row._Supplier_Name_List
+                      : String(row._Supplier_Names || '').split(',').map((name) => name.trim()).filter(Boolean);
+                    return (
+                      <td key={col} className="py-2.5 px-3 min-w-72 text-foreground">
+                        {supplierNames.length ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {supplierNames.map((name) => (
+                              <span key={name} className="rounded-md border border-border bg-muted/30 px-2 py-0.5 text-[11px] leading-5 text-foreground">
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : '—'}
                       </td>
                     );
                   }
