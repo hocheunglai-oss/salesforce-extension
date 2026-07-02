@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
+import { compactTextValue, numericValue, textValue } from '@/lib/displayValue';
 
 const BUYER_FIELD = 'Total_Invoice_Amount__c';
 const SUPPLIER_FIELD = 'Total_Invoiced_Amount_From_Suppliers__c';
@@ -54,8 +55,9 @@ const BASE_HIDDEN_COLS = new Set([
 const MONEY_COLS = new Set([BUYER_FIELD, SUPPLIER_FIELD, COSTS_FIELD, '__extraCostBuyCalc', '_buyerBrokerComm', '_suppBrokerComm', '__pnl__']);
 
 const fmtMoney = (val) => {
-  if (val == null) return '—';
-  return `$${Number(val).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const number = numericValue(val);
+  if (number == null) return '—';
+  return `$${number.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 };
 
 const fmtVal = (key, val) => {
@@ -66,11 +68,11 @@ const fmtVal = (key, val) => {
     if (!isNaN(n)) return fmtMoney(n);
   }
   if (key.toLowerCase().includes('date')) {
-    try { return format(new Date(val), 'dd MMM yyyy'); } catch { return val; }
+    if (typeof val === 'object') return textValue(val);
+    try { return format(new Date(val), 'dd MMM yyyy'); } catch { return textValue(val); }
   }
   if (typeof val === 'number') return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  const s = String(val);
-  return s.length > 50 ? s.slice(0, 48) + '…' : s;
+  return compactTextValue(val, 50);
 };
 
 const getPnl = (row) => {
@@ -95,10 +97,10 @@ const compareValues = (a, b, key, direction) => {
   if (bv == null) return -1;
   const an = Number(av);
   const bn = Number(bv);
-  if (!isNaN(an) && !isNaN(bn) && String(av).trim() !== '' && String(bv).trim() !== '') {
+  if (!isNaN(an) && !isNaN(bn) && textValue(av, '').trim() !== '' && textValue(bv, '').trim() !== '') {
     return (an - bn) * direction;
   }
-  return String(av).localeCompare(String(bv)) * direction;
+  return textValue(av).localeCompare(textValue(bv)) * direction;
 };
 
 const colLabel = (key) => {

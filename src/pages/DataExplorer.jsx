@@ -10,6 +10,7 @@ import FieldHoverInfo from '@/components/common/FieldHoverInfo';
 import PageHeader from '@/components/common/PageHeader';
 import TableShell from '@/components/common/TableShell';
 import StateBlock from '@/components/common/StateBlock';
+import { textValue } from '@/lib/displayValue';
 
 export default function DataExplorer() {
   const [objects, setObjects] = useState([]);
@@ -82,7 +83,7 @@ export default function DataExplorer() {
     const rows = records.map(r => headers.map(h => {
       const v = r[h];
       if (v === null || v === undefined) return '';
-      const s = String(v);
+      const s = textValue(v, '');
       return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
     }));
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -117,7 +118,7 @@ export default function DataExplorer() {
       ...baseInfo,
       loading: false,
       recordId: row?.Id || '—',
-      sampleValue: row ? String(row[field.name] ?? '—') : '—',
+      sampleValue: row ? textValue(row[field.name]) : '—',
     } : current);
   };
 

@@ -5,13 +5,24 @@ import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { Pencil, Loader2, AlertCircle, ExternalLink } from 'lucide-react';
 import StemEditModal from './StemEditModal';
+import { numericValue, textValue } from '@/lib/displayValue';
 
 const SF_BASE = "https://fratellicosulich.my.salesforce.com";
 
-const fmtDate = (v) => { try { return v ? format(new Date(v), 'dd MMM yyyy') : '—'; } catch { return v; } };
-const fmtMoney = (v) => v != null ? `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+const fmtDate = (v) => {
+  if (!v) return '—';
+  if (typeof v === 'object') return textValue(v);
+  try { return format(new Date(v), 'dd MMM yyyy'); } catch { return textValue(v); }
+};
+const fmtMoney = (v) => {
+  const number = numericValue(v);
+  return number != null ? `$${number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+};
 const fmtBool = (v) => v === true ? 'Yes' : v === false ? 'No' : '—';
-const fmtQuantity = (v, unit = 'MT') => v != null ? `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}` : '—';
+const fmtQuantity = (v, unit = 'MT') => {
+  const number = numericValue(v);
+  return number != null ? `${number.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}` : '—';
+};
 const lineItemQuantityLabel = (li) => {
   const unit = li._Financial_Quantity_Unit || 'MT';
   if (li._Financial_Quantity != null) return fmtQuantity(li._Financial_Quantity, unit);
@@ -345,7 +356,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                         <div className="space-y-2">
                           {rows.map(f => {
                             const raw = record[f.key];
-                            const display = f.fmt ? f.fmt(raw) : (raw == null ? '—' : String(raw));
+                            const display = f.fmt ? f.fmt(raw) : textValue(raw);
                             return (
                               <div key={f.key} className="flex justify-between gap-3 text-sm">
                                 <span className="text-muted-foreground shrink-0">{f.label}</span>

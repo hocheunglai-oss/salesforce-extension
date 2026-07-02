@@ -11,16 +11,19 @@ import FilterSummary, { FilterChip } from '@/components/common/FilterSummary';
 import TableShell from '@/components/common/TableShell';
 import StateBlock from '@/components/common/StateBlock';
 import { buildDeliveryWhere } from '@/lib/dashboardFilters';
+import { numericValue, textValue } from '@/lib/displayValue';
 
 const fmt = (v, isPercent = false) => {
-  if (v == null) return '—';
-  if (isPercent) return `${Number(v).toFixed(1)}%`;
-  return `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const number = numericValue(v);
+  if (number == null) return '—';
+  if (isPercent) return `${number.toFixed(1)}%`;
+  return `$${number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 const fmtDate = (v) => {
   if (!v) return '—';
-  try { return format(new Date(v), 'dd MMM yyyy'); } catch { return v; }
+  if (typeof v === 'object') return textValue(v);
+  try { return format(new Date(v), 'dd MMM yyyy'); } catch { return textValue(v); }
 };
 
 const COLUMNS = [
@@ -115,7 +118,7 @@ export default function StemPnlReport() {
   };
 
   const filtered = rows
-    .filter(r => !search || [r.Key, r.Buyer, r.Status, r.Name].some(v => v && String(v).toLowerCase().includes(search.toLowerCase())))
+    .filter(r => !search || [r.Key, r.Buyer, r.Status, r.Name].some(v => v && textValue(v, '').toLowerCase().includes(search.toLowerCase())))
     .sort((a, b) => {
       const av = getSortValue(a, sortKey), bv = getSortValue(b, sortKey);
       if (av == null && bv == null) return 0;
@@ -123,10 +126,10 @@ export default function StemPnlReport() {
       if (bv == null) return -1;
       const an = Number(av);
       const bn = Number(bv);
-      if (!isNaN(an) && !isNaN(bn) && String(av).trim() !== '' && String(bv).trim() !== '') {
+      if (!isNaN(an) && !isNaN(bn) && textValue(av, '').trim() !== '' && textValue(bv, '').trim() !== '') {
         return (an - bn) * sortDir;
       }
-      return av < bv ? -sortDir : sortDir;
+      return textValue(av).localeCompare(textValue(bv)) * sortDir;
     });
 
   const periodLabel = month === 'all'
@@ -139,7 +142,8 @@ export default function StemPnlReport() {
     const csvRows = rows.map(r => COLUMNS.map(c => {
       const v = r[c.key];
       if (v == null) return '';
-      return String(v).includes(',') ? `"${v}"` : String(v);
+      const text = textValue(v, '');
+      return text.includes(',') ? `"${text.replaceAll('"', '""')}"` : text;
     }));
     const csv = [headers.join(','), ...csvRows.map(r => r.join(','))].join('\n');
     const a = document.createElement('a');

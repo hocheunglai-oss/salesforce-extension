@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import { ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import FieldHoverInfo from '@/components/common/FieldHoverInfo';
+import { compactTextValue, numericValue, textValue } from '@/lib/displayValue';
 
 const isMoneyKey = (key) =>
   key.toLowerCase().includes('amount') ||
@@ -16,19 +17,19 @@ const isMoneyKey = (key) =>
 const fmtVal = (key, val) => {
   if (val === null || val === undefined) return '—';
   if (typeof val === 'boolean') return val ? 'Yes' : 'No';
-  if (typeof val === 'object') return JSON.stringify(val);
+  if (typeof val === 'object') return compactTextValue(val, 60);
   if (key.toLowerCase().includes('date')) {
-    try { return format(new Date(val), 'dd MMM yyyy'); } catch { return String(val); }
+    try { return format(new Date(val), 'dd MMM yyyy'); } catch { return textValue(val); }
   }
-  if (typeof val === 'number' || (typeof val === 'string' && !isNaN(Number(val)) && val.trim() !== '')) {
-    const n = Number(val);
+  const numeric = numericValue(val);
+  if (numeric != null && (typeof val === 'number' || (typeof val === 'string' && val.trim() !== ''))) {
+    const n = numeric;
     if (isMoneyKey(key)) {
       return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
     return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
   }
-  const s = String(val);
-  return s.length > 60 ? s.slice(0, 58) + '…' : s;
+  return compactTextValue(val, 60);
 };
 
 const colLabel = (key) =>
@@ -52,7 +53,7 @@ export default function ExplorerResultsTable({ records = [] }) {
     let rows = records;
     if (search.trim()) {
       const q = search.toLowerCase();
-      rows = rows.filter(r => columns.some(c => r[c] != null && String(r[c]).toLowerCase().includes(q)));
+      rows = rows.filter(r => columns.some(c => r[c] != null && textValue(r[c], '').toLowerCase().includes(q)));
     }
     if (sortKey) {
       rows = [...rows].sort((a, b) => {
@@ -62,7 +63,7 @@ export default function ExplorerResultsTable({ records = [] }) {
         if (bv == null) return -1;
         const an = Number(av), bn = Number(bv);
         if (!isNaN(an) && !isNaN(bn)) return (an - bn) * sortDir;
-        return String(av).localeCompare(String(bv)) * sortDir;
+        return textValue(av).localeCompare(textValue(bv)) * sortDir;
       });
     }
     return rows;

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronRight, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import { format } from 'date-fns';
 import FieldHoverInfo from '@/components/common/FieldHoverInfo';
+import { compactTextValue, textValue } from '@/lib/displayValue';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -13,12 +14,11 @@ function fmtVal(key, val) {
   if (val == null || val === '') return '—';
   if (typeof val === 'object') {
     if (isSubqueryResult(val)) return '(subquery)';
-    if (val.Name != null) return String(val.Name);
-    return '(object)';
+    return compactTextValue(val, 60);
   }
   if (typeof val === 'boolean') return val ? 'Yes' : 'No';
   if (key.toLowerCase().includes('date')) {
-    try { return format(new Date(val), 'dd MMM yyyy'); } catch { return val; }
+    try { return format(new Date(val), 'dd MMM yyyy'); } catch { return textValue(val); }
   }
   if (
     key.toLowerCase().includes('amount') ||
@@ -32,8 +32,7 @@ function fmtVal(key, val) {
     if (!isNaN(n)) return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
   if (typeof val === 'number') return val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const s = String(val);
-  return s.length > 60 ? s.slice(0, 58) + '…' : s;
+  return compactTextValue(val, 60);
 }
 
 function colLabel(key) {

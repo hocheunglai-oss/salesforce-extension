@@ -13,6 +13,7 @@ import LookupFields from '@/components/report-builder/LookupFields';
 import ColumnSelector, { toSoqlToken } from '@/components/report-builder/ColumnSelector';
 import ExpandableResultsTable from '@/components/report-builder/ExpandableResultsTable';
 import { format } from 'date-fns';
+import { textValue } from '@/lib/displayValue';
 
 const CATEGORIES = [
   { value: 'sales_operations', label: 'Sales & Operations' },
@@ -491,7 +492,7 @@ export default function ReportBuilder() {
     const rows = records.map(r => headers.map(h => {
       const v = r[h];
       if (v === null || v === undefined) return '';
-      const s = String(v);
+      const s = textValue(v, '');
       return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
     }));
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -510,7 +511,7 @@ export default function ReportBuilder() {
     if (res.data?.error) res = await appClient.functions.invoke('salesforceQuery', { soql: `SELECT Id, ${field} FROM ${objectName} LIMIT 1` });
     const row = res.data?.records?.[0];
     const value = field.split('.').reduce((obj, part) => obj?.[part], row) ?? row?.[field];
-    return { recordId: row?.Id || '—', sampleValue: row ? String(value ?? '—') : '—' };
+    return { recordId: row?.Id || '—', sampleValue: row ? textValue(value) : '—' };
   };
 
   const soql = buildSoql();

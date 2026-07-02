@@ -9,12 +9,27 @@ import StemDetailModal from '@/components/dashboard/StemDetailModal';
 import PageHeader from '@/components/common/PageHeader';
 import TableShell from '@/components/common/TableShell';
 import StateBlock from '@/components/common/StateBlock';
+import { numericValue, textValue } from '@/lib/displayValue';
 
-const fmtMoney = (value) => `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const fmtDate = (value) => { try { return value ? format(new Date(value), 'dd MMM yyyy') : ''; } catch { return value || ''; } };
-const fmtUnit = (value) => typeof value === 'string' ? value : value != null ? `${fmtMoney(value)} / MT` : '';
-const fmtDelay = (value) => value != null ? `${Number(value).toLocaleString()} day${Math.abs(Number(value)) === 1 ? '' : 's'}` : '';
-const csvValue = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+const fmtMoney = (value) => {
+  const number = numericValue(value);
+  return `$${Number(number || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+const fmtDate = (value) => {
+  if (!value) return '';
+  if (typeof value === 'object') return textValue(value, '');
+  try { return format(new Date(value), 'dd MMM yyyy'); } catch { return textValue(value, ''); }
+};
+const fmtUnit = (value) => {
+  if (typeof value === 'string') return value;
+  const number = numericValue(value);
+  return number != null ? `${fmtMoney(number)} / MT` : textValue(value, '');
+};
+const fmtDelay = (value) => {
+  const number = numericValue(value);
+  return number != null ? `${number.toLocaleString()} day${Math.abs(number) === 1 ? '' : 's'}` : '';
+};
+const csvValue = (value) => `"${textValue(value, '').replaceAll('"', '""')}"`;
 
 export default function BrokerRegister() {
   const [rows, setRows] = useState([]);
@@ -48,14 +63,15 @@ export default function BrokerRegister() {
       const toMatch = !toDate || date <= toDate;
       return typeMatch && hiddenBrokerMatch && fromMatch && toMatch;
     });
-    return [...new Set(visibleRows.map(row => row.brokerName).filter(Boolean))].sort();
+    return [...new Set(visibleRows.map(row => textValue(row.brokerName, '')).filter(Boolean))].sort();
   }, [rows, selectedTypes, selectedHiddenBrokerFlags, fromDate, toDate]);
 
   const filteredRows = useMemo(() => rows.filter(row => {
     const q = search.trim().toLowerCase();
-    const textMatch = !q || `${row.stemName || ''} ${row.brokerName || ''} ${row.productQuantityLabel || ''}`.toLowerCase().includes(q);
+    const textMatch = !q || [row.stemName, row.brokerName, row.productQuantityLabel]
+      .some(value => textValue(value, '').toLowerCase().includes(q));
     const typeMatch = !selectedTypes.length || selectedTypes.includes(row.brokerType);
-    const brokerMatch = !selectedBrokerNames.length || selectedBrokerNames.includes(row.brokerName);
+    const brokerMatch = !selectedBrokerNames.length || selectedBrokerNames.includes(textValue(row.brokerName, ''));
     const hiddenBrokerMatch = !selectedHiddenBrokerFlags.length || selectedHiddenBrokerFlags.some(flag => flag === 'individual' ? row.hiddenBrokerIndividual : row.hiddenBrokerCompany);
     const date = row.paymentDateSort || row.paymentDate || '';
     const fromMatch = !fromDate || date >= fromDate;

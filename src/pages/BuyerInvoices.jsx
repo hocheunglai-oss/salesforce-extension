@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { hasUsableSmtpSettings, readSmtpSettings } from '@/lib/smtpSettings';
+import { numericValue, textValue } from '@/lib/displayValue';
 
 const EMAIL_SETTINGS_KEY = 'salesforce_extension:buyer_invoice_email_settings';
 const OLD_DEFAULT_EMAIL_INTRO = 'Please find below the latest overdue buyer invoices and buyer invoices due soon.';
@@ -28,19 +29,21 @@ const DEFAULT_EMAIL_SETTINGS = {
 };
 
 const fmtMoney = (value) => {
-  if (value == null || value === '') return '—';
-  return `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const number = numericValue(value);
+  if (number == null) return '—';
+  return `$${number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 const fmtDate = (value) => {
   if (!value) return '—';
-  try { return format(new Date(value), 'dd MMM yyyy'); } catch { return value; }
+  if (typeof value === 'object') return textValue(value);
+  try { return format(new Date(value), 'dd MMM yyyy'); } catch { return textValue(value); }
 };
 
-const csvValue = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+const csvValue = (value) => `"${textValue(value, '').replaceAll('"', '""')}"`;
 
 function splitBuyerTraderNames(value) {
-  return String(value || '')
+  return textValue(value, '')
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);

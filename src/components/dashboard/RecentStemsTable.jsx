@@ -1,4 +1,5 @@
 import { format } from 'date-fns';
+import { compactTextValue, textValue } from '@/lib/displayValue';
 
 export default function RecentStemsTable({ records = [] }) {
   if (!records.length) return (
@@ -11,12 +12,13 @@ export default function RecentStemsTable({ records = [] }) {
     if (val === null || val === undefined) return '—';
     if (typeof val === 'boolean') return val ? 'Yes' : 'No';
     if (key.toLowerCase().includes('date') || key.toLowerCase().includes('Date')) {
-      try { return format(new Date(val), 'dd MMM yyyy'); } catch { return val; }
+      if (typeof val === 'object') return textValue(val);
+      try { return format(new Date(val), 'dd MMM yyyy'); } catch { return textValue(val); }
     }
     if (typeof val === 'number') {
       return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
     }
-    return String(val).length > 40 ? String(val).slice(0, 38) + '…' : String(val);
+    return compactTextValue(val, 40);
   };
 
   const colLabel = (key) => key

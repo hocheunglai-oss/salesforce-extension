@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { numericValue, textValue } from '@/lib/displayValue';
 
 const ACTIVE_DISPUTE_STATUSES = [
   'Opened',
@@ -19,21 +20,23 @@ const ACTIVE_DISPUTE_STATUSES = [
 ];
 const NOT_CLOSED_STATUSES = ACTIVE_DISPUTE_STATUSES.filter(status => status !== 'Closed');
 
-const normalizeStatus = (value) => String(value || '').toLowerCase();
+const normalizeStatus = (value) => textValue(value, '').toLowerCase();
 const displayStatus = (value) =>
   ACTIVE_DISPUTE_STATUSES.find(status => normalizeStatus(status) === normalizeStatus(value)) || value;
 
 const fmtMoney = (value) => {
-  if (value == null || value === '') return '—';
-  return `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const number = numericValue(value);
+  if (number == null) return '—';
+  return `$${number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 const fmtDate = (value) => {
   if (!value) return '—';
-  try { return format(new Date(value), 'dd MMM yyyy'); } catch { return value; }
+  if (typeof value === 'object') return textValue(value);
+  try { return format(new Date(value), 'dd MMM yyyy'); } catch { return textValue(value); }
 };
 
-const csvValue = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+const csvValue = (value) => `"${textValue(value, '').replaceAll('"', '""')}"`;
 
 function Metric({ label, value, tone = 'default' }) {
   const toneClass = tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : 'text-foreground';
@@ -102,7 +105,7 @@ export default function DisputeManagement() {
         displayStatus(row.Dispute_Status__c),
         row.Dispute_Type__c,
         row.Dispute_Particular__c,
-      ].some(value => value != null && String(value).toLowerCase().includes(q));
+      ].some(value => value != null && textValue(value, '').toLowerCase().includes(q));
       return isActiveDispute && statusMatch && typeMatch && textMatch;
     });
   }, [rows, search, selectedStatusKeys, typeFilter]);
