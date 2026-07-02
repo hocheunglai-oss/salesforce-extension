@@ -21,11 +21,13 @@ const YEARS = getRecentYears();
 
 const REVIEW_FILTERS = [
   { key: 'all', label: 'All exceptions' },
-  { key: 'missing-delivery', label: 'Missing delivery date' },
+  { key: 'potential-delay', label: 'Potential Delay' },
   { key: 'missing-buyer', label: 'Missing buyer invoice' },
   { key: 'missing-supplier', label: 'Missing supplier invoice' },
   { key: 'negative-gross', label: 'Negative gross profit' },
 ];
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const fmtMoney = (value) => {
   if (value == null || value === '') return '-';
@@ -35,6 +37,24 @@ const fmtMoney = (value) => {
 const fmtDate = (value) => {
   if (!value) return '-';
   try { return format(new Date(value), 'dd MMM yyyy'); } catch { return value; }
+};
+
+const dateOnlyUtc = (value) => {
+  if (!value) return null;
+  const [year, month, day] = String(value).slice(0, 10).split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return Date.UTC(year, month - 1, day);
+};
+
+const todayUtc = () => {
+  const today = new Date();
+  return Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+};
+
+const daysSinceDate = (value) => {
+  const date = dateOnlyUtc(value);
+  if (date == null) return null;
+  return Math.floor((todayUtc() - date) / MS_PER_DAY);
 };
 
 function classifyStem(row) {
@@ -49,9 +69,10 @@ function classifyStem(row) {
       ? buyer - supplier - brokerTotal
       : null;
   const reasons = [];
+  const expectedDelayDays = daysSinceDate(row.Expected_Delivery_Date__c);
 
-  if (!row.Delivery_Date__c && row.Expected_Delivery_Date__c) {
-    reasons.push({ key: 'missing-delivery', label: 'Missing delivery date', severity: 'high' });
+  if (!row.Delivery_Date__c && expectedDelayDays != null && expectedDelayDays >= 3) {
+    reasons.push({ key: 'potential-delay', label: 'Potential Delay', severity: 'high' });
   }
   if (buyer == null || Number(buyer) === 0) {
     reasons.push({ key: 'missing-buyer', label: 'Missing buyer invoice', severity: 'high' });
@@ -68,6 +89,7 @@ function classifyStem(row) {
     reviewReasons: reasons,
     reviewSeverity: severity,
     grossProfit,
+    expectedDelayDays,
     effectiveDate: row.Delivery_Date__c || row.Expected_Delivery_Date__c,
     usesFallbackDate: !row.Delivery_Date__c && !!row.Expected_Delivery_Date__c,
   };
@@ -155,7 +177,7 @@ export default function ReviewQueue() {
 
   const classifiedRows = useMemo(() => (data?.recentStems || []).map(classifyStem), [data?.recentStems]);
   const highPriorityCount = classifiedRows.filter(row => row.reviewSeverity === 'high').length;
-  const fallbackCount = classifiedRows.filter(row => row.usesFallbackDate).length;
+  const potentialDelayCount = classifiedRows.filter(row => row.reviewReasons.some(reason => reason.key === 'potential-delay')).length;
   const clearCount = classifiedRows.filter(row => row.reviewReasons.length === 0).length;
 
   const exportCsv = () => {
@@ -288,8 +310,8 @@ export default function ReviewQueue() {
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard label="Open Exceptions" value={reviewRows.length.toLocaleString()} sub={`${classifiedRows.length.toLocaleString()} STEMs scanned`} icon={ClipboardCheck} color="blue" />
-          <StatCard label="Urgent Exceptions" value={highPriorityCount.toLocaleString()} sub="Missing invoice/date or negative profit" icon={AlertTriangle} color="red" />
-          <StatCard label="Expected-Date STEMs" value={fallbackCount.toLocaleString()} sub="Expected Delivery used" icon={RefreshCw} color="amber" />
+          <StatCard label="Urgent Exceptions" value={highPriorityCount.toLocaleString()} sub="Potential delay, missing invoice, or negative profit" icon={AlertTriangle} color="red" />
+          <StatCard label="Potential Delays" value={potentialDelayCount.toLocaleString()} sub="Delivery blank and expected date 3+ days past" icon={RefreshCw} color="amber" />
           <StatCard label="No Exceptions" value={clearCount.toLocaleString()} sub="No exception reason" icon={CheckCircle2} color="green" />
         </div>
       )}
