@@ -760,8 +760,16 @@ async function salesforceDashboardFilteredFull(body) {
     const stemHasDelivery = !!stemById[ec.STEM__c]?.Delivery_Date__c;
     const buy = extraBuyAmount(ec, stemHasDelivery);
     const supplierName = String(ec.Supplier_Name__c || '').trim();
-    if (supplierName) addSupplierInvoiceAmount(ec.STEM__c, supplierName, buy);
-    else unassignedExtraCostBuyByStem[ec.STEM__c] = (unassignedExtraCostBuyByStem[ec.STEM__c] || 0) + buy;
+    if (supplierName) {
+      addSupplierInvoiceAmount(ec.STEM__c, supplierName, buy);
+      if (!supplierNamesByStem[ec.STEM__c]) supplierNamesByStem[ec.STEM__c] = new Set();
+      supplierNamesByStem[ec.STEM__c].add(supplierName);
+      if (filteredStemIds.has(ec.STEM__c) && (!supplierCompanyFilterActive || companyMatches(supplierName))) {
+        supplierNamesInFilteredStems.add(supplierName);
+      }
+    } else {
+      unassignedExtraCostBuyByStem[ec.STEM__c] = (unassignedExtraCostBuyByStem[ec.STEM__c] || 0) + buy;
+    }
   }
   for (const bb of buyerBrokers) {
     if (!bb.STEM__c) continue;
