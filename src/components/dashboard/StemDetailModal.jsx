@@ -427,10 +427,10 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                                 <td className="py-2.5 px-3 text-right text-foreground">
                                   {li.Cost_Per_Unit__c != null
                                     ? fmtMoney(li.Cost_Per_Unit__c)
-                                    : li.Unit_Cost__c != null
-                                      ? fmtMoney(li.Unit_Cost__c)
-                                      : li.Unit_Buy_At__c != null
-                                        ? fmtMoney(li.Unit_Buy_At__c)
+                                    : li.Unit_Buy_At__c != null
+                                      ? fmtMoney(li.Unit_Buy_At__c)
+                                      : li.Unit_Cost__c != null
+                                        ? fmtMoney(li.Unit_Cost__c)
                                         : li['Offer_Line_Item__r']?.Supplier_Unit_Price__c != null
                                           ? fmtMoney(li['Offer_Line_Item__r'].Supplier_Unit_Price__c)
                                           : '—'}

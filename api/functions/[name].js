@@ -462,7 +462,7 @@ function lineSellAmount(item, stemHasDelivery) {
 
 function lineBuyAmount(item, stemHasDelivery) {
   if (stemHasDelivery) return item.Total_Cost__c ?? 0;
-  const unit = firstNumber(item.Cost_Per_Unit__c, item.Unit_Cost__c, item.Unit_Buy_At__c, item['Offer_Line_Item__r']?.Supplier_Unit_Price__c);
+  const unit = firstNumber(item.Cost_Per_Unit__c, item.Unit_Buy_At__c, item.Unit_Cost__c, item['Offer_Line_Item__r']?.Supplier_Unit_Price__c);
   const qty = financialQuantity(item, false);
   return unit != null ? unit * qty : (item.Total_Cost__c ?? 0);
 }
