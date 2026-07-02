@@ -5,7 +5,7 @@ const fmtDate = (value) => { try { return value ? format(new Date(value), 'dd MM
 const fmtMoney = (value) => `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtUnit = (value) => value != null ? `${fmtMoney(value)} / MT` : '—';
 const fmtDelay = (value) => value != null ? `${Number(value).toLocaleString()} day${Math.abs(Number(value)) === 1 ? '' : 's'}` : '—';
-const fmtQty = (value) => value != null ? `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} MT` : '—';
+const fmtQty = (value, unit = 'MT') => value != null ? `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}` : '—';
 
 export default function BrokerRegisterTable({ rows, onRowClick }) {
   const payableTotal = rows.reduce((sum, row) => sum + (row.brokerType === 'Supplier Broker' ? Number(row.commissionAmount || 0) : 0), 0);
@@ -36,7 +36,7 @@ export default function BrokerRegisterTable({ rows, onRowClick }) {
               <tr key={row.id} onClick={() => onRowClick(row.stemId)} className={`border-b border-border/40 cursor-pointer hover:bg-muted/30 transition-colors ${idx % 2 ? 'bg-muted/10' : ''}`}>
                 <td className="py-3 px-4 font-medium text-foreground whitespace-nowrap">{row.stemName}</td>
                 <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">{row.productName || '—'}</td>
-                <td className="py-3 px-4 text-right text-foreground whitespace-nowrap">{fmtQty(row.bdnQuantity)}</td>
+                <td className="py-3 px-4 text-right text-foreground whitespace-nowrap">{fmtQty(row.bdnQuantity, row.quantityUnit || 'MT')}</td>
                 <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">{fmtDate(row.deliveryDate)}</td>
                 <td className="py-3 px-4 whitespace-nowrap"><BrokerTypeBadge type={row.brokerType} /></td>
                 <td className="py-3 px-4 text-foreground">{row.brokerName || '—'}</td>

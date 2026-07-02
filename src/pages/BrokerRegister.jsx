@@ -14,7 +14,7 @@ const fmtMoney = (value) => `$${Number(value || 0).toLocaleString(undefined, { m
 const fmtDate = (value) => { try { return value ? format(new Date(value), 'dd MMM yyyy') : ''; } catch { return value || ''; } };
 const fmtUnit = (value) => value != null ? `${fmtMoney(value)} / MT` : '';
 const fmtDelay = (value) => value != null ? `${Number(value).toLocaleString()} day${Math.abs(Number(value)) === 1 ? '' : 's'}` : '';
-const fmtQty = (value) => value != null ? `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} MT` : '';
+const fmtQty = (value, unit = 'MT') => value != null ? `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}` : '';
 const csvValue = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
 
 export default function BrokerRegister() {
@@ -71,7 +71,7 @@ export default function BrokerRegister() {
     const csvRows = filteredRows.map(row => [
       row.stemName,
       row.productName,
-      fmtQty(row.bdnQuantity),
+      fmtQty(row.bdnQuantity, row.quantityUnit || 'MT'),
       fmtDate(row.deliveryDate),
       row.brokerType,
       row.brokerName,

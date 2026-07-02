@@ -260,7 +260,7 @@ async function salesforceStemDetail(body) {
   }
   const [record, lineItems, extraCosts, buyerBrokers] = await Promise.all([
     sfRequest(`/sobjects/stem__c/${actualStemId}`).then(cleanRecord),
-    sfQuery(`SELECT Id, Name, Product__c, Product__r.Name, Supplier_Name__c, BDN_Company__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_Max__c, Subtotal_Sell_At__c, Subtotal_Buy_At__c, Total_Price__c, Total_Cost__c, Supplier_Invoice__c, Payment_Term__c, BDN_Number__c, Quantity_in_MT__c, Is_Quantity_Range__c, Cancelled__c, Buyers_Brokers_Commission_Per_Unit__c, Commission_Cost__c, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c, Suppliers_Brokers_Commission_Lumpsum__c, Offer_Line_Item__r.UnitPrice, Offer_Line_Item__r.Supplier_Unit_Price__c FROM STEM_Line_Item__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { clean: true, softFail: true }),
+    sfQuery(`SELECT Id, Name, Product__c, Product__r.Name, Product__r.Family, Supplier_Name__c, BDN_Company__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_Max__c, Subtotal_Sell_At__c, Subtotal_Buy_At__c, Total_Price__c, Total_Cost__c, Supplier_Invoice__c, Payment_Term__c, BDN_Number__c, Quantity_in_MT__c, Is_Quantity_Range__c, Cancelled__c, Buyers_Brokers_Commission_Per_Unit__c, Commission_Cost__c, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c, Suppliers_Brokers_Commission_Lumpsum__c, Offer_Line_Item__r.UnitPrice, Offer_Line_Item__r.Supplier_Unit_Price__c FROM STEM_Line_Item__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { clean: true, softFail: true }),
     sfQuery(`SELECT Id, Name, Description__c, Product2Id__c, Product2Id__r.Name, Supplier_Name__c, Quantity__c, Unit_Price__c, Unit_Cost__c, Line_Total__c, Line_Total_Buy__c, Supplier_Invoice__c, Supplier_Issued__c, Payment_Term__c, Cancelled__c FROM STEM_Extra_Cost__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { clean: true, softFail: true }),
     sfQuery(`SELECT Id, Buyer_Broker__c, Refcode_Index__c, Exported__c, Commission_Lumpsum__c, STEM_Line_Item__r.Id FROM STEM_Buyer_Broker__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { clean: true, softFail: true }),
   ]);
@@ -286,11 +286,11 @@ async function salesforceBrokerRegister(body) {
   const rows = [];
   for (const chunk of chunkIds(stems.records.map((stem) => stem.Id))) {
     const ids = chunk.map((id) => `'${id}'`).join(',');
-    const lineItems = await sfQuery(`SELECT Id, Name, STEM__c, Product__r.Name, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c, Quantity_Delivered_Per_BDN__c, Quantity__c, Buyers_Broker__c, Buyer_Broker__c, Buyers_Brokers_Commission_Per_Unit__c, Buyers_Brokers_Commission_Lumpsum__c, Cancelled__c FROM STEM_Line_Item__c WHERE STEM__c IN (${ids}) LIMIT 5000`, { clean: true, softFail: true });
+    const lineItems = await sfQuery(`SELECT Id, Name, STEM__c, Product__r.Name, Product__r.Family, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c, Quantity_Delivered_Per_BDN__c, Quantity__c, Quantity_in_MT__c, Buyers_Broker__c, Buyer_Broker__c, Buyers_Brokers_Commission_Per_Unit__c, Buyers_Brokers_Commission_Lumpsum__c, Cancelled__c FROM STEM_Line_Item__c WHERE STEM__c IN (${ids}) LIMIT 5000`, { clean: true, softFail: true });
     for (const item of lineItems.records || []) {
       const stem = stemMap[item.STEM__c];
       if (!stem || item.Cancelled__c) continue;
-      const qty = item.Quantity_Delivered_Per_BDN__c ?? item.Quantity__c ?? 0;
+      const qty = financialQuantity(item, !!stem.Delivery_Date__c);
       const supplierAmount = Number(item.Suppliers_Brokers_Commission_Per_Unit__c || 0) * Number(qty || 0);
       const buyerAmount = Number(item.Buyers_Brokers_Commission_Lumpsum__c || 0) || Number(item.Buyers_Brokers_Commission_Per_Unit__c || 0) * Number(qty || 0);
       if (item.Supplier_Broker__c && supplierAmount) rows.push({ id: `supplier-${item.Id}`, stemId: item.STEM__c, stemName: stem.Name, productName: item.Product__r?.Name || item.Name, deliveryDate: stem.Delivery_Date__c, brokerType: 'Supplier Broker', brokerName: item.Supplier_Broker__c, commissionAmount: supplierAmount });
@@ -386,9 +386,30 @@ function firstNumber(...values) {
   return null;
 }
 
+function litersPerMetricTon(item) {
+  const family = String(item['Product__r']?.Family || item['Product2Id__r']?.Family || '').toUpperCase();
+  const productName = String(item['Product__r']?.Name || item['Product2Id__r']?.Name || item.Name || item.Description__c || '').toUpperCase();
+  if (family.includes('LSMGO') || family.includes('MGO') || productName.includes('LSMGO') || productName.includes('MGO') || productName.includes('DIESEL')) return 1200;
+  if (family.includes('VLSFO') || productName.includes('VLSFO')) return 1030;
+  if (family.includes('HSFO') || productName.includes('HSFO')) return 1030;
+  return null;
+}
+
+function deliveredQuantityInMt(item) {
+  const delivered = firstNumber(item.Quantity_Delivered_Per_BDN__c);
+  if (delivered == null) return null;
+  const litersPerMt = litersPerMetricTon(item);
+  if (!litersPerMt) return delivered;
+  const quantityInMt = firstNumber(item.Quantity_in_MT__c);
+  const looksLikeLiters = quantityInMt != null && quantityInMt > 0
+    ? delivered > quantityInMt * 20
+    : delivered >= litersPerMt * 50;
+  return looksLikeLiters ? delivered / litersPerMt : delivered;
+}
+
 function financialQuantity(item, stemHasDelivery, maxField = 'Quantity_Max__c') {
   if (stemHasDelivery) {
-    return firstNumber(item.Quantity_Delivered_Per_BDN__c, item.Quantity__c, item.Quantity_in_MT__c) || 0;
+    return firstNumber(deliveredQuantityInMt(item), item.Quantity__c, item.Quantity_in_MT__c) || 0;
   }
   const min = firstNumber(item.Quantity__c, item.Quantity_in_MT__c, item.Quantity_Delivered_Per_BDN__c);
   const max = firstNumber(item[maxField]);
@@ -755,7 +776,7 @@ async function salesforceDashboardFilteredFull(body) {
     return row;
   });
   const productFamilyQuantities = Object.entries(productFamilyQuantityByName)
-    .map(([family, quantity]) => ({ family, quantity }))
+    .map(([family, quantity]) => ({ family, quantity, unitOfMeasure: 'MT' }))
     .sort((a, b) => b.quantity - a.quantity);
 
   return {
@@ -812,6 +833,7 @@ async function stemPnlFull(body) {
       const inList = chunk.map((id) => `'${id}'`).join(',');
       return queryRows(`
         SELECT Id, STEM__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_Max__c, Quantity_in_MT__c, Is_Quantity_Range__c,
+               Product__r.Name, Product__r.Family,
                Price_Per_Unit__c, Cost_Per_Unit__c, Unit_Sell_At__c, Unit_Buy_At__c, Unit_Cost__c,
                Total_Price__c, Total_Cost__c, Supplier_Invoice__c, Cancelled__c,
                Buyers_Brokers_Commission_Per_Unit__c,
@@ -1415,8 +1437,8 @@ async function salesforceStemDetailFull(body) {
 
   const [recordRaw, lineItems, extraCosts, buyerBrokers] = await Promise.all([
     sfRequest(`/sobjects/stem__c/${actualStemId}`).then(cleanRecord),
-    queryRows(`SELECT Id, Name, Product__c, Product__r.Name, Supplier_Name__c, BDN_Company__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_Max__c, Quantity_in_MT__c, Is_Quantity_Range__c, Price_Per_Unit__c, Cost_Per_Unit__c, Unit_Sell_At__c, Unit_Buy_At__c, Unit_Cost__c, Subtotal_Sell_At__c, Subtotal_Buy_At__c, Total_Price__c, Total_Cost__c, Supplier_Invoice__c, Payment_Term__c, BDN_Number__c, Cancelled__c, Buyers_Brokers_Commission_Per_Unit__c, Commission_Cost__c, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c, Suppliers_Brokers_Commission_Lumpsum__c, Offer_Line_Item__r.UnitPrice, Offer_Line_Item__r.Supplier_Unit_Price__c FROM STEM_Line_Item__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
-    queryRows(`SELECT Id, Name, Description__c, Product2Id__c, Product2Id__r.Name, Supplier_Name__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_in_MT__c, Quantity_Range_Max__c, Is_Quantity_Range__c, Unit_Price__c, Unit_Cost__c, Line_Total__c, Line_Total_Buy__c, Supplier_Invoice__c, Supplier_Issued__c, Payment_Term__c, Cancelled__c FROM STEM_Extra_Cost__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
+    queryRows(`SELECT Id, Name, Product__c, Product__r.Name, Product__r.Family, Supplier_Name__c, BDN_Company__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_Max__c, Quantity_in_MT__c, Is_Quantity_Range__c, Price_Per_Unit__c, Cost_Per_Unit__c, Unit_Sell_At__c, Unit_Buy_At__c, Unit_Cost__c, Subtotal_Sell_At__c, Subtotal_Buy_At__c, Total_Price__c, Total_Cost__c, Supplier_Invoice__c, Payment_Term__c, BDN_Number__c, Cancelled__c, Buyers_Brokers_Commission_Per_Unit__c, Commission_Cost__c, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c, Suppliers_Brokers_Commission_Lumpsum__c, Offer_Line_Item__r.UnitPrice, Offer_Line_Item__r.Supplier_Unit_Price__c FROM STEM_Line_Item__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
+    queryRows(`SELECT Id, Name, Description__c, Product2Id__c, Product2Id__r.Name, Product2Id__r.Family, Supplier_Name__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_in_MT__c, Quantity_Range_Max__c, Is_Quantity_Range__c, Unit_Price__c, Unit_Cost__c, Line_Total__c, Line_Total_Buy__c, Supplier_Invoice__c, Supplier_Issued__c, Payment_Term__c, Cancelled__c FROM STEM_Extra_Cost__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
     queryRows(`SELECT Id, Buyer_Broker__c, Refcode_Index__c, Exported__c, Commission_Lumpsum__c, STEM_Line_Item__r.Id FROM STEM_Buyer_Broker__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
   ]);
 
@@ -1449,8 +1471,9 @@ async function salesforceStemDetailFull(body) {
     const calculatedBuy = lineBuyAmount(li, stemHasDelivery);
     return {
       ...li,
+      _Financial_Quantity: calculatedQuantity,
+      _Financial_Quantity_Unit: 'MT',
       ...(!stemHasDelivery ? {
-        _Financial_Quantity: calculatedQuantity,
         Total_Price__c: calculatedSell,
         Total_Cost__c: calculatedBuy,
       } : {}),
@@ -1464,8 +1487,9 @@ async function salesforceStemDetailFull(body) {
     const calculatedBuy = extraBuyAmount(ec, stemHasDelivery);
     return {
       ...ec,
+      _Financial_Quantity: calculatedQuantity,
+      _Financial_Quantity_Unit: 'MT',
       ...(!stemHasDelivery ? {
-        _Financial_Quantity: calculatedQuantity,
         Line_Total__c: calculatedSell,
         Line_Total_Buy__c: calculatedBuy,
       } : {}),
@@ -1524,9 +1548,9 @@ async function salesforceBrokerRegisterFull(body) {
     Promise.all(chunkIds(stemIds).map((chunk) => {
       const ids = chunk.map((id) => `'${id}'`).join(',');
       return queryRows(`
-        SELECT Id, Name, STEM__c, Product__r.Name, Supplier_Invoice__c,
+        SELECT Id, Name, STEM__c, Product__r.Name, Product__r.Family, Supplier_Invoice__c,
                Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c,
-               Quantity_Delivered_Per_BDN__c, Quantity__c, Commission_Cost__c, Cancelled__c,
+               Quantity_Delivered_Per_BDN__c, Quantity__c, Quantity_in_MT__c, Commission_Cost__c, Cancelled__c,
                Buyers_Broker__c, Buyer_Broker__c, Buyers_Brokers_Commission_Per_Unit__c,
                Buyers_Brokers_Commission_Lumpsum__c
         FROM STEM_Line_Item__c
@@ -1627,7 +1651,7 @@ async function salesforceBrokerRegisterFull(body) {
   for (const item of lineItems) {
     const stem = stemMap[item.STEM__c];
     if (!stem) continue;
-    const qty = item.Quantity_Delivered_Per_BDN__c ?? item.Quantity__c;
+    const qty = financialQuantity(item, !!stem.Delivery_Date__c);
     const supplierAmount = item.Cancelled__c ? 0 : brokerAmount(item.Suppliers_Brokers_Commission_Per_Unit__c, qty);
     if (item.Supplier_Broker__c && supplierAmount !== 0) {
       rows.push({
@@ -1635,7 +1659,8 @@ async function salesforceBrokerRegisterFull(body) {
         stemId: item.STEM__c,
         stemName: stem.Name,
         productName: item['Product__r']?.Name || item.Name || '—',
-        bdnQuantity: item.Quantity_Delivered_Per_BDN__c ?? null,
+        bdnQuantity: qty || null,
+        quantityUnit: 'MT',
         deliveryDate: stem.Delivery_Date__c,
         brokerType: 'Supplier Broker',
         brokerName: accountMap[item.Supplier_Broker__c] || item.Supplier_Broker__c,
@@ -1660,7 +1685,8 @@ async function salesforceBrokerRegisterFull(body) {
         stemId: item.STEM__c,
         stemName: stem.Name,
         productName: item['Product__r']?.Name || item.Name || '—',
-        bdnQuantity: item.Quantity_Delivered_Per_BDN__c ?? null,
+        bdnQuantity: qty || null,
+        quantityUnit: 'MT',
         deliveryDate: stem.Delivery_Date__c,
         brokerType: 'Buyer Broker',
         brokerName: accountMap[buyerBrokerId] || buyerBrokerId,
@@ -1688,7 +1714,8 @@ async function salesforceBrokerRegisterFull(body) {
           stemId: item.STEM__c,
           stemName: stem.Name,
           productName: item['Product__r']?.Name || item.Name || '—',
-          bdnQuantity: item.Quantity_Delivered_Per_BDN__c ?? null,
+          bdnQuantity: qty || null,
+          quantityUnit: 'MT',
           deliveryDate: stem.Delivery_Date__c,
           brokerType: 'Secondary Buyer Broker',
           brokerName: accountMap[broker.Buyer_Broker__c] || broker.Buyer_Broker__c || 'Secondary Buyer Broker',

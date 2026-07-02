@@ -131,11 +131,15 @@ export default function DashboardSettings() {
 
   const productFamilyKpis = useMemo(() => {
     const quantityByFamily = new Map(
-      (data?.productFamilyQuantities || []).map((item) => [String(item.family || '').toUpperCase(), item.quantity || 0])
+      (data?.productFamilyQuantities || []).map((item) => [
+        String(item.family || '').toUpperCase(),
+        { quantity: item.quantity || 0, unitOfMeasure: item.unitOfMeasure || 'MT' },
+      ])
     );
     return PRODUCT_FAMILY_KPI_ORDER.map((family) => ({
       family,
-      quantity: quantityByFamily.get(family) || 0,
+      quantity: quantityByFamily.get(family)?.quantity || 0,
+      unitOfMeasure: quantityByFamily.get(family)?.unitOfMeasure || 'MT',
     }));
   }, [data?.productFamilyQuantities]);
 
@@ -301,8 +305,8 @@ export default function DashboardSettings() {
               <StatCard
                 key={item.family}
                 label={item.family}
-                value={`${formatQuantity(item.quantity)} MT`}
-                sub="BDN qty or fallback mid-range qty"
+                value={`${formatQuantity(item.quantity)} ${item.unitOfMeasure || 'MT'}`}
+                sub="Line-item BDN qty or fallback mid-range qty"
                 icon={Package}
                 color={index === 0 ? 'teal' : 'blue'}
               />

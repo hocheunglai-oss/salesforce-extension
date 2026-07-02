@@ -11,6 +11,15 @@ const SF_BASE = "https://fratellicosulich.my.salesforce.com";
 const fmtDate = (v) => { try { return v ? format(new Date(v), 'dd MMM yyyy') : '—'; } catch { return v; } };
 const fmtMoney = (v) => v != null ? `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
 const fmtBool = (v) => v === true ? 'Yes' : v === false ? 'No' : '—';
+const fmtQuantity = (v, unit = 'MT') => v != null ? `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}` : '—';
+const lineItemQuantityLabel = (li) => {
+  const unit = li._Financial_Quantity_Unit || 'MT';
+  if (li._Financial_Quantity != null) return fmtQuantity(li._Financial_Quantity, unit);
+  if (li.Quantity_Delivered_Per_BDN__c != null) return fmtQuantity(li.Quantity_Delivered_Per_BDN__c, unit);
+  if (li.Is_Quantity_Range__c && li.Quantity_Max__c) return `${li.Quantity__c ?? '—'}–${li.Quantity_Max__c} ${unit}`;
+  if (li.Quantity_in_MT__c > 0) return fmtQuantity(li.Quantity_in_MT__c, unit);
+  return li.Quantity__c != null ? fmtQuantity(li.Quantity__c, unit) : '—';
+};
 
 const SECTIONS = [
   {
@@ -393,13 +402,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                                   <td className="py-2.5 px-3 text-muted-foreground">{li.BDN_Company__c || '—'}</td>
                                 )}
                                 <td className="py-2.5 px-3 text-right text-foreground">
-                                  {li._Financial_Quantity != null
-                                    ? li._Financial_Quantity.toLocaleString()
-                                    : li.Quantity_Delivered_Per_BDN__c != null
-                                    ? li.Quantity_Delivered_Per_BDN__c.toLocaleString()
-                                    : (li.Is_Quantity_Range__c && li.Quantity_Max__c
-                                      ? `${li.Quantity__c ?? '—'}–${li.Quantity_Max__c}`
-                                      : (li.Quantity_in_MT__c > 0 ? li.Quantity_in_MT__c.toLocaleString() : (li.Quantity__c != null ? li.Quantity__c.toLocaleString() : '—')))}
+                                  {lineItemQuantityLabel(li)}
                                 </td>
                                 <td className="py-2.5 px-3 text-right text-foreground">
                                   {li.Price_Per_Unit__c != null
@@ -452,7 +455,7 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                             <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Name</th>
                             <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Product</th>
                             <th className="sticky top-0 z-10 bg-card text-left py-2.5 px-3 font-semibold text-muted-foreground">Supplier</th>
-                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Qty</th>
+                            <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Qty (MT)</th>
                             <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Sell/Unit</th>
                             <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Buy/Unit</th>
                             <th className="sticky top-0 z-10 bg-card text-right py-2.5 px-3 font-semibold text-muted-foreground">Total Sell</th>
@@ -477,7 +480,9 @@ export default function StemDetailModal({ stemId, open, onClose, onUpdated }) {
                               <td className="py-2.5 px-3 text-muted-foreground">{productName}</td>
                               <td className="py-2.5 px-3 text-muted-foreground">{ec.Supplier_Name__c || '—'}</td>
                               <td className="py-2.5 px-3 text-right text-foreground">
-                                {ec._Financial_Quantity != null ? ec._Financial_Quantity.toLocaleString() : (ec.Quantity__c != null ? ec.Quantity__c.toLocaleString() : '—')}
+                                {ec._Financial_Quantity != null
+                                  ? fmtQuantity(ec._Financial_Quantity, ec._Financial_Quantity_Unit || 'MT')
+                                  : (ec.Quantity__c != null ? fmtQuantity(ec.Quantity__c, ec._Financial_Quantity_Unit || 'MT') : '—')}
                               </td>
                               <td className="py-2.5 px-3 text-right text-foreground">{ec.Unit_Price__c != null ? fmtMoney(ec.Unit_Price__c) : '—'}</td>
                               <td className="py-2.5 px-3 text-right text-foreground">{ec.Unit_Cost__c != null ? fmtMoney(ec.Unit_Cost__c) : '—'}</td>
