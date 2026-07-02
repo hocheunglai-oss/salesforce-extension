@@ -581,7 +581,7 @@ async function salesforceDashboardFilteredFull(body) {
     const [lineItemChunks, buyerBrokerChunks, extraCostChunks] = await Promise.all([
       Promise.all(chunkIds(allStemIds).map((chunk) => {
         const inList = chunk.map((id) => `'${id}'`).join(',');
-        return queryRows(`SELECT STEM__c, Total_Price__c, Total_Cost__c, Supplier_Invoice__c, Cancelled__c, Buyers_Brokers_Commission_Per_Unit__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_Max__c, Quantity_in_MT__c, Is_Quantity_Range__c, Price_Per_Unit__c, Cost_Per_Unit__c, Unit_Sell_At__c, Unit_Buy_At__c, Unit_Cost__c, Subtotal_Sell_At__c, Subtotal_Buy_At__c, Commission_Cost__c, Suppliers_Brokers_Commission_Per_Unit__c, Supplier_Broker__r.Name, Buyers_Broker__r.Name, Offer_Line_Item__r.UnitPrice, Offer_Line_Item__r.Supplier_Unit_Price__c FROM STEM_Line_Item__c WHERE STEM__c IN (${inList}) LIMIT 2000`, { limit: 2000, softFail: true });
+        return queryRows(`SELECT STEM__c, Total_Price__c, Total_Cost__c, Supplier_Invoice__c, Cancelled__c, Buyers_Brokers_Commission_Per_Unit__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_Max__c, Quantity_in_MT__c, Is_Quantity_Range__c, Product__r.Name, Product__r.Family, Price_Per_Unit__c, Cost_Per_Unit__c, Unit_Sell_At__c, Unit_Buy_At__c, Unit_Cost__c, Subtotal_Sell_At__c, Subtotal_Buy_At__c, Commission_Cost__c, Suppliers_Brokers_Commission_Per_Unit__c, Supplier_Broker__r.Name, Buyers_Broker__r.Name, Offer_Line_Item__r.UnitPrice, Offer_Line_Item__r.Supplier_Unit_Price__c FROM STEM_Line_Item__c WHERE STEM__c IN (${inList}) LIMIT 2000`, { limit: 2000, softFail: true });
       })),
       Promise.all(chunkIds(allStemIds).map((chunk) => {
         const inList = chunk.map((id) => `'${id}'`).join(',');
@@ -617,10 +617,16 @@ async function salesforceDashboardFilteredFull(body) {
   const uninvoicedSupplierLineBuyByStem = {};
   const hasSupplierInvoiceByStem = {};
   const brokerByStem = {};
+  const filteredStemIds = new Set((allStemsRes.records || []).map((stem) => stem.Id));
+  const productFamilyQuantityByName = {};
   for (const li of lineItems) {
     const id = li.STEM__c;
     if (!id || li.Cancelled__c) continue;
     const stemHasDelivery = !!stemById[id]?.Delivery_Date__c;
+    if (filteredStemIds.has(id)) {
+      const family = li['Product__r']?.Family || li['Product__r']?.Name || 'Unspecified';
+      productFamilyQuantityByName[family] = (productFamilyQuantityByName[family] || 0) + financialQuantity(li, stemHasDelivery);
+    }
     const lineSell = lineSellAmount(li, stemHasDelivery);
     const lineBuy = lineBuyAmount(li, stemHasDelivery);
     lineItemSellByStem[id] = (lineItemSellByStem[id] || 0) + lineSell;
@@ -748,6 +754,9 @@ async function salesforceDashboardFilteredFull(body) {
     for (const buyerName of monthlyBuyerNames) row[buyerName] = buyerMonthTotals[buyerName]?.[idx] || 0;
     return row;
   });
+  const productFamilyQuantities = Object.entries(productFamilyQuantityByName)
+    .map(([family, quantity]) => ({ family, quantity }))
+    .sort((a, b) => b.quantity - a.quantity);
 
   return {
     stemTotal: totalRes.records?.[0]?.total ?? 0,
@@ -771,6 +780,7 @@ async function salesforceDashboardFilteredFull(body) {
     monthlyBuyerNetPnl,
     monthlyBuyerNames,
     monthlyNetPnlYear: currentYear,
+    productFamilyQuantities,
   };
 }
 
