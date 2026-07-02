@@ -34,6 +34,7 @@ export default function DashboardSettings() {
   const [portCountry, setPortCountry] = useState(savedPortCountry);
   const [counterpartyMode, setCounterpartyMode] = useState(savedFilters.counterpartyMode === 'supplier' ? 'supplier' : 'buyer');
   const [portCountryOptions, setPortCountryOptions] = useState([]);
+  const [portCountrySuggestionsOpen, setPortCountrySuggestionsOpen] = useState(false);
   const [companyKeyword, setCompanyKeyword] = useState(savedFilters.companyKeyword ?? '');
   const [companyOptions, setCompanyOptions] = useState([]);
   const [companySuggestionsOpen, setCompanySuggestionsOpen] = useState(false);
@@ -202,9 +203,21 @@ export default function DashboardSettings() {
       .slice(0, 12);
   }, [companyKeyword, companyOptions]);
 
+  const portCountrySuggestions = useMemo(() => {
+    const q = portCountry.trim().toLowerCase();
+    return portCountryOptions
+      .filter((country) => !q || String(country).toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [portCountry, portCountryOptions]);
+
   const selectCompanySuggestion = (name) => {
     setCompanyKeyword(name);
     setCompanySuggestionsOpen(false);
+  };
+
+  const selectPortCountrySuggestion = (country) => {
+    setPortCountry(country);
+    setPortCountrySuggestionsOpen(false);
   };
 
   const selectedYearLabel = selectedYears.slice().sort((a, b) => a - b).join(', ');
@@ -273,8 +286,8 @@ export default function DashboardSettings() {
               onClick={() => setDisputeOnly(true)}
               className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
                 disputeOnly
-                  ? 'bg-primary text-primary-foreground border-primary'
-                  : 'bg-muted/40 text-muted-foreground border-border hover:border-primary/50'
+                  ? 'bg-destructive text-destructive-foreground border-destructive'
+                  : 'bg-muted/40 text-muted-foreground border-border hover:border-destructive/50 hover:text-destructive'
               }`}
             >
               Disputed only
@@ -350,19 +363,45 @@ export default function DashboardSettings() {
               <Label htmlFor="port-country-filter" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Port Country
               </Label>
-              <Input
-                id="port-country-filter"
-                list="port-country-options"
-                value={portCountry}
-                onChange={(e) => setPortCountry(e.target.value)}
-                placeholder="All countries"
-                className="h-8 w-44 text-xs"
-              />
-              <datalist id="port-country-options">
-                {portCountryOptions.map((country) => (
-                  <option key={country} value={country} />
-                ))}
-              </datalist>
+              <div className="relative z-50">
+                <Input
+                  id="port-country-filter"
+                  value={portCountry}
+                  onChange={(e) => {
+                    setPortCountry(e.target.value);
+                    setPortCountrySuggestionsOpen(true);
+                  }}
+                  onFocus={() => setPortCountrySuggestionsOpen(true)}
+                  onBlur={() => setTimeout(() => setPortCountrySuggestionsOpen(false), 120)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setPortCountrySuggestionsOpen(false);
+                    if (e.key === 'Enter' && portCountrySuggestions[0]) {
+                      e.preventDefault();
+                      selectPortCountrySuggestion(portCountrySuggestions[0]);
+                    }
+                  }}
+                  placeholder="All countries"
+                  className="h-8 w-44 text-xs"
+                  autoComplete="off"
+                />
+                {portCountrySuggestionsOpen && portCountrySuggestions.length > 0 && (
+                  <div className="absolute left-0 top-full z-[100] mt-1 max-h-64 w-80 overflow-auto rounded-lg border border-border bg-background py-1 text-foreground shadow-2xl">
+                    {portCountrySuggestions.map((country) => (
+                      <button
+                        key={country}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          selectPortCountrySuggestion(country);
+                        }}
+                        className="block w-full px-3 py-2 text-left text-xs text-foreground hover:bg-muted/60"
+                      >
+                        {country}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               {portCountry && (
                 <button onClick={() => setPortCountry('')} className="text-xs text-primary hover:underline">
                   Clear
