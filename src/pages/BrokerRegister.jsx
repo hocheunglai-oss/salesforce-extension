@@ -84,6 +84,20 @@ const columnWidth = (values, min = 70, max = 260) => {
   const maxLength = values.reduce((width, value) => Math.max(width, widestLineLength(value)), 0);
   return Math.min(max, Math.max(min, Math.round(maxLength * 6.8 + 18)));
 };
+const quarterLabel = (dateValue) => {
+  const date = parseIsoDate(dateValue) || new Date();
+  const year = date.getFullYear();
+  const quarter = Math.floor(date.getMonth() / 3) + 1;
+  return `${year}_Q${quarter}`;
+};
+const cleanBrokerFilePart = (value) => {
+  const cleaned = textValue(value, '')
+    .replace(/^\*+\s*/, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+  return cleaned || 'BROKER';
+};
 
 export default function BrokerRegister() {
   const [rows, setRows] = useState([]);
@@ -143,6 +157,20 @@ export default function BrokerRegister() {
     const basisDate = toDate || fromDate || latestRowDate(filteredRows) || isoDate(new Date());
     return lastWorkingDayOfQuarter(basisDate);
   }, [filteredRows, fromDate, toDate]);
+
+  const exportFileName = useMemo(() => {
+    const basisDate = toDate || fromDate || latestRowDate(filteredRows) || isoDate(new Date());
+    const selectedCleanNames = selectedBrokerNames.map(cleanBrokerFilePart).filter(Boolean);
+    const filteredCleanNames = [...new Set(filteredRows.map(row => cleanBrokerFilePart(row.brokerName)).filter(Boolean))];
+    const brokerName = selectedCleanNames.length === 1
+      ? selectedCleanNames[0]
+      : filteredCleanNames.length === 1
+        ? filteredCleanNames[0]
+        : selectedCleanNames.length > 1
+          ? 'MULTIPLE_BROKERS'
+          : 'ALL_BROKERS';
+    return `COMM_${quarterLabel(basisDate)}_${brokerName}.xls`;
+  }, [filteredRows, fromDate, selectedBrokerNames, toDate]);
 
   useEffect(() => {
     if (!showCny) {
@@ -435,7 +463,7 @@ export default function BrokerRegister() {
         ${settingsWorksheet}
       </Workbook>`;
     const blob = new Blob([workbookXml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-    downloadBlob(blob, `brokers-commission-${new Date().toISOString().slice(0, 10)}.xls`);
+    downloadBlob(blob, exportFileName);
   };
 
   return (
