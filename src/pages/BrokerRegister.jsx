@@ -10,6 +10,7 @@ import PageHeader from '@/components/common/PageHeader';
 import TableShell from '@/components/common/TableShell';
 import StateBlock from '@/components/common/StateBlock';
 import { numericValue, textValue } from '@/lib/displayValue';
+import { readExchangeRateSettings } from '@/lib/exchangeRateSettings';
 
 const fmtMoney = (value) => {
   const number = numericValue(value);
@@ -30,14 +31,7 @@ const fmtDelay = (value) => {
   return number != null ? `${number.toLocaleString()} day${Math.abs(number) === 1 ? '' : 's'}` : '';
 };
 const csvValue = (value) => `"${textValue(value, '').replaceAll('"', '""')}"`;
-const EXCHANGE_RATE_SETTINGS_KEY = 'broker_commission_exchange_rate_v1';
 const ISO_FORMAT = 'yyyy-MM-dd';
-const RATE_PROVIDER_OPTIONS = [
-  { value: 'blended', label: 'Frankfurter blended rate' },
-  { value: 'ECB', label: 'European Central Bank reference rate' },
-  { value: 'HKMA', label: 'Hong Kong Monetary Authority published rate' },
-  { value: 'BOC', label: 'Bank of Canada indicative rate' },
-];
 const payableAmount = (row) => {
   const amount = Number(row.commissionAmount || 0);
   return amount > 0 ? amount : null;
@@ -45,14 +39,6 @@ const payableAmount = (row) => {
 const receivableAmount = (row) => {
   const amount = Number(row.commissionAmount || 0);
   return amount < 0 ? Math.abs(amount) : null;
-};
-const readExchangeRateSettings = () => {
-  try {
-    const saved = JSON.parse(localStorage.getItem(EXCHANGE_RATE_SETTINGS_KEY) || '{}');
-    return { provider: saved.provider || 'blended' };
-  } catch {
-    return { provider: 'blended' };
-  }
 };
 const isoDate = (date) => format(date, ISO_FORMAT);
 const parseIsoDate = (value) => {
@@ -82,7 +68,7 @@ export default function BrokerRegister() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [selectedStemId, setSelectedStemId] = useState(null);
-  const [exchangeRateProvider, setExchangeRateProvider] = useState(() => readExchangeRateSettings().provider);
+  const [exchangeRateProvider] = useState(() => readExchangeRateSettings().provider);
   const [exchangeRate, setExchangeRate] = useState(null);
   const [exchangeRateLoading, setExchangeRateLoading] = useState(false);
   const [exchangeRateError, setExchangeRateError] = useState(null);
@@ -128,10 +114,6 @@ export default function BrokerRegister() {
     const basisDate = toDate || fromDate || latestRowDate(filteredRows) || isoDate(new Date());
     return lastWorkingDayOfQuarter(basisDate);
   }, [filteredRows, fromDate, toDate]);
-
-  useEffect(() => {
-    localStorage.setItem(EXCHANGE_RATE_SETTINGS_KEY, JSON.stringify({ provider: exchangeRateProvider }));
-  }, [exchangeRateProvider]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,20 +188,8 @@ export default function BrokerRegister() {
         <div><div className="text-xs text-muted-foreground uppercase tracking-wide">Commission Total</div><div className="text-xl font-bold">{fmtMoney(total)}</div></div>
         <div className="min-w-72 flex-1">
           <div className="text-xs text-muted-foreground uppercase tracking-wide">USD/CNY Exchange Rate</div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <select
-              value={exchangeRateProvider}
-              onChange={(event) => setExchangeRateProvider(event.target.value)}
-              className="h-8 rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            >
-              {RATE_PROVIDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-            <span className="text-xs text-muted-foreground">
-              Frankfurter API · USD/CNY · no API key
-            </span>
-          </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            Date rule: last working day of the selected quarter.
+            Frankfurter API · USD/CNY · provider configured in Settings · last working day of selected quarter.
             {exchangeRateLoading && ' Loading rate...'}
             {exchangeRateError && <span className="text-destructive"> {exchangeRateError}</span>}
             {exchangeRate && !exchangeRateLoading && (

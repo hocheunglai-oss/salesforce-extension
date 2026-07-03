@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { appClient } from '@/api/appClient';
-import { Settings, Search, Loader2, Check, Mail } from 'lucide-react';
+import { Settings, Search, Loader2, Check, Mail, CircleDollarSign } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import ObjectSchemaTree from '@/components/settings/ObjectSchemaTree';
 import PageHeader from '@/components/common/PageHeader';
 import { readSmtpSettings, saveSmtpSettings } from '@/lib/smtpSettings';
+import { RATE_PROVIDER_OPTIONS, readExchangeRateSettings, saveExchangeRateSettings } from '@/lib/exchangeRateSettings';
 
 const SETTINGS_KEY = 'report_builder_config';
 
@@ -34,6 +35,7 @@ export default function SettingsPage() {
   const [rbFields, setRbFields] = useState([]);
   const [rbFieldsLoading, setRbFieldsLoading] = useState(false);
   const [smtpSettings, setSmtpSettings] = useState(readSmtpSettings);
+  const [exchangeRateSettings, setExchangeRateSettings] = useState(readExchangeRateSettings);
 
   // Load schema + settings from DB in parallel
   useEffect(() => {
@@ -72,6 +74,7 @@ export default function SettingsPage() {
       defaultLimit: Number(defaultLimit),
     };
     saveSmtpSettings(smtpSettings);
+    saveExchangeRateSettings(exchangeRateSettings);
     if (settingsRecord) {
       await appClient.entities.AppSettings.update(settingsRecord.id, { key: SETTINGS_KEY, value });
     } else {
@@ -222,6 +225,44 @@ export default function SettingsPage() {
               onChange={(event) => setSmtpSettings((prev) => ({ ...prev, password: event.target.value }))}
               placeholder="Saved when you click Save All Settings"
             />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Exchange Rate API ── */}
+      <div className="bg-card rounded-xl border border-border p-5 mb-6">
+        <div className="mb-4 flex items-start gap-3">
+          <div className="mt-0.5 rounded-lg bg-muted p-2 text-muted-foreground">
+            <CircleDollarSign className="h-4 w-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Exchange Rate API</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Used by Broker's Commission to convert USD payable and receivable summaries into CNY.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">USD/CNY Rate Source</Label>
+            <Select
+              value={exchangeRateSettings.provider}
+              onValueChange={(provider) => setExchangeRateSettings((prev) => ({ ...prev, provider }))}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {RATE_PROVIDER_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="rounded-lg border border-border bg-background/50 p-3 text-xs text-muted-foreground">
+            <div><span className="font-semibold text-foreground">API:</span> Frankfurter</div>
+            <div><span className="font-semibold text-foreground">Endpoint:</span> /v2/rate/USD/CNY</div>
+            <div><span className="font-semibold text-foreground">Date rule:</span> last working day of selected quarter</div>
+            <div><span className="font-semibold text-foreground">Auth:</span> no API key</div>
           </div>
         </div>
       </div>
