@@ -316,6 +316,18 @@ export default function BrokerRegister() {
           <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
         </Borders>
       </Style>
+      <Style ss:ID="SummaryCurrency">
+        <Alignment ss:Horizontal="Left" ss:Vertical="Top"/>
+        <Font ss:FontName="Arial" ss:Size="10" ss:Bold="1" ss:Color="#065F46"/>
+        <Interior ss:Color="#ECFDF5" ss:Pattern="Solid"/>
+        <NumberFormat ss:Format="&quot;$&quot;#,##0.00"/>
+        <Borders>
+          <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+          <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+          <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+          <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+        </Borders>
+      </Style>
       <Style ss:ID="Currency">
         <Alignment ss:Horizontal="Right" ss:Vertical="Top"/>
         <NumberFormat ss:Format="&quot;$&quot;#,##0.00"/>
@@ -336,8 +348,32 @@ export default function BrokerRegister() {
           <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
         </Borders>
       </Style>
+      <Style ss:ID="SummaryCny">
+        <Alignment ss:Horizontal="Left" ss:Vertical="Top"/>
+        <Font ss:FontName="Arial" ss:Size="10" ss:Bold="1" ss:Color="#065F46"/>
+        <Interior ss:Color="#ECFDF5" ss:Pattern="Solid"/>
+        <NumberFormat ss:Format="&quot;CNY &quot;#,##0.00"/>
+        <Borders>
+          <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+          <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+          <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+          <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+        </Borders>
+      </Style>
       <Style ss:ID="Rate">
         <Alignment ss:Horizontal="Right" ss:Vertical="Top"/>
+        <NumberFormat ss:Format="#,##0.000000"/>
+        <Borders>
+          <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+          <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+          <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+          <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
+        </Borders>
+      </Style>
+      <Style ss:ID="SummaryRate">
+        <Alignment ss:Horizontal="Left" ss:Vertical="Top"/>
+        <Font ss:FontName="Arial" ss:Size="10" ss:Bold="1" ss:Color="#065F46"/>
+        <Interior ss:Color="#ECFDF5" ss:Pattern="Solid"/>
         <NumberFormat ss:Format="#,##0.000000"/>
         <Borders>
           <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
@@ -403,13 +439,13 @@ export default function BrokerRegister() {
       workbookRow([workbookCell('Applied Filters', 'Section', detailMergeAcross)]),
       ...filterSummaryRows.map(([label, value]) => workbookRow([workbookCell(label, 'Label'), workbookCell(value, 'Text', labelValueMergeAcross)])),
       workbookRow([workbookCell('Summary', 'Section', detailMergeAcross)]),
-      workbookRow([workbookCell('Commission Payable', 'SummaryLabel'), workbookCurrencyCell(commissionPayableTotal, 'Currency', labelValueMergeAcross)]),
-      workbookRow([workbookCell('Commission Receivable', 'SummaryLabel'), workbookCurrencyCell(commissionReceivableTotal, 'Currency', labelValueMergeAcross)]),
-      workbookRow([workbookCell('Net Commission Total', 'SummaryLabel'), workbookCurrencyCell(total, 'Currency', labelValueMergeAcross)]),
+      workbookRow([workbookCell('Commission Payable', 'SummaryLabel'), workbookCurrencyCell(commissionPayableTotal, 'SummaryCurrency', labelValueMergeAcross)]),
+      workbookRow([workbookCell('Commission Receivable', 'SummaryLabel'), workbookCurrencyCell(commissionReceivableTotal, 'SummaryCurrency', labelValueMergeAcross)]),
+      workbookRow([workbookCell('Net Commission Total', 'SummaryLabel'), workbookCurrencyCell(total, 'SummaryCurrency', labelValueMergeAcross)]),
       ...(showCny ? [
-        workbookRow([workbookCell('Commission Payable in CNY', 'SummaryLabel'), workbookCurrencyCell(bankBuyRate != null ? commissionPayableTotal * bankBuyRate : null, 'Cny', labelValueMergeAcross)]),
-        workbookRow([workbookCell('Commission Receivable in CNY', 'SummaryLabel'), workbookCurrencyCell(bankBuyRate != null ? commissionReceivableTotal * bankBuyRate : null, 'Cny', labelValueMergeAcross)]),
-        workbookRow([workbookCell('Bank Buy Rate', 'SummaryLabel'), workbookNumberCell(bankBuyRate, 'Rate', labelValueMergeAcross)]),
+        workbookRow([workbookCell('Commission Payable in CNY', 'SummaryLabel'), workbookCurrencyCell(bankBuyRate != null ? commissionPayableTotal * bankBuyRate : null, 'SummaryCny', labelValueMergeAcross)]),
+        workbookRow([workbookCell('Commission Receivable in CNY', 'SummaryLabel'), workbookCurrencyCell(bankBuyRate != null ? commissionReceivableTotal * bankBuyRate : null, 'SummaryCny', labelValueMergeAcross)]),
+        workbookRow([workbookCell('Bank Buy Rate', 'SummaryLabel'), workbookNumberCell(bankBuyRate, 'SummaryRate', labelValueMergeAcross)]),
         workbookRow([workbookCell('Exchange Rate', 'SummaryLabel'), workbookCell(exchangeRateSummary, 'SummaryText', labelValueMergeAcross)]),
       ] : []),
       workbookRow([workbookCell('Broker Commission Rows', 'Section', detailMergeAcross)]),
@@ -453,12 +489,6 @@ export default function BrokerRegister() {
             ${workbookColumns(brokerColumnValues.map((values, index) => columnWidth(values, detailColumns[index].minWidth, detailColumns[index].maxWidth)))}
             ${brokerRows.join('')}
           </Table>
-          <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
-            <FreezePanes/>
-            <FrozenNoSplit/>
-            <SplitHorizontal>10</SplitHorizontal>
-            <TopRowBottomPane>10</TopRowBottomPane>
-          </WorksheetOptions>
         </Worksheet>
         ${settingsWorksheet}
       </Workbook>`;
