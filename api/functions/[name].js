@@ -359,6 +359,88 @@ function daysBetween(fromDate, toDate) {
   return Math.round((to - from) / 86400000);
 }
 
+const FRANKFURTER_PROVIDER_DETAILS = {
+  blended: {
+    key: 'blended',
+    label: 'Frankfurter blended rate',
+    rateType: 'blended provider rate',
+  },
+  ECB: {
+    key: 'ECB',
+    label: 'European Central Bank',
+    rateType: 'reference rate',
+  },
+  HKMA: {
+    key: 'HKMA',
+    label: 'Hong Kong Monetary Authority',
+    rateType: 'published rate',
+  },
+  BOC: {
+    key: 'BOC',
+    label: 'Bank of Canada',
+    rateType: 'indicative rate',
+  },
+};
+
+function normalizeFrankfurterProvider(provider) {
+  const key = String(provider || 'blended').trim().toUpperCase();
+  if (!key || key === 'BLENDED' || key === 'DEFAULT') return 'blended';
+  return FRANKFURTER_PROVIDER_DETAILS[key] ? key : 'blended';
+}
+
+function previousIsoDate(dateString) {
+  const date = new Date(`${dateString}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return dateOnly(date);
+}
+
+async function fetchFrankfurterRate(date, provider) {
+  const url = new URL('https://api.frankfurter.dev/v2/rate/USD/CNY');
+  url.searchParams.set('date', date);
+  if (provider !== 'blended') url.searchParams.set('providers', provider);
+  const response = await fetch(url);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.message || `Frankfurter request failed: ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+async function frankfurterUsdCnyRate(body) {
+  const provider = normalizeFrankfurterProvider(body.provider);
+  const requestedDate = dateOnly(body.date || new Date());
+  if (!requestedDate) throw new Error('Valid date required');
+
+  const today = dateOnly(new Date());
+  let probeDate = requestedDate > today ? today : requestedDate;
+  let lastError = null;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    try {
+      const rate = await fetchFrankfurterRate(probeDate, provider);
+      const providerDetails = FRANKFURTER_PROVIDER_DETAILS[provider];
+      return {
+        source: 'Frankfurter API',
+        apiUrl: 'https://api.frankfurter.dev/v2/rate/USD/CNY',
+        requestedDate,
+        date: rate.date,
+        base: rate.base,
+        quote: rate.quote,
+        rate: rate.rate,
+        provider,
+        providerLabel: providerDetails.label,
+        rateType: providerDetails.rateType,
+      };
+    } catch (error) {
+      lastError = error;
+      if (error.status && ![404, 422].includes(error.status)) break;
+      probeDate = previousIsoDate(probeDate);
+    }
+  }
+  throw new Error(lastError?.message || 'Unable to fetch USD/CNY exchange rate');
+}
+
 function earliestDate(values) {
   return values.filter(Boolean).sort()[0] || null;
 }
@@ -2084,6 +2166,7 @@ const handlers = {
   outstandingBuyerInvoicesEmailReport,
   salesforceDisputeStems,
   stemPnl: stemPnlFull,
+  frankfurterUsdCnyRate,
 };
 
 export default async function handler(req, res) {

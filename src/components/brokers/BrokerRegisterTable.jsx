@@ -11,6 +11,10 @@ const fmtMoney = (value) => {
   const number = numericValue(value);
   return `$${Number(number || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
+const fmtCny = (value) => {
+  const number = numericValue(value);
+  return `CNY ${Number(number || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
 const fmtUnit = (value) => {
   if (typeof value === 'string') return value;
   const number = numericValue(value);
@@ -65,9 +69,15 @@ function CommissionUnitCell({ row }) {
   );
 }
 
-export default function BrokerRegisterTable({ rows, onRowClick }) {
+export default function BrokerRegisterTable({ rows, onRowClick, exchangeRate, exchangeRateLoading, exchangeRateError }) {
   const payableTotal = rows.reduce((sum, row) => sum + Number(payableAmount(row) || 0), 0);
   const receivableTotal = rows.reduce((sum, row) => sum + Number(receivableAmount(row) || 0), 0);
+  const exchangeRateValue = numericValue(exchangeRate?.rate);
+  const exchangeRateLabel = exchangeRate
+    ? `USD/CNY ${Number(exchangeRateValue || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} · ${fmtDate(exchangeRate.date)} · ${exchangeRate.providerLabel} · ${exchangeRate.rateType}`
+    : exchangeRateError
+      ? `USD/CNY conversion unavailable: ${exchangeRateError}`
+      : 'USD/CNY rate loading';
 
   return (
     <div className="overflow-hidden">
@@ -110,6 +120,21 @@ export default function BrokerRegisterTable({ rows, onRowClick }) {
                 <td colSpan="6" className="py-3 px-4 text-right text-foreground">Summary</td>
                 <td className="py-3 px-4 text-right text-foreground whitespace-nowrap">{fmtMoney(payableTotal)}</td>
                 <td className="py-3 px-4 text-right text-foreground whitespace-nowrap">{fmtMoney(receivableTotal)}</td>
+                <td colSpan="2" className="py-3 px-4" />
+              </tr>
+              <tr className="border-t border-border bg-muted/30">
+                <td colSpan="6" className="py-3 px-4 text-right text-foreground">
+                  <div className="font-semibold">Summary in CNY</div>
+                  <div className="text-xs font-normal text-muted-foreground">
+                    {exchangeRateLoading ? 'Loading USD/CNY exchange rate...' : exchangeRateLabel}
+                  </div>
+                </td>
+                <td className="py-3 px-4 text-right font-semibold text-foreground whitespace-nowrap">
+                  {exchangeRateValue != null ? fmtCny(payableTotal * exchangeRateValue) : '—'}
+                </td>
+                <td className="py-3 px-4 text-right font-semibold text-foreground whitespace-nowrap">
+                  {exchangeRateValue != null ? fmtCny(receivableTotal * exchangeRateValue) : '—'}
+                </td>
                 <td colSpan="2" className="py-3 px-4" />
               </tr>
             </tfoot>
