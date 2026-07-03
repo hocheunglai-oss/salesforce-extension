@@ -338,6 +338,20 @@ function addDays(dateString, days) {
   return dateOnly(date);
 }
 
+function paymentTermDays(value) {
+  const match = String(value ?? '').match(/-?\d+(\.\d+)?/);
+  if (!match) return null;
+  const days = Number(match[0]);
+  return Number.isFinite(days) ? Math.trunc(days) : null;
+}
+
+function calculatedBuyerPayTermDate(stem) {
+  const basisDate = stem.Delivery_Date__c || stem.Delivery_Date_Or_Expected__c || stem.Expected_Delivery_Date__c;
+  const days = paymentTermDays(stem.Payment_Term__c);
+  if (!basisDate || days == null) return null;
+  return addDays(basisDate, days);
+}
+
 function daysBetween(fromDate, toDate) {
   const from = new Date(`${fromDate}T00:00:00.000Z`);
   const to = new Date(`${toDate}T00:00:00.000Z`);
@@ -1717,6 +1731,9 @@ async function salesforceStemDetailFull(body) {
       ? calculatedUndatedBuyerInvoice
       : recordRaw.Total_Invoice_Amount__c,
     _Supplier_Invoice_Amount: calculatedSupplierInvoice,
+    _Buyer_Pay_Term_Date: calculatedBuyerPayTermDate(recordRaw)
+      || recordRaw.Invoice_Due_Date__c
+      || recordRaw.Buyer_Pay_Term_Date__c,
     _Buyer_Name: recordRaw.Buyer_Name__c || accountName || recordRaw.Buyer__c || null,
     _Vessel_Name: vesselName,
     _Port_Name: portName,

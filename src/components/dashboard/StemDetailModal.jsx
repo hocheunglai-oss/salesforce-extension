@@ -63,7 +63,7 @@ const SECTIONS = [
       { key: 'Delivery_Date__c', label: 'Delivery Date', fmt: fmtDate },
       { key: 'Expected_Delivery_Date__c', label: 'Expected Delivery', fmt: fmtDate },
       { key: 'Due_Date__c', label: 'Due Date', fmt: fmtDate },
-      { key: 'Buyer_Pay_Term_Date__c', label: 'Buyer Pay Term Date', fmt: fmtDate },
+      { key: '_Buyer_Pay_Term_Date', label: 'Buyer Pay Term Date', fmt: fmtDate },
       { key: 'Payment_Date__c', label: 'Payment Date', fmt: fmtDate },
       { key: 'Original_Invoice_Sent_Date__c', label: 'Invoice Sent Date', fmt: fmtDate },
       { key: 'Original_BDN_Sent_Date__c', label: 'BDN Sent Date', fmt: fmtDate },
