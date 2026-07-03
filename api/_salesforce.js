@@ -93,6 +93,30 @@ export async function sfRequest(path, { method = 'GET', body, retryOnExpiredSess
   return data;
 }
 
+export async function sfDownload(path, { retryOnExpiredSession = true } = {}) {
+  const accessToken = await getAccessToken();
+  const url = `${getInstanceUrl()}/services/data/${getApiVersion()}${path}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (retryOnExpiredSession && res.status === 401) {
+    cachedToken = null;
+    cachedTokenExpiresAt = 0;
+    return sfDownload(path, { retryOnExpiredSession: false });
+  }
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || data[0]?.message || `GET ${path} failed`);
+  }
+
+  return {
+    contentType: res.headers.get('content-type') || 'application/octet-stream',
+    buffer: Buffer.from(await res.arrayBuffer()),
+  };
+}
+
 export async function sfQuery(soql, { clean = false, limit = 2000, softFail = false } = {}) {
   try {
     let data = await sfRequest(`/query/?q=${encodeURIComponent(soql)}`);

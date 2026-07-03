@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { appClient } from '@/api/appClient';
-import { Settings, Search, Loader2, Check, Mail, CircleDollarSign } from 'lucide-react';
+import { Settings, Search, Loader2, Check, Mail, CircleDollarSign, FileText } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -9,6 +9,7 @@ import ObjectSchemaTree from '@/components/settings/ObjectSchemaTree';
 import PageHeader from '@/components/common/PageHeader';
 import { readSmtpSettings, saveSmtpSettings } from '@/lib/smtpSettings';
 import { RATE_PROVIDER_OPTIONS, readExchangeRateSettings, saveExchangeRateSettings } from '@/lib/exchangeRateSettings';
+import { DOCUMENT_SOURCE_GROUPS, readDocumentSettings, saveDocumentSettings } from '@/lib/documentSettings';
 
 const SETTINGS_KEY = 'report_builder_config';
 
@@ -36,6 +37,7 @@ export default function SettingsPage() {
   const [rbFieldsLoading, setRbFieldsLoading] = useState(false);
   const [smtpSettings, setSmtpSettings] = useState(readSmtpSettings);
   const [exchangeRateSettings, setExchangeRateSettings] = useState(readExchangeRateSettings);
+  const [documentSettings, setDocumentSettings] = useState(readDocumentSettings);
 
   // Load schema + settings from DB in parallel
   useEffect(() => {
@@ -75,6 +77,7 @@ export default function SettingsPage() {
     };
     saveSmtpSettings(smtpSettings);
     saveExchangeRateSettings(exchangeRateSettings);
+    saveDocumentSettings(documentSettings);
     if (settingsRecord) {
       await appClient.entities.AppSettings.update(settingsRecord.id, { key: SETTINGS_KEY, value });
     } else {
@@ -92,6 +95,15 @@ export default function SettingsPage() {
 
   const enabledCount = Object.values(allowedMap).filter(v => v !== false).length +
     allObjects.filter(o => allowedMap[o.name] === undefined).length; // default true
+
+  const toggleDocumentSourceGroup = (group) => {
+    setDocumentSettings((prev) => {
+      const current = new Set(prev.relevantSourceGroups || []);
+      if (current.has(group)) current.delete(group);
+      else current.add(group);
+      return { ...prev, relevantSourceGroups: [...current] };
+    });
+  };
 
   return (
     <div className="p-6 lg:p-8 max-w-4xl mx-auto">
@@ -265,6 +277,46 @@ export default function SettingsPage() {
             <div><span className="font-semibold text-foreground">Date rule:</span> latest available rate on or before quarter end</div>
             <div><span className="font-semibold text-foreground">Auth:</span> no API key</div>
           </div>
+        </div>
+      </div>
+
+      {/* ── STEM Documents ── */}
+      <div className="bg-card rounded-xl border border-border p-5 mb-6">
+        <div className="mb-4 flex items-start gap-3">
+          <div className="mt-0.5 rounded-lg bg-muted p-2 text-muted-foreground">
+            <FileText className="h-4 w-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">STEM Documents</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Choose which discovered Salesforce document sources are relevant. Stem Detail will use this list when browsing documents.
+            </p>
+          </div>
+        </div>
+
+        <label className="mb-4 flex items-center gap-2 text-sm font-medium text-foreground">
+          <input
+            type="checkbox"
+            checked={documentSettings.showOnlyRelevant}
+            onChange={(event) => setDocumentSettings((prev) => ({ ...prev, showOnlyRelevant: event.target.checked }))}
+          />
+          Show only relevant document sources by default
+        </label>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          {DOCUMENT_SOURCE_GROUPS.map((group) => {
+            const checked = documentSettings.relevantSourceGroups?.includes(group);
+            return (
+              <label key={group} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/50 px-3 py-2 text-sm">
+                <span className="font-medium text-foreground">{group}</span>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleDocumentSourceGroup(group)}
+                />
+              </label>
+            );
+          })}
         </div>
       </div>
 

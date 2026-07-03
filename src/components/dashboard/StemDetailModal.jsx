@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { appClient } from '@/api/appClient';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { format } from 'date-fns';
-import { Loader2, AlertCircle, ExternalLink } from 'lucide-react';
+import { Loader2, AlertCircle, ExternalLink, FileText, Download, Settings } from 'lucide-react';
 import { numericValue, textValue } from '@/lib/displayValue';
+import { readDocumentSettings } from '@/lib/documentSettings';
 
 const SF_BASE = "https://fratellicosulich.my.salesforce.com";
 
@@ -20,6 +21,13 @@ const fmtBool = (v) => v === true ? 'Yes' : v === false ? 'No' : '—';
 const fmtQuantity = (v, unit = 'MT') => {
   const number = numericValue(v);
   return number != null ? `${number.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}` : '—';
+};
+const fmtBytes = (value) => {
+  const bytes = Number(value || 0);
+  if (!bytes) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 const lineItemQuantityLabel = (li) => {
   const unit = li._Financial_Quantity_Unit || 'MT';
@@ -112,6 +120,147 @@ function SectionHeader({ title }) {
     <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 pb-1.5 border-b border-border">
       {title}
     </h3>
+  );
+}
+
+function DocumentsSection({
+  documents,
+  groups,
+  loading,
+  error,
+  settings,
+  showAll,
+  setShowAll,
+}) {
+  const relevantGroups = new Set(settings.relevantSourceGroups || []);
+  const visibleDocuments = settings.showOnlyRelevant && !showAll
+    ? documents.filter((document) => relevantGroups.has(document.sourceGroup))
+    : documents;
+  const groupedDocuments = visibleDocuments.reduce((acc, document) => {
+    const group = document.sourceGroup || 'Other Related';
+    if (!acc[group]) acc[group] = [];
+    acc[group].push(document);
+    return acc;
+  }, {});
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <SectionHeader title={`Documents (${visibleDocuments.length}${documents.length !== visibleDocuments.length ? ` of ${documents.length}` : ''})`} />
+        <div className="flex items-center gap-2">
+          {settings.showOnlyRelevant && documents.length !== visibleDocuments.length && (
+            <button
+              type="button"
+              onClick={() => setShowAll(!showAll)}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              {showAll ? 'Show relevant only' : 'Show all discovered'}
+            </button>
+          )}
+          <a
+            href="/settings"
+            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary"
+          >
+            <Settings className="h-3 w-3" /> Sources
+          </a>
+        </div>
+      </div>
+
+      {loading && (
+        <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/20 px-4 py-5 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Discovering Salesforce documents…
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="flex gap-2 rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+        </div>
+      )}
+
+      {!loading && !error && documents.length === 0 && (
+        <div className="rounded-xl border border-border bg-muted/20 px-4 py-5 text-sm text-muted-foreground">
+          No Salesforce files or legacy attachments were found for this STEM or its related records.
+        </div>
+      )}
+
+      {!loading && !error && documents.length > 0 && visibleDocuments.length === 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-5 text-sm text-amber-700">
+          Documents were found, but none match the relevant source groups selected in Settings.
+        </div>
+      )}
+
+      {!loading && !error && visibleDocuments.length > 0 && (
+        <div className="space-y-3">
+          {groups.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {groups.map((group) => {
+                const isRelevant = relevantGroups.has(group.sourceGroup);
+                return (
+                  <span
+                    key={group.sourceGroup}
+                    className={`rounded-md border px-2 py-1 text-[11px] font-medium ${
+                      isRelevant
+                        ? 'border-primary/30 bg-primary/10 text-primary'
+                        : 'border-border bg-muted/40 text-muted-foreground'
+                    }`}
+                  >
+                    {group.sourceGroup}: {group.count}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {Object.entries(groupedDocuments).map(([group, docs]) => (
+            <div key={group} className="overflow-hidden rounded-xl border border-border">
+              <div className="border-b border-border bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {group} ({docs.length})
+              </div>
+              <div className="divide-y divide-border/60">
+                {docs.map((document) => (
+                  <div key={document.key} className="flex flex-wrap items-center gap-3 px-3 py-2.5 text-xs hover:bg-muted/20">
+                    <div className="flex min-w-0 flex-1 items-start gap-2">
+                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-foreground" title={document.fileName || document.title}>
+                          {document.fileName || document.title}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                          <span>{document.sourceLabel || document.sourceObject || group}</span>
+                          <span>{document.fileType || document.fileExtension || 'File'}</span>
+                          <span>{fmtBytes(document.contentSize)}</span>
+                          {document.createdDate && <span>{fmtDate(document.createdDate)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <a
+                        href={document.downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-muted-foreground hover:border-primary/40 hover:text-primary"
+                      >
+                        <Download className="h-3 w-3" /> Open
+                      </a>
+                      {document.salesforceUrl && (
+                        <a
+                          href={document.salesforceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-muted-foreground hover:border-primary/40 hover:text-primary"
+                        >
+                          <ExternalLink className="h-3 w-3" /> Salesforce
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -216,6 +365,12 @@ export default function StemDetailModal({ stemId, open, onClose }) {
   const [lineItems, setLineItems] = useState([]);
   const [extraCosts, setExtraCosts] = useState([]);
   const [buyerBrokers, setBuyerBrokers] = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [documentGroups, setDocumentGroups] = useState([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsError, setDocumentsError] = useState(null);
+  const [documentSettings, setDocumentSettings] = useState(readDocumentSettings);
+  const [showAllDocuments, setShowAllDocuments] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -225,6 +380,12 @@ export default function StemDetailModal({ stemId, open, onClose }) {
     setLineItems([]);
     setExtraCosts([]);
     setBuyerBrokers([]);
+    setDocuments([]);
+    setDocumentGroups([]);
+    setDocumentsError(null);
+    setDocumentsLoading(true);
+    setDocumentSettings(readDocumentSettings());
+    setShowAllDocuments(false);
     setError(null);
     setLoading(true);
     appClient.functions.invoke('salesforceStemDetail', { stemId }).then(res => {
@@ -236,6 +397,14 @@ export default function StemDetailModal({ stemId, open, onClose }) {
         setBuyerBrokers(res.data.buyerBrokers || []);
       }
       setLoading(false);
+    });
+    appClient.functions.invoke('salesforceStemDocuments', { stemId }).then(res => {
+      if (res.data?.error) setDocumentsError(res.data.error);
+      else {
+        setDocuments(res.data?.documents || []);
+        setDocumentGroups(res.data?.groups || []);
+      }
+      setDocumentsLoading(false);
     });
   }, [open, stemId]);
 
@@ -357,6 +526,16 @@ export default function StemDetailModal({ stemId, open, onClose }) {
                     );
                   })}
                 </div>
+
+                <DocumentsSection
+                  documents={documents}
+                  groups={documentGroups}
+                  loading={documentsLoading}
+                  error={documentsError}
+                  settings={documentSettings}
+                  showAll={showAllDocuments}
+                  setShowAll={setShowAllDocuments}
+                />
 
                 {/* Line Items */}
                 {lineItems.length > 0 && (

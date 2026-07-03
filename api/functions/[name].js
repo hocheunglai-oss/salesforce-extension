@@ -1,4 +1,4 @@
-import { chunkIds, cleanRecord, sendJson, sfQuery, sfRequest } from '../_salesforce.js';
+import { chunkIds, cleanRecord, getInstanceUrl, sendJson, sfDownload, sfQuery, sfRequest } from '../_salesforce.js';
 
 async function readBody(req) {
   if (req.method === 'GET') return {};
@@ -649,6 +649,338 @@ async function resolveViaQuery(objectType, id, nameField = 'Name') {
   } catch {
     return null;
   }
+}
+
+const DOCUMENT_SOURCE_GROUPS = [
+  'Direct STEM',
+  'Buyer / Factoring Invoice',
+  'Supplier Invoice',
+  'Nomination',
+  'Dispute / Support',
+  'Line Item',
+  'Extra Cost',
+  'Broker',
+  'Email',
+  'Other Related',
+];
+
+const SALESFORCE_ID_RE = /^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$/;
+
+function isSalesforceId(value) {
+  return typeof value === 'string' && SALESFORCE_ID_RE.test(value);
+}
+
+function cleanDownloadFilename(value, fallback = 'salesforce-document') {
+  return String(value || fallback)
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180) || fallback;
+}
+
+function inferStemFieldSourceGroup(fieldName) {
+  const lower = String(fieldName || '').toLowerCase();
+  if (lower.includes('supplier') && lower.includes('invoice')) return 'Supplier Invoice';
+  if (lower.includes('invoice') || lower.includes('factoring')) return 'Buyer / Factoring Invoice';
+  if (lower.includes('nomination')) return 'Nomination';
+  if (lower.includes('dispute')) return 'Dispute / Support';
+  if (lower.includes('email') || lower.includes('mail')) return 'Email';
+  return null;
+}
+
+function addRelatedRecord(records, seen, { id, sourceGroup, sourceLabel, sourceObject, name }) {
+  if (!isSalesforceId(id) || seen.has(id)) return;
+  seen.add(id);
+  records.push({
+    id,
+    sourceGroup: DOCUMENT_SOURCE_GROUPS.includes(sourceGroup) ? sourceGroup : 'Other Related',
+    sourceLabel: sourceLabel || sourceGroup || 'Related Record',
+    sourceObject: sourceObject || null,
+    name: name || sourceLabel || id,
+  });
+}
+
+async function resolveStemId(stemId) {
+  if (!stemId) throw new Error('stemId required');
+  if (isSalesforceId(stemId)) return stemId;
+  const lookup = await queryRows(`SELECT Id FROM stem__c WHERE KeyStem__c = '${escapeSoql(stemId)}' LIMIT 1`, { softFail: true });
+  if (!lookup.length) throw new Error(`STEM with KeyStem__c '${stemId}' not found`);
+  return lookup[0].Id;
+}
+
+async function namesByIds(objectName, ids) {
+  const uniqueIds = [...new Set(ids.filter(isSalesforceId))];
+  const names = {};
+  if (!uniqueIds.length) return names;
+  for (const chunk of chunkIds(uniqueIds)) {
+    const inList = chunk.map((id) => `'${id}'`).join(',');
+    const rows = await queryRows(`SELECT Id, Name FROM ${objectName} WHERE Id IN (${inList}) LIMIT 200`, { limit: 200, softFail: true });
+    for (const row of rows) names[row.Id] = row.Name || row.Id;
+  }
+  return names;
+}
+
+async function recordsLinkedToStemByLookup(objectName, stemId, sourceGroup, sourceLabel) {
+  let describe;
+  try {
+    describe = await salesforceObjectFields({ objectName });
+  } catch {
+    return [];
+  }
+  const fields = describe.fields || [];
+  const nameField = fields.some((field) => field.name === 'Name') ? 'Name' : null;
+  const lookupFields = fields.filter((field) => {
+    const referenceTargets = (field.referenceTo || []).map((target) => String(target).toLowerCase());
+    return field.type === 'reference'
+      && (
+        referenceTargets.includes('stem__c')
+        || field.name.toLowerCase() === 'stem__c'
+        || String(field.relationshipName || '').toLowerCase() === 'stem__r'
+      );
+  });
+  const records = [];
+  const seen = new Set();
+  for (const field of lookupFields) {
+    const selectFields = ['Id', nameField].filter(Boolean).join(', ');
+    const rows = await queryRows(`SELECT ${selectFields} FROM ${objectName} WHERE ${field.name} = '${stemId}' LIMIT 200`, { limit: 200, softFail: true });
+    for (const row of rows) {
+      addRelatedRecord(records, seen, {
+        id: row.Id,
+        sourceGroup,
+        sourceLabel,
+        sourceObject: objectName,
+        name: row.Name || sourceLabel,
+      });
+    }
+  }
+  return records;
+}
+
+function buildContentVersionFilename(document, version) {
+  const title = version?.Title || document?.Title || 'Salesforce File';
+  const extension = version?.FileExtension || '';
+  if (!extension || title.toLowerCase().endsWith(`.${extension.toLowerCase()}`)) return cleanDownloadFilename(title);
+  return cleanDownloadFilename(`${title}.${extension}`);
+}
+
+async function salesforceStemDocuments(body = {}) {
+  const actualStemId = await resolveStemId(body.stemId);
+  const record = await sfRequest(`/sobjects/stem__c/${actualStemId}`).then(cleanRecord);
+  const relatedRecords = [];
+  const seenRecordIds = new Set();
+
+  addRelatedRecord(relatedRecords, seenRecordIds, {
+    id: actualStemId,
+    sourceGroup: 'Direct STEM',
+    sourceLabel: 'STEM',
+    sourceObject: 'stem__c',
+    name: record.Name || record.KeyStem__c || actualStemId,
+  });
+
+  for (const [fieldName, value] of Object.entries(record || {})) {
+    const sourceGroup = inferStemFieldSourceGroup(fieldName);
+    if (!sourceGroup || !isSalesforceId(value)) continue;
+    addRelatedRecord(relatedRecords, seenRecordIds, {
+      id: value,
+      sourceGroup,
+      sourceLabel: fieldName.replace(/__c$/i, '').replace(/_/g, ' '),
+      sourceObject: null,
+      name: fieldName,
+    });
+  }
+
+  const [lineItems, extraCosts, buyerBrokers] = await Promise.all([
+    queryRows(`SELECT Id, Name, Supplier_Invoice__c, Supplier_Name__c, Product__r.Name FROM STEM_Line_Item__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC LIMIT 500`, { limit: 500, softFail: true }),
+    queryRows(`SELECT Id, Name, Supplier_Invoice__c, Supplier_Name__c, Description__c FROM STEM_Extra_Cost__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC LIMIT 500`, { limit: 500, softFail: true }),
+    queryRows(`SELECT Id, Refcode_Index__c, Buyer_Broker__c FROM STEM_Buyer_Broker__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC LIMIT 500`, { limit: 500, softFail: true }),
+  ]);
+
+  const supplierInvoiceIds = [
+    ...lineItems.map((row) => row.Supplier_Invoice__c),
+    ...extraCosts.map((row) => row.Supplier_Invoice__c),
+  ].filter(isSalesforceId);
+  const supplierInvoiceNames = await namesByIds('Supplier_Invoice__c', supplierInvoiceIds);
+
+  for (const item of lineItems) {
+    addRelatedRecord(relatedRecords, seenRecordIds, {
+      id: item.Id,
+      sourceGroup: 'Line Item',
+      sourceLabel: item['Product__r']?.Name || item.Name || 'Line Item',
+      sourceObject: 'STEM_Line_Item__c',
+      name: item.Name || item['Product__r']?.Name,
+    });
+    if (item.Supplier_Invoice__c) {
+      addRelatedRecord(relatedRecords, seenRecordIds, {
+        id: item.Supplier_Invoice__c,
+        sourceGroup: 'Supplier Invoice',
+        sourceLabel: item.Supplier_Name__c || 'Supplier Invoice',
+        sourceObject: 'Supplier_Invoice__c',
+        name: supplierInvoiceNames[item.Supplier_Invoice__c] || item.Supplier_Name__c || 'Supplier Invoice',
+      });
+    }
+  }
+
+  for (const cost of extraCosts) {
+    addRelatedRecord(relatedRecords, seenRecordIds, {
+      id: cost.Id,
+      sourceGroup: 'Extra Cost',
+      sourceLabel: cost.Name || cost.Description__c || 'Extra Cost',
+      sourceObject: 'STEM_Extra_Cost__c',
+      name: cost.Name || cost.Description__c,
+    });
+    if (cost.Supplier_Invoice__c) {
+      addRelatedRecord(relatedRecords, seenRecordIds, {
+        id: cost.Supplier_Invoice__c,
+        sourceGroup: 'Supplier Invoice',
+        sourceLabel: cost.Supplier_Name__c || 'Supplier Invoice',
+        sourceObject: 'Supplier_Invoice__c',
+        name: supplierInvoiceNames[cost.Supplier_Invoice__c] || cost.Supplier_Name__c || 'Supplier Invoice',
+      });
+    }
+  }
+
+  for (const broker of buyerBrokers) {
+    addRelatedRecord(relatedRecords, seenRecordIds, {
+      id: broker.Id,
+      sourceGroup: 'Broker',
+      sourceLabel: broker.Refcode_Index__c || 'Buyer Broker',
+      sourceObject: 'STEM_Buyer_Broker__c',
+      name: broker.Refcode_Index__c || 'Buyer Broker',
+    });
+  }
+
+  const lookupRelatedGroups = await Promise.all([
+    recordsLinkedToStemByLookup('Supplier_Invoice__c', actualStemId, 'Supplier Invoice', 'Supplier Invoice'),
+    recordsLinkedToStemByLookup('Invoice__c', actualStemId, 'Buyer / Factoring Invoice', 'Buyer / Factoring Invoice'),
+    recordsLinkedToStemByLookup('Nomination__c', actualStemId, 'Nomination', 'Nomination'),
+    recordsLinkedToStemByLookup('Dispute__c', actualStemId, 'Dispute / Support', 'Dispute'),
+    recordsLinkedToStemByLookup('EmailMessage', actualStemId, 'Email', 'Email'),
+  ]);
+  for (const related of lookupRelatedGroups.flat()) {
+    addRelatedRecord(relatedRecords, seenRecordIds, related);
+  }
+
+  const recordMap = Object.fromEntries(relatedRecords.map((related) => [related.id, related]));
+  const relatedIds = relatedRecords.map((related) => related.id);
+  let contentLinks = [];
+  let attachments = [];
+  for (const chunk of chunkIds(relatedIds, 150)) {
+    const inList = chunk.map((id) => `'${id}'`).join(',');
+    const [linksChunk, attachmentsChunk] = await Promise.all([
+      queryRows(`SELECT ContentDocumentId, LinkedEntityId, ShareType, Visibility FROM ContentDocumentLink WHERE LinkedEntityId IN (${inList}) LIMIT 2000`, { limit: 2000, softFail: true }),
+      queryRows(`SELECT Id, ParentId, Name, ContentType, BodyLength, CreatedDate, LastModifiedDate, Owner.Name FROM Attachment WHERE ParentId IN (${inList}) LIMIT 2000`, { limit: 2000, softFail: true }),
+    ]);
+    contentLinks = contentLinks.concat(linksChunk);
+    attachments = attachments.concat(attachmentsChunk);
+  }
+
+  const contentDocumentIds = [...new Set(contentLinks.map((link) => link.ContentDocumentId).filter(isSalesforceId))];
+  let contentDocuments = [];
+  for (const chunk of chunkIds(contentDocumentIds, 150)) {
+    const inList = chunk.map((id) => `'${id}'`).join(',');
+    const rows = await queryRows(`SELECT Id, Title, FileType, ContentSize, CreatedDate, LastModifiedDate, LatestPublishedVersionId, Owner.Name FROM ContentDocument WHERE Id IN (${inList}) LIMIT 2000`, { limit: 2000, softFail: true });
+    contentDocuments = contentDocuments.concat(rows);
+  }
+  const documentMap = Object.fromEntries(contentDocuments.map((document) => [document.Id, document]));
+
+  const versionIds = [...new Set(contentDocuments.map((document) => document.LatestPublishedVersionId).filter(isSalesforceId))];
+  let contentVersions = [];
+  for (const chunk of chunkIds(versionIds, 150)) {
+    const inList = chunk.map((id) => `'${id}'`).join(',');
+    const rows = await queryRows(`SELECT Id, ContentDocumentId, Title, FileExtension, FileType, ContentSize, CreatedDate FROM ContentVersion WHERE Id IN (${inList}) LIMIT 2000`, { limit: 2000, softFail: true });
+    contentVersions = contentVersions.concat(rows);
+  }
+  const versionByDocumentId = Object.fromEntries(contentVersions.map((version) => [version.ContentDocumentId, version]));
+
+  const documents = [];
+  const seenDocuments = new Set();
+  for (const link of contentLinks) {
+    const document = documentMap[link.ContentDocumentId];
+    if (!document?.LatestPublishedVersionId) continue;
+    const related = recordMap[link.LinkedEntityId] || {};
+    const version = versionByDocumentId[document.Id];
+    const fileName = buildContentVersionFilename(document, version);
+    const key = `content-${document.Id}-${link.LinkedEntityId}`;
+    if (seenDocuments.has(key)) continue;
+    seenDocuments.add(key);
+    documents.push({
+      key,
+      id: document.Id,
+      contentDocumentId: document.Id,
+      versionId: document.LatestPublishedVersionId,
+      title: document.Title || version?.Title || fileName,
+      fileName,
+      fileType: version?.FileType || document.FileType || 'File',
+      fileExtension: version?.FileExtension || '',
+      contentSize: version?.ContentSize || document.ContentSize || null,
+      createdDate: document.CreatedDate || version?.CreatedDate || null,
+      lastModifiedDate: document.LastModifiedDate || null,
+      ownerName: document['Owner']?.Name || null,
+      sourceGroup: related.sourceGroup || 'Other Related',
+      sourceLabel: related.sourceLabel || related.name || 'Related Record',
+      sourceObject: related.sourceObject || null,
+      sourceRecordId: link.LinkedEntityId,
+      downloadUrl: `/api/functions/salesforceDocumentDownload?kind=contentVersion&id=${encodeURIComponent(document.LatestPublishedVersionId)}&filename=${encodeURIComponent(fileName)}`,
+      salesforceUrl: `${getInstanceUrl()}/${document.Id}`,
+    });
+  }
+
+  for (const attachment of attachments) {
+    const related = recordMap[attachment.ParentId] || {};
+    const fileName = cleanDownloadFilename(attachment.Name || 'Attachment');
+    documents.push({
+      key: `attachment-${attachment.Id}`,
+      id: attachment.Id,
+      attachmentId: attachment.Id,
+      title: attachment.Name || 'Attachment',
+      fileName,
+      fileType: attachment.ContentType || 'Attachment',
+      fileExtension: fileName.includes('.') ? fileName.split('.').pop() : '',
+      contentSize: attachment.BodyLength || null,
+      createdDate: attachment.CreatedDate || null,
+      lastModifiedDate: attachment.LastModifiedDate || null,
+      ownerName: attachment['Owner']?.Name || null,
+      sourceGroup: related.sourceGroup || 'Other Related',
+      sourceLabel: related.sourceLabel || related.name || 'Related Record',
+      sourceObject: related.sourceObject || null,
+      sourceRecordId: attachment.ParentId,
+      downloadUrl: `/api/functions/salesforceDocumentDownload?kind=attachment&id=${encodeURIComponent(attachment.Id)}&filename=${encodeURIComponent(fileName)}`,
+      salesforceUrl: `${getInstanceUrl()}/${attachment.Id}`,
+    });
+  }
+
+  documents.sort((a, b) => String(b.createdDate || '').localeCompare(String(a.createdDate || '')));
+  const groups = DOCUMENT_SOURCE_GROUPS.map((group) => ({
+    sourceGroup: group,
+    count: documents.filter((document) => document.sourceGroup === group).length,
+  })).filter((group) => group.count > 0);
+
+  return {
+    stemId: actualStemId,
+    stemName: record.Name || record.KeyStem__c || actualStemId,
+    documents,
+    groups,
+    sourceGroups: DOCUMENT_SOURCE_GROUPS,
+    relatedRecordCount: relatedRecords.length,
+  };
+}
+
+async function salesforceDocumentDownload(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  const kind = url.searchParams.get('kind');
+  const id = url.searchParams.get('id');
+  const filename = cleanDownloadFilename(url.searchParams.get('filename') || 'salesforce-document');
+  if (!isSalesforceId(id)) return sendJson(res, { error: 'Valid document id required' }, 400);
+  const path = kind === 'attachment'
+    ? `/sobjects/Attachment/${encodeURIComponent(id)}/Body`
+    : `/sobjects/ContentVersion/${encodeURIComponent(id)}/VersionData`;
+  const file = await sfDownload(path);
+  const asciiFilename = filename.replace(/[^\x20-\x7E]/g, '_');
+  res.statusCode = 200;
+  res.setHeader('cache-control', 'no-store');
+  res.setHeader('content-type', file.contentType);
+  res.setHeader('content-disposition', `inline; filename="${asciiFilename.replace(/"/g, '')}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+  res.end(file.buffer);
 }
 
 async function salesforceDashboardFilteredFull(body) {
@@ -2202,6 +2534,7 @@ const handlers = {
   salesforceDashboard,
   salesforceDashboardFiltered: salesforceDashboardFilteredFull,
   salesforceStemDetail: salesforceStemDetailFull,
+  salesforceStemDocuments,
   salesforceDescribeChildren,
   salesforceTopBuyers,
   salesforceBrokerRegister: salesforceBrokerRegisterFull,
@@ -2216,6 +2549,7 @@ export default async function handler(req, res) {
   try {
     const url = new URL(req.url, 'http://localhost');
     const name = url.pathname.split('/').pop();
+    if (name === 'salesforceDocumentDownload') return salesforceDocumentDownload(req, res);
     const fn = handlers[name];
     if (!fn) return sendJson(res, { error: `Unknown function: ${name}` }, 404);
     const body = await readBody(req);
