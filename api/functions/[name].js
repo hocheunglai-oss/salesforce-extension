@@ -1814,7 +1814,6 @@ function combineBrokerCommissionRows(rows) {
         _paymentDates: [],
         _paymentDateLabels: [],
         _paymentDelays: [],
-        _paymentStatuses: [],
       });
     }
     const group = groups.get(key);
@@ -1827,7 +1826,6 @@ function combineBrokerCommissionRows(rows) {
     if (row.paymentDate) group._paymentDates.push(row.paymentDate);
     if (row.paymentDateLabel) group._paymentDateLabels.push(row.paymentDateLabel);
     if (row.paymentDelay != null) group._paymentDelays.push(Number(row.paymentDelay));
-    if (row.paymentStatus) group._paymentStatuses.push(row.paymentStatus);
     addBrokerProductQuantity(group, row);
   }
 
@@ -1861,14 +1859,12 @@ function combineBrokerCommissionRows(rows) {
       paymentDateLabel: singleOrMixed(group._paymentDateLabels) || group.paymentDateLabel,
       paymentDelay: paymentDelays.length === 1 ? paymentDelays[0] : null,
       paymentDelayLabel: paymentDelays.length > 1 ? 'Mixed' : null,
-      paymentStatus: singleOrMixed(group._paymentStatuses),
       _productMap: undefined,
       _commissionUnitPrices: undefined,
       _commissionUnitLines: undefined,
       _paymentDates: undefined,
       _paymentDateLabels: undefined,
       _paymentDelays: undefined,
-      _paymentStatuses: undefined,
     };
   });
 }
@@ -1902,7 +1898,7 @@ async function salesforceBrokerRegisterFull(body) {
     Promise.all(chunkIds(stemIds).map((chunk) => {
       const ids = chunk.map((id) => `'${id}'`).join(',');
       return queryRows(`
-        SELECT Id, Name, STEM__c, Buyer_Broker__c, Exported__c
+        SELECT Id, Name, STEM__c, Buyer_Broker__c
         FROM STEM_Buyer_Broker__c
         WHERE STEM__c IN (${ids})
         LIMIT 5000
@@ -1976,13 +1972,8 @@ async function salesforceBrokerRegisterFull(body) {
     if (invoice.STEM__c && !buyerInvoiceDueDateByStem[invoice.STEM__c]) buyerInvoiceDueDateByStem[invoice.STEM__c] = invoice.Invoice_Due_Date__c;
   }
 
-  const buyerStatusByStemBroker = {};
-  const buyerStatusByStem = {};
   const buyerBrokersByStem = {};
   for (const item of buyerBrokers) {
-    const status = item.Exported__c ? 'Exported' : 'Pending';
-    if (item.STEM__c && item.Buyer_Broker__c) buyerStatusByStemBroker[`${item.STEM__c}:${item.Buyer_Broker__c}`] = status;
-    if (item.STEM__c) buyerStatusByStem[item.STEM__c] = status;
     if (!item.STEM__c) continue;
     if (!buyerBrokersByStem[item.STEM__c]) buyerBrokersByStem[item.STEM__c] = [];
     buyerBrokersByStem[item.STEM__c].push(item);
@@ -2012,7 +2003,6 @@ async function salesforceBrokerRegisterFull(body) {
         commissionAmount: supplierAmount,
         paymentDate: paymentDateByInvoice[item.Supplier_Invoice__c] || null,
         paymentDateLabel: 'Paid Date',
-        paymentStatus: null,
       });
     }
 
@@ -2040,7 +2030,6 @@ async function salesforceBrokerRegisterFull(body) {
         paymentDate: stem.Payment_Date__c || buyerPaymentDateByStem[item.STEM__c] || null,
         paymentDateLabel: 'Received Date',
         paymentDelay: paymentDelayDays(stem.Payment_Date__c || buyerPaymentDateByStem[item.STEM__c], buyerInvoiceDueDateByStem[item.STEM__c] || stem.Buyer_Pay_Term_Date__c),
-        paymentStatus: buyerStatusByStemBroker[`${item.STEM__c}:${buyerBrokerId}`] || buyerStatusByStem[item.STEM__c] || 'Pending',
       });
     }
 
@@ -2070,7 +2059,6 @@ async function salesforceBrokerRegisterFull(body) {
           paymentDate: stem.Payment_Date__c || buyerPaymentDateByStem[item.STEM__c] || null,
           paymentDateLabel: 'Received Date',
           paymentDelay: paymentDelayDays(stem.Payment_Date__c || buyerPaymentDateByStem[item.STEM__c], buyerInvoiceDueDateByStem[item.STEM__c] || stem.Buyer_Pay_Term_Date__c),
-          paymentStatus: buyerStatusByStemBroker[`${item.STEM__c}:${broker.Buyer_Broker__c}`] || 'Pending',
         });
       }
     }

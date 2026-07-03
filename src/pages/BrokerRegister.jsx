@@ -90,7 +90,7 @@ export default function BrokerRegister() {
   const total = filteredRows.reduce((sum, row) => sum + Number(row.commissionAmount || 0), 0);
 
   const exportCsv = () => {
-    const headers = ['Stem Name', 'Products / Quantity', 'Delivery Date', 'Broker Type', 'Broker Name', 'Commission / Unit', 'Payable Balance', 'Receivable Balance', 'Payment Date Label', 'Payment Date', 'Payment Delay', 'Payment Status'];
+    const headers = ['Stem Name', 'Products / Quantity', 'Delivery Date', 'Broker Type', 'Broker Name', 'Commission / Unit', 'Payable Balance', 'Receivable Balance', 'Payment Date Label', 'Payment Date', 'Payment Delay'];
     const csvRows = filteredRows.map(row => [
       row.stemName,
       row.productQuantityLabel || row.productName,
@@ -103,7 +103,6 @@ export default function BrokerRegister() {
       row.paymentDateLabel,
       fmtDate(row.paymentDate),
       row.paymentDelayLabel || (row.brokerType === 'Buyer Broker' || row.brokerType === 'Secondary Buyer Broker' ? fmtDelay(row.paymentDelay) : ''),
-      row.paymentStatus || '',
     ]);
     const csv = [headers, ...csvRows].map(row => row.map(csvValue).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -120,7 +119,7 @@ export default function BrokerRegister() {
       <PageHeader
         eyebrow="Salesforce broker commissions"
         title="Broker's Commission"
-        description="Review supplier, buyer, and secondary buyer broker commissions with payment status and hidden broker flags."
+        description="Review supplier, buyer, and secondary buyer broker commissions with payment timing and hidden broker flags."
         meta={`${filteredRows.length.toLocaleString()} rows · ${fmtMoney(total)} filtered commission total`}
         actions={(
           <>
