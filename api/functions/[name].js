@@ -352,6 +352,28 @@ function calculatedBuyerPayTermDate(stem) {
   return addDays(basisDate, days);
 }
 
+function latestDate(values) {
+  return values.filter(Boolean).sort().at(-1) || null;
+}
+
+function prpspDisplayStatus(rawStatus, uploadDate) {
+  const status = String(rawStatus || '').trim();
+  const uploadLabel = uploadDate ? prettyDate(uploadDate) : null;
+  if (!status) return 'Not required';
+  if (status === 'A - w/ Agreement (Payment Conditional)') {
+    return uploadLabel ? `Conditional-Sent on ${uploadLabel}` : 'Conditional-Not Sent';
+  }
+  if ([
+    'B - w/ Agreement (Payment Unconditional)',
+    'C - w/o Agreement (Payment Received)',
+    'D - w/o Agreement (Payment NOT Received)',
+  ].includes(status)) {
+    return uploadLabel ? `Not Conditional-Sent on ${uploadLabel}` : 'Not Conditional-Not Sent';
+  }
+  if (status === 'Sent') return uploadLabel ? `Sent on ${uploadLabel}` : 'Sent';
+  return status;
+}
+
 function daysBetween(fromDate, toDate) {
   const from = new Date(`${fromDate}T00:00:00.000Z`);
   const to = new Date(`${toDate}T00:00:00.000Z`);
@@ -1258,6 +1280,7 @@ async function salesforceBuyerInvoicesDue(body) {
   if (fieldNames.includes('Buyer__c')) fields.push('Buyer__c');
   if (fieldNames.includes('Total_Invoice_Amount__c')) fields.push('Total_Invoice_Amount__c');
   if (fieldNames.includes('Receivable_Balance__c')) fields.push('Receivable_Balance__c');
+  if (fieldNames.includes('PSPRS__c')) fields.push('PSPRS__c');
   if (fieldNames.includes('Account__c')) {
     fields.push('Account__c', 'Account__r.Name');
   }
@@ -1290,17 +1313,29 @@ async function salesforceBuyerInvoicesDue(body) {
 
   const stemIds = stems.map((stem) => stem.Id);
   const traderByStem = {};
+  const prpspUploadDateByStem = {};
   if (stemIds.length) {
-    const nominationArrays = await Promise.all(chunkIds(stemIds).map((chunk) => {
-      const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
-      return queryRows(`
-        SELECT Id, Name, STEM__c, Buyer_Supplier_Trader__c
-        FROM Nomination__c
-        WHERE STEM__c IN (${inList}) AND Buyer_Supplier_Trader__c != null
-        ORDER BY CreatedDate ASC
-        LIMIT 5000
-      `, { limit: 5000, softFail: true });
-    }));
+    const [nominationArrays, supplierInvoiceArrays] = await Promise.all([
+      Promise.all(chunkIds(stemIds).map((chunk) => {
+        const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
+        return queryRows(`
+          SELECT Id, Name, STEM__c, Buyer_Supplier_Trader__c
+          FROM Nomination__c
+          WHERE STEM__c IN (${inList}) AND Buyer_Supplier_Trader__c != null
+          ORDER BY CreatedDate ASC
+          LIMIT 5000
+        `, { limit: 5000, softFail: true });
+      })),
+      Promise.all(chunkIds(stemIds).map((chunk) => {
+        const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
+        return queryRows(`
+          SELECT Id, STEM__c, PSPRS_Upload_Date__c
+          FROM Supplier_Invoice__c
+          WHERE STEM__c IN (${inList}) AND PSPRS_Upload_Date__c != null
+          LIMIT 5000
+        `, { limit: 5000, softFail: true });
+      })),
+    ]);
 
     for (const nomination of nominationArrays.flat()) {
       if (!nomination.STEM__c || !nomination.Buyer_Supplier_Trader__c) continue;
@@ -1311,6 +1346,14 @@ async function salesforceBuyerInvoicesDue(body) {
       if (name.startsWith('Confirmation to ') && !traderByStem[nomination.STEM__c].buyer.includes(value)) {
         traderByStem[nomination.STEM__c].buyer.push(value);
       }
+    }
+
+    for (const invoice of supplierInvoiceArrays.flat()) {
+      if (!invoice.STEM__c || !invoice.PSPRS_Upload_Date__c) continue;
+      prpspUploadDateByStem[invoice.STEM__c] = latestDate([
+        prpspUploadDateByStem[invoice.STEM__c],
+        invoice.PSPRS_Upload_Date__c,
+      ]);
     }
   }
 
@@ -1333,6 +1376,8 @@ async function salesforceBuyerInvoicesDue(body) {
       const daysUntilDue = daysBetween(today, dueDate);
       const account = stem['Account__r'] || {};
       const traderInfo = traderByStem[stem.Id] || {};
+      const prpspUploadDate = prpspUploadDateByStem[stem.Id] || null;
+      const rawPsprsStatus = stem.PSPRS__c || null;
       return {
         id: stem.Id,
         stemId: stem.Id,
@@ -1343,6 +1388,9 @@ async function salesforceBuyerInvoicesDue(body) {
         receivableBalance: stem.Receivable_Balance__c ?? null,
         buyerInvoiceDueDate: dueDate,
         buyerTraderInCharge: (traderInfo.buyer?.length ? traderInfo.buyer : traderInfo.all || []).join(', ') || null,
+        prpspStatus: prpspDisplayStatus(rawPsprsStatus, prpspUploadDate),
+        prpspUploadDate,
+        rawPsprsStatus,
         daysUntilDue,
         status: daysUntilDue == null ? 'Due' : daysUntilDue < 0 ? 'Overdue' : daysUntilDue === 0 ? 'Due Today' : 'Due Soon',
       };
@@ -1516,6 +1564,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
       <td style="${cellStyle};text-align:right;font-weight:600;white-space:nowrap">${money(row.receivableBalance)}</td>
       <td style="${cellStyle};white-space:nowrap">${prettyDate(row.buyerInvoiceDueDate)}</td>
       <td style="${cellStyle};min-width:140px">${escapeHtml(row.buyerTraderInCharge || '-')}</td>
+      <td style="${cellStyle};min-width:160px">${escapeHtml(row.prpspStatus || '-')}</td>
       <td style="${cellStyle}">
         <span style="display:inline-block;border:1px solid;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;white-space:nowrap;${severity.pill}">${escapeHtml(row.status)}</span>
       </td>
@@ -1525,7 +1574,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
   const tableHtml = settings.includeTable ? `
     ${buyerTraderFilterHtml(report, settings)}
     <div style="max-height:420px;overflow:auto;border:1px solid #d9e2ef;border-radius:10px">
-      <table style="border-collapse:collapse;width:100%;min-width:980px;font-size:13px">
+      <table style="border-collapse:collapse;width:100%;min-width:1120px;font-size:13px">
         <thead>
           <tr style="background:#f8fafc;color:#667085;text-transform:uppercase;font-size:11px;letter-spacing:.04em">
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Stem Name</th>
@@ -1534,11 +1583,12 @@ function buildBuyerInvoiceReportEmail(report, settings) {
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right;position:sticky;top:0;background:#f8fafc">Receivable Balance</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Due Date</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Buyer Trader</th>
+            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">PRPSP Status</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Status</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right;position:sticky;top:0;background:#f8fafc">Overdue</th>
           </tr>
         </thead>
-        <tbody>${tableRows || '<tr><td colspan="8" style="padding:18px;text-align:center;color:#667085">No outstanding buyer invoices found.</td></tr>'}</tbody>
+        <tbody>${tableRows || '<tr><td colspan="9" style="padding:18px;text-align:center;color:#667085">No outstanding buyer invoices found.</td></tr>'}</tbody>
       </table>
     </div>` : '';
   const html = `
@@ -1554,7 +1604,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
     `Open all invoices: ${buyerInvoiceFilterUrl(settings, report, null)}`,
     ...((report.buyerTraderOptions || []).map((name) => `Open ${name}: ${buyerInvoiceFilterUrl(settings, report, name)}`)),
     '',
-    ...rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`),
+    ...rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PRPSP Status ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`),
   ];
   return { subject, html, text: textLines.join('\n'), totals };
 }

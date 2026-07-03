@@ -35,6 +35,7 @@ const COPY_COLUMNS = [
   { header: 'Receivable Balance', value: (row) => fmtMoney(row.receivableBalance), align: 'right' },
   { header: 'Buyer Invoice Due Date', value: (row) => fmtDate(row.buyerInvoiceDueDate) },
   { header: 'Buyer Trader in Charge', value: (row) => row.buyerTraderInCharge || '—' },
+  { header: 'PRPSP Status', value: (row) => row.prpspStatus || '—' },
   { header: 'Status', value: (row) => row.status || '—' },
   { header: 'Overdue', value: (row) => overdueDisplayValue(row.daysUntilDue), align: 'right' },
 ];
@@ -317,7 +318,7 @@ export default function BuyerInvoices() {
   }, [filteredRows]);
 
   const exportCsv = () => {
-    const headers = ['Stem Name', 'Buyer Name', 'Invoice Amount', 'Receivable Balance', 'Buyer Invoice Due Date', 'Buyer Trader in Charge', 'Status', 'Overdue'];
+    const headers = ['Stem Name', 'Buyer Name', 'Invoice Amount', 'Receivable Balance', 'Buyer Invoice Due Date', 'Buyer Trader in Charge', 'PRPSP Status', 'Status', 'Overdue'];
     const csvRows = filteredRows.map((row) => [
       row.stemName,
       row.buyerName,
@@ -325,6 +326,7 @@ export default function BuyerInvoices() {
       row.receivableBalance,
       row.buyerInvoiceDueDate,
       row.buyerTraderInCharge,
+      row.prpspStatus,
       row.status,
       row.daysUntilDue == null ? '' : -Number(row.daysUntilDue),
     ]);
@@ -613,7 +615,7 @@ export default function BuyerInvoices() {
         <TableShell title="Buyer Invoice Due List" meta={`${filteredRows.length.toLocaleString()} rows`} bodyClassName="p-0">
           {filteredRows.length ? (
             <div className="max-h-[68vh] overflow-auto">
-              <table className="w-full min-w-[1080px] text-sm">
+              <table className="w-full min-w-[1240px] text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/40">
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Stem Name</th>
@@ -622,6 +624,7 @@ export default function BuyerInvoices() {
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Receivable Balance</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Invoice Due Date</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Trader in Charge</th>
+                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">PRPSP Status</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Copy</th>
@@ -640,6 +643,7 @@ export default function BuyerInvoices() {
                       <td className="px-4 py-3 text-right font-semibold text-foreground">{fmtMoney(row.receivableBalance)}</td>
                       <td className="px-4 py-3 text-foreground">{fmtDate(row.buyerInvoiceDueDate)}</td>
                       <td className="px-4 py-3 text-muted-foreground">{row.buyerTraderInCharge || '—'}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{row.prpspStatus || '—'}</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${statusPill(row.status, row.daysUntilDue)}`}>
                           {row.status}
