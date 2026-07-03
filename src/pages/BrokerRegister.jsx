@@ -30,7 +30,6 @@ const fmtDelay = (value) => {
   const number = numericValue(value);
   return number != null ? `${number.toLocaleString()} day${Math.abs(number) === 1 ? '' : 's'}` : '';
 };
-const csvValue = (value) => `"${textValue(value, '').replaceAll('"', '""')}"`;
 const escapeHtml = (value) => textValue(value, '')
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
@@ -101,6 +100,7 @@ export default function BrokerRegister() {
   const [exchangeRate, setExchangeRate] = useState(null);
   const [exchangeRateLoading, setExchangeRateLoading] = useState(false);
   const [exchangeRateError, setExchangeRateError] = useState(null);
+  const [showCny, setShowCny] = useState(false);
 
   const loadRows = async () => {
     setLoading(true);
@@ -145,6 +145,11 @@ export default function BrokerRegister() {
   }, [filteredRows, fromDate, toDate]);
 
   useEffect(() => {
+    if (!showCny) {
+      setExchangeRateLoading(false);
+      setExchangeRateError(null);
+      return undefined;
+    }
     let cancelled = false;
     const loadExchangeRate = async () => {
       setExchangeRateLoading(true);
@@ -164,7 +169,7 @@ export default function BrokerRegister() {
     };
     loadExchangeRate();
     return () => { cancelled = true; };
-  }, [exchangeRateProvider, exchangeRateTargetDate]);
+  }, [exchangeRateProvider, exchangeRateTargetDate, showCny]);
 
   const commissionPayableTotal = filteredRows.reduce((sum, row) => sum + Number(payableAmount(row) || 0), 0);
   const commissionReceivableTotal = filteredRows.reduce((sum, row) => sum + Number(receivableAmount(row) || 0), 0);
@@ -198,7 +203,7 @@ export default function BrokerRegister() {
   const workbookColumns = (widths) => widths
     .map((width) => `<Column ss:AutoFitWidth="1" ss:Width="${width}"/>`)
     .join('');
-  const workbookStyles = `<Styles>
+  const workbookStyles = (includeCny) => `<Styles>
       <Style ss:ID="Default" ss:Name="Normal">
         <Alignment ss:Vertical="Top"/>
         <Font ss:FontName="Arial" ss:Size="10" ss:Color="#111827"/>
@@ -293,7 +298,7 @@ export default function BrokerRegister() {
           <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
         </Borders>
       </Style>
-      <Style ss:ID="Cny">
+      ${includeCny ? `<Style ss:ID="Cny">
         <Alignment ss:Horizontal="Right" ss:Vertical="Top"/>
         <NumberFormat ss:Format="&quot;CNY &quot;#,##0.00"/>
         <Borders>
@@ -312,11 +317,11 @@ export default function BrokerRegister() {
           <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
           <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/>
         </Borders>
-      </Style>
+      </Style>` : ''}
     </Styles>`;
   const exportXls = () => {
     const generatedAt = format(new Date(), 'dd MMM yyyy HH:mm');
-    const methodologyRows = [
+    const methodologyRows = showCny ? [
       ['Generated At', generatedAt],
       ['Rows Exported', filteredRows.length.toLocaleString()],
       ['Source', exchangeRate?.source || 'Frankfurter API'],
@@ -328,7 +333,7 @@ export default function BrokerRegister() {
       ['Mid-rate', exchangeRate?.rate != null ? Number(exchangeRate.rate).toFixed(6) : 'Unavailable'],
       ['Bank buy rate methodology', 'Frankfurter USD/CNY API rate is treated as the mid-rate. Bank buy rate is calculated as mid-rate less 0.2%, i.e. mid-rate x 0.998.'],
       ['Target-date methodology', 'The default exchange-rate target is the last working day of the quarter based on the selected To Date, otherwise selected From Date, otherwise the latest payment/delivery date in filtered rows, otherwise today. Weekends are moved back to Friday; public holidays are handled by the API fallback to prior available dates.'],
-    ];
+    ] : [];
     const detailRows = filteredRows.map((row) => ({
       stemName: row.stemName,
       productQuantity: spreadsheetText(row.productQuantityLabel || row.productName),
@@ -373,26 +378,35 @@ export default function BrokerRegister() {
       workbookRow([workbookCell('Commission Payable', 'SummaryLabel'), workbookCurrencyCell(commissionPayableTotal, 'Currency', labelValueMergeAcross)]),
       workbookRow([workbookCell('Commission Receivable', 'SummaryLabel'), workbookCurrencyCell(commissionReceivableTotal, 'Currency', labelValueMergeAcross)]),
       workbookRow([workbookCell('Net Commission Total', 'SummaryLabel'), workbookCurrencyCell(total, 'Currency', labelValueMergeAcross)]),
-      workbookRow([workbookCell('Commission Payable in CNY', 'SummaryLabel'), workbookCurrencyCell(bankBuyRate != null ? commissionPayableTotal * bankBuyRate : null, 'Cny', labelValueMergeAcross)]),
-      workbookRow([workbookCell('Commission Receivable in CNY', 'SummaryLabel'), workbookCurrencyCell(bankBuyRate != null ? commissionReceivableTotal * bankBuyRate : null, 'Cny', labelValueMergeAcross)]),
-      workbookRow([workbookCell('Bank Buy Rate', 'SummaryLabel'), workbookNumberCell(bankBuyRate, 'Rate', labelValueMergeAcross)]),
-      workbookRow([workbookCell('Exchange Rate', 'SummaryLabel'), workbookCell(exchangeRateSummary, 'SummaryText', labelValueMergeAcross)]),
+      ...(showCny ? [
+        workbookRow([workbookCell('Commission Payable in CNY', 'SummaryLabel'), workbookCurrencyCell(bankBuyRate != null ? commissionPayableTotal * bankBuyRate : null, 'Cny', labelValueMergeAcross)]),
+        workbookRow([workbookCell('Commission Receivable in CNY', 'SummaryLabel'), workbookCurrencyCell(bankBuyRate != null ? commissionReceivableTotal * bankBuyRate : null, 'Cny', labelValueMergeAcross)]),
+        workbookRow([workbookCell('Bank Buy Rate', 'SummaryLabel'), workbookNumberCell(bankBuyRate, 'Rate', labelValueMergeAcross)]),
+        workbookRow([workbookCell('Exchange Rate', 'SummaryLabel'), workbookCell(exchangeRateSummary, 'SummaryText', labelValueMergeAcross)]),
+      ] : []),
       workbookRow([workbookCell('Broker Commission Rows', 'Section', detailMergeAcross)]),
       workbookRow(detailColumns.map((column) => workbookCell(column.header, 'Header'))),
       ...(detailRows.length
         ? detailRows.map((row) => workbookRow(detailColumns.map((column) => column.cell(row))))
         : [workbookRow([workbookCell('No broker commissions found.', 'Text', detailMergeAcross)])]),
     ];
-    const settingsColumnValues = [
+    const settingsColumnValues = showCny ? [
       ['Settings', ...methodologyRows.map(([label]) => label)],
       ['Exchange Rate Source and Methodology', ...methodologyRows.map(([, value]) => value)],
-    ];
-    const settingsRows = [
+    ] : [];
+    const settingsRows = showCny ? [
       workbookRow([workbookCell('Settings', 'Title', 1)]),
       workbookRow([workbookCell('Exchange Rate Source and Methodology', 'Section', 1)]),
       ...methodologyRows.map(([label, value]) => workbookRow([workbookCell(label, 'Label'), workbookCell(value, 'Text')])),
       workbookRow([workbookCell('Note', 'Label'), workbookCell('All commission amounts are exported from the filtered Broker\'s Commission rows shown in the application at the time of export.', 'Text')]),
-    ];
+    ] : [];
+    const settingsWorksheet = showCny ? `
+        <Worksheet ss:Name="Settings">
+          <Table ss:ExpandedColumnCount="2" ss:ExpandedRowCount="${settingsRows.length}" x:FullColumns="1" x:FullRows="1">
+            ${workbookColumns(settingsColumnValues.map((values, index) => columnWidth(values, index === 0 ? 150 : 260, index === 0 ? 260 : 620)))}
+            ${settingsRows.join('')}
+          </Table>
+        </Worksheet>` : '';
     const workbookXml = `<?xml version="1.0" encoding="UTF-8"?>
       <?mso-application progid="Excel.Sheet"?>
       <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
@@ -405,7 +419,7 @@ export default function BrokerRegister() {
           <Author>Salesforce Analytics Hub</Author>
           <Created>${new Date().toISOString()}</Created>
         </DocumentProperties>
-        ${workbookStyles}
+        ${workbookStyles(showCny)}
         <Worksheet ss:Name="Broker Commission">
           <Table ss:ExpandedColumnCount="${detailColumnCount}" ss:ExpandedRowCount="${brokerRows.length}" x:FullColumns="1" x:FullRows="1">
             ${workbookColumns(brokerColumnValues.map((values, index) => columnWidth(values, detailColumns[index].minWidth, detailColumns[index].maxWidth)))}
@@ -418,35 +432,10 @@ export default function BrokerRegister() {
             <TopRowBottomPane>10</TopRowBottomPane>
           </WorksheetOptions>
         </Worksheet>
-        <Worksheet ss:Name="Settings">
-          <Table ss:ExpandedColumnCount="2" ss:ExpandedRowCount="${settingsRows.length}" x:FullColumns="1" x:FullRows="1">
-            ${workbookColumns(settingsColumnValues.map((values, index) => columnWidth(values, index === 0 ? 150 : 260, index === 0 ? 260 : 620)))}
-            ${settingsRows.join('')}
-          </Table>
-        </Worksheet>
+        ${settingsWorksheet}
       </Workbook>`;
     const blob = new Blob([workbookXml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     downloadBlob(blob, `brokers-commission-${new Date().toISOString().slice(0, 10)}.xls`);
-  };
-
-  const exportCsv = () => {
-    const headers = ['Stem Name', 'Products / Quantity', 'Delivery Date', 'Broker Type', 'Broker Name', 'Commission / Unit', 'Commission Payable', 'Commission Receivable', 'Payment Date Label', 'Payment Date', 'Payment Delay'];
-    const csvRows = filteredRows.map(row => [
-      row.stemName,
-      row.productQuantityLabel || row.productName,
-      fmtDate(row.deliveryDate),
-      row.brokerType,
-      row.brokerName,
-      fmtUnit(row.commissionUnitPriceLabel || row.commissionUnitPrice),
-      payableAmount(row) != null ? fmtMoney(payableAmount(row)) : '',
-      receivableAmount(row) != null ? fmtMoney(receivableAmount(row)) : '',
-      row.paymentDateLabel,
-      fmtDate(row.paymentDate),
-      row.paymentDelayLabel || (row.brokerType === 'Buyer Broker' || row.brokerType === 'Secondary Buyer Broker' ? fmtDelay(row.paymentDelay) : ''),
-    ]);
-    const csv = [headers, ...csvRows].map(row => row.map(csvValue).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    downloadBlob(blob, `brokers-commission-${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
   return (
@@ -458,11 +447,11 @@ export default function BrokerRegister() {
         meta={`${filteredRows.length.toLocaleString()} rows · ${fmtMoney(total)} filtered commission total`}
         actions={(
           <>
+          <Button type="button" size="sm" variant={showCny ? 'default' : 'outline'} onClick={() => setShowCny(value => !value)} className="gap-2 w-fit">
+            CNY
+          </Button>
           <Button variant="outline" onClick={exportXls} disabled={loading || !filteredRows.length} className="gap-2 w-fit">
             <Download className="w-4 h-4" /> Export XLS
-          </Button>
-          <Button variant="outline" onClick={exportCsv} disabled={loading || !filteredRows.length} className="gap-2 w-fit">
-            <Download className="w-4 h-4" /> Export CSV
           </Button>
           <Button variant="outline" onClick={loadRows} disabled={loading} className="gap-2 w-fit">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
@@ -476,17 +465,19 @@ export default function BrokerRegister() {
       <div className="rounded-xl border border-border bg-card px-5 py-4 flex flex-wrap gap-6">
         <div><div className="text-xs text-muted-foreground uppercase tracking-wide">Rows</div><div className="text-xl font-bold">{filteredRows.length.toLocaleString()}</div></div>
         <div><div className="text-xs text-muted-foreground uppercase tracking-wide">Commission Total</div><div className="text-xl font-bold">{fmtMoney(total)}</div></div>
-        <div className="min-w-72 flex-1">
-          <div className="text-xs text-muted-foreground uppercase tracking-wide">USD/CNY Exchange Rate</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            API rate is treated as mid-rate. CNY conversion uses bank buy rate: mid-rate less 0.2%.
-            {exchangeRateLoading && ' Loading rate...'}
-            {exchangeRateError && <span className="text-destructive"> {exchangeRateError}</span>}
-            {exchangeRate && !exchangeRateLoading && (
-              <span> Mid-rate: {Number(exchangeRate.rate).toLocaleString(undefined, { maximumFractionDigits: 6 })} on {fmtDate(exchangeRate.date)} · {exchangeRate.source} · {exchangeRate.rateType}</span>
-            )}
+        {showCny && (
+          <div className="min-w-72 flex-1">
+            <div className="text-xs text-muted-foreground uppercase tracking-wide">USD/CNY Exchange Rate</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              API rate is treated as mid-rate. CNY conversion uses bank buy rate: mid-rate less 0.2%.
+              {exchangeRateLoading && ' Loading rate...'}
+              {exchangeRateError && <span className="text-destructive"> {exchangeRateError}</span>}
+              {exchangeRate && !exchangeRateLoading && (
+                <span> Mid-rate: {Number(exchangeRate.rate).toLocaleString(undefined, { maximumFractionDigits: 6 })} on {fmtDate(exchangeRate.date)} · {exchangeRate.source} · {exchangeRate.rateType}</span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {loading && <StateBlock icon={Loader2} title="Loading broker commissions..." description="Fetching commissions, payment timing, and broker flags from Salesforce." />}
@@ -499,6 +490,7 @@ export default function BrokerRegister() {
             exchangeRate={exchangeRate}
             exchangeRateLoading={exchangeRateLoading}
             exchangeRateError={exchangeRateError}
+            showCny={showCny}
           />
         </TableShell>
       )}

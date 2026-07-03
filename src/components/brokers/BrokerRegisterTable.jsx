@@ -69,7 +69,7 @@ function CommissionUnitCell({ row }) {
   );
 }
 
-export default function BrokerRegisterTable({ rows, onRowClick, exchangeRate, exchangeRateLoading, exchangeRateError }) {
+export default function BrokerRegisterTable({ rows, onRowClick, exchangeRate, exchangeRateLoading, exchangeRateError, showCny = false }) {
   const payableTotal = rows.reduce((sum, row) => sum + Number(payableAmount(row) || 0), 0);
   const receivableTotal = rows.reduce((sum, row) => sum + Number(receivableAmount(row) || 0), 0);
   const exchangeRateValue = numericValue(exchangeRate?.rate);
@@ -123,21 +123,23 @@ export default function BrokerRegisterTable({ rows, onRowClick, exchangeRate, ex
                 <td className="py-3 px-4 text-right text-foreground whitespace-nowrap">{fmtMoney(receivableTotal)}</td>
                 <td colSpan="2" className="py-3 px-4" />
               </tr>
-              <tr className="border-t border-border bg-muted/30">
-                <td colSpan="6" className="py-3 px-4 text-right text-foreground">
-                  <div className="font-semibold">Summary in CNY using Bank Buy Rate</div>
-                  <div className="text-xs font-normal text-muted-foreground">
-                    {exchangeRateLoading ? 'Loading USD/CNY exchange rate...' : exchangeRateLabel}
-                  </div>
-                </td>
-                <td className="py-3 px-4 text-right font-semibold text-foreground whitespace-nowrap">
-                  {bankBuyRate != null ? fmtCny(payableTotal * bankBuyRate) : '—'}
-                </td>
-                <td className="py-3 px-4 text-right font-semibold text-foreground whitespace-nowrap">
-                  {bankBuyRate != null ? fmtCny(receivableTotal * bankBuyRate) : '—'}
-                </td>
-                <td colSpan="2" className="py-3 px-4" />
-              </tr>
+              {showCny && (
+                <tr className="border-t border-border bg-muted/30">
+                  <td colSpan="6" className="py-3 px-4 text-right text-foreground">
+                    <div className="font-semibold">Summary in CNY using Bank Buy Rate</div>
+                    <div className="text-xs font-normal text-muted-foreground">
+                      {exchangeRateLoading ? 'Loading USD/CNY exchange rate...' : exchangeRateLabel}
+                    </div>
+                  </td>
+                  <td className="py-3 px-4 text-right font-semibold text-foreground whitespace-nowrap">
+                    {bankBuyRate != null ? fmtCny(payableTotal * bankBuyRate) : '—'}
+                  </td>
+                  <td className="py-3 px-4 text-right font-semibold text-foreground whitespace-nowrap">
+                    {bankBuyRate != null ? fmtCny(receivableTotal * bankBuyRate) : '—'}
+                  </td>
+                  <td colSpan="2" className="py-3 px-4" />
+                </tr>
+              )}
             </tfoot>
           )}
         </table>
