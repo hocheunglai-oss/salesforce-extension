@@ -31,12 +31,12 @@ const DEFAULT_EMAIL_SETTINGS = {
 const COPY_COLUMNS = [
   { header: 'Stem Name', value: (row) => row.stemName || '—' },
   { header: 'Buyer Name', value: (row) => row.buyerName || '—' },
-  { header: 'Invoice Amount', value: (row) => fmtMoney(row.invoiceAmount) },
-  { header: 'Receivable Balance', value: (row) => fmtMoney(row.receivableBalance) },
+  { header: 'Invoice Amount', value: (row) => fmtMoney(row.invoiceAmount), align: 'right' },
+  { header: 'Receivable Balance', value: (row) => fmtMoney(row.receivableBalance), align: 'right' },
   { header: 'Buyer Invoice Due Date', value: (row) => fmtDate(row.buyerInvoiceDueDate) },
   { header: 'Buyer Trader in Charge', value: (row) => row.buyerTraderInCharge || '—' },
   { header: 'Status', value: (row) => row.status || '—' },
-  { header: 'Overdue', value: (row) => overdueDisplayValue(row.daysUntilDue) },
+  { header: 'Overdue', value: (row) => overdueDisplayValue(row.daysUntilDue), align: 'right' },
 ];
 
 const fmtMoney = (value) => {
@@ -115,19 +115,55 @@ function overdueDisplayValue(daysUntilDue) {
   return Object.is(overdue, -0) ? '0' : overdue.toLocaleString();
 }
 
-function markdownCell(value) {
-  return textValue(value, '—').replaceAll('|', '\\|').replace(/\s+/g, ' ').trim() || '—';
+function copyCell(value) {
+  return textValue(value, '—').replace(/\s+/g, ' ').trim() || '—';
 }
 
-function invoiceRecordTableText(row) {
+function escapeHtml(value) {
+  return copyCell(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function invoiceRecordPlainText(row) {
   return [
-    `| ${COPY_COLUMNS.map((column) => markdownCell(column.header)).join(' | ')} |`,
-    `| ${COPY_COLUMNS.map(() => '---').join(' | ')} |`,
-    `| ${COPY_COLUMNS.map((column) => markdownCell(column.value(row))).join(' | ')} |`,
+    COPY_COLUMNS.map((column) => copyCell(column.header)).join('\t'),
+    COPY_COLUMNS.map((column) => copyCell(column.value(row))).join('\t'),
   ].join('\n');
 }
 
-async function writeClipboardText(text) {
+function invoiceRecordHtml(row) {
+  const border = 'border:1px solid #cbd5e1;';
+  const cell = `${border}padding:6px 8px;font-family:Arial,sans-serif;font-size:12px;vertical-align:top;`;
+  return `
+    <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px;color:#111827;">
+      <thead>
+        <tr>
+          ${COPY_COLUMNS.map((column) => `<th style="${cell}background:#f1f5f9;font-weight:700;text-align:${column.align || 'left'};">${escapeHtml(column.header)}</th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          ${COPY_COLUMNS.map((column) => `<td style="${cell}text-align:${column.align || 'left'};">${escapeHtml(column.value(row))}</td>`).join('')}
+        </tr>
+      </tbody>
+    </table>
+  `.trim();
+}
+
+async function writeClipboardTable({ html, text }) {
+  if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([text], { type: 'text/plain' }),
+      }),
+    ]);
+    return;
+  }
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
     return;
@@ -304,7 +340,10 @@ export default function BuyerInvoices() {
 
   const copyInvoiceRecord = async (row) => {
     try {
-      await writeClipboardText(invoiceRecordTableText(row));
+      await writeClipboardTable({
+        html: invoiceRecordHtml(row),
+        text: invoiceRecordPlainText(row),
+      });
       setCopiedRowId(row.id);
       window.setTimeout(() => setCopiedRowId((current) => (current === row.id ? null : current)), 1500);
     } catch {
