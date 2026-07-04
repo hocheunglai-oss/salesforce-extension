@@ -38,16 +38,6 @@ const DEFAULT_EMAIL_SETTINGS = {
   paymentReminderBody: '<p>Dear {{buyerName}},</p><p>Please find below the outstanding buyer invoices for your attention.</p><p>This reminder includes overdue invoices and invoices due within {{daysAhead}} days. Please arrange payment or let us know the expected payment date.</p><p><strong>Late payment interest warning:</strong> where payment remains overdue, a late payment interest charge of <strong>2.00% per month</strong> may apply.</p><p>Regards,<br>Fratelli Cosulich</p>',
 };
 
-const PAYMENT_REMINDER_VARIABLES = [
-  { label: 'Buyer name', token: '{{buyerName}}' },
-  { label: 'Buyer group', token: '{{buyerGroupName}}' },
-  { label: 'Due days', token: '{{daysAhead}}' },
-  { label: 'Today', token: '{{today}}' },
-  { label: 'Due through', token: '{{dueThrough}}' },
-  { label: 'Invoice count', token: '{{invoiceCount}}' },
-  { label: 'Total receivable', token: '{{totalReceivable}}' },
-];
-
 const QUILL_MODULES = {
   toolbar: [
     [{ header: [false, 3, 4] }],
@@ -153,29 +143,6 @@ function SummaryCard({ label, value, tone = 'default' }) {
     <div className="rounded-xl border border-border bg-card p-4">
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className={`mt-1 font-dm text-2xl font-bold ${toneClass}`}>{value}</p>
-    </div>
-  );
-}
-
-function VariablePalette({ onInsert }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {PAYMENT_REMINDER_VARIABLES.map((variable) => (
-        <button
-          key={variable.token}
-          type="button"
-          draggable
-          onClick={() => onInsert(variable.token)}
-          onDragStart={(event) => {
-            event.dataTransfer.setData('text/plain', variable.token);
-            event.dataTransfer.setData('application/x-template-variable', variable.token);
-          }}
-          className="rounded-md border border-border bg-muted/50 px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
-          title={`Insert ${variable.token}`}
-        >
-          {variable.label}
-        </button>
-      ))}
     </div>
   );
 }
@@ -494,7 +461,6 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
-  const [step, setStep] = useState('select');
   const [data, setData] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [form, setForm] = useState({
@@ -504,12 +470,6 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
     subject: '',
     body: '',
   });
-  const [activeTemplateField, setActiveTemplateField] = useState('body');
-  const toRef = useRef(null);
-  const ccRef = useRef(null);
-  const bccRef = useRef(null);
-  const subjectRef = useRef(null);
-  const bodyEditorRef = useRef(null);
 
   useEffect(() => {
     if (!open || !row) return;
@@ -517,7 +477,6 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
     const load = async () => {
       setLoading(true);
       setError(null);
-      setStep('select');
       const res = await appClient.functions.invoke('buyerInvoicePaymentReminderPrepare', {
         stemId: row.stemId,
         daysAhead,
@@ -558,42 +517,6 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
   if (!open || !row) return null;
 
   const updateForm = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
-  const inputRefs = { to: toRef, cc: ccRef, bcc: bccRef, subject: subjectRef };
-  const insertTextVariable = (key, token) => {
-    const ref = inputRefs[key];
-    const current = form[key] || '';
-    const node = ref?.current;
-    const start = node?.selectionStart ?? current.length;
-    const end = node?.selectionEnd ?? start;
-    const next = `${current.slice(0, start)}${token}${current.slice(end)}`;
-    updateForm(key, next);
-    window.setTimeout(() => {
-      node?.focus();
-      node?.setSelectionRange(start + token.length, start + token.length);
-    }, 0);
-  };
-  const insertBodyVariable = (token) => {
-    const editor = bodyEditorRef.current?.getEditor?.();
-    if (!editor) {
-      updateForm('body', `${form.body || ''}${token}`);
-      return;
-    }
-    const range = editor.getSelection(true);
-    editor.insertText(range?.index ?? editor.getLength(), token);
-    editor.setSelection((range?.index ?? editor.getLength()) + token.length, 0);
-  };
-  const insertVariable = (token) => {
-    if (activeTemplateField === 'body') insertBodyVariable(token);
-    else insertTextVariable(activeTemplateField, token);
-  };
-  const dropToken = (key, event) => {
-    event.preventDefault();
-    const token = event.dataTransfer.getData('application/x-template-variable') || event.dataTransfer.getData('text/plain');
-    if (!token) return;
-    setActiveTemplateField(key);
-    if (key === 'body') insertBodyVariable(token);
-    else insertTextVariable(key, token);
-  };
   const toggleInvoice = (stemId) => {
     setSelectedIds((prev) => (
       prev.includes(stemId)
@@ -679,196 +602,255 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
                     Recipient field: {data.settings?.paymentReminderRecipientFieldPath || 'Not configured'}
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button type="button" variant={step === 'select' ? 'default' : 'outline'} size="sm" onClick={() => setStep('select')}>1. Select invoices</Button>
-                  <Button type="button" variant={step === 'edit' ? 'default' : 'outline'} size="sm" onClick={() => setStep('edit')} disabled={!selectedRows.length}>2. Edit email</Button>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">Related invoices</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Same buyer and same buyer group, using the current Due in next days value.
+                    </p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={toggleAll}>
+                    {selectedIds.length === candidates.length ? 'Clear all' : 'Select all'}
+                  </Button>
+                </div>
+                <div className="max-h-[34vh] overflow-auto rounded-lg border border-border">
+                  <table className="w-full min-w-[1160px] text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/40">
+                        <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Include</th>
+                        <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Stem Name</th>
+                        <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer</th>
+                        <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Group</th>
+                        <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Receivable Balance</th>
+                        <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Due Date</th>
+                        <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recipient</th>
+                        <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collection</th>
+                        <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {candidates.map((candidate, idx) => (
+                        <tr key={candidate.stemId} className={`border-b border-border/40 ${rowSeverityClass(candidate, idx)}`}>
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.includes(candidate.stemId)}
+                              onChange={() => toggleInvoice(candidate.stemId)}
+                            />
+                          </td>
+                          <td className="px-3 py-2 font-medium text-foreground">{candidate.stemName || '-'}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{candidate.buyerName || '-'}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{candidate.buyerGroupName || '-'}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.receivableBalance)}</td>
+                          <td className="px-3 py-2 text-foreground">{fmtDate(candidate.buyerInvoiceDueDate)}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{candidate.paymentReminderRecipient || '-'}</td>
+                          <td className="px-3 py-2">
+                            <span className={`w-fit rounded-full border px-2 py-0.5 text-xs font-medium ${collectionPill(collectionStatus(candidate))}`}>
+                              {collectionStatus(candidate)}
+                            </span>
+                          </td>
+                          <td className={`px-3 py-2 text-right font-medium ${dueTextClass(candidate.daysUntilDue)}`}>
+                            {overdueDisplayValue(candidate.daysUntilDue)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
-              {step === 'select' && (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold text-foreground">Related invoices</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Same buyer and same buyer group, using the current Due in next days value.
-                      </p>
-                    </div>
-                    <Button type="button" variant="outline" size="sm" onClick={toggleAll}>
-                      {selectedIds.length === candidates.length ? 'Clear all' : 'Select all'}
-                    </Button>
+              <div className="space-y-3 rounded-xl border border-border bg-background/40 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Email</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Review recipients, subject, content, and the inline invoice table before sending.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-1.5 md:col-span-3">
+                    <Label className="text-xs text-muted-foreground">To</Label>
+                    <Input
+                      value={form.to}
+                      onChange={(event) => updateForm('to', event.target.value)}
+                      placeholder="buyer@example.com"
+                    />
                   </div>
-                  <div className="max-h-[48vh] overflow-auto rounded-lg border border-border">
-                    <table className="w-full min-w-[1160px] text-sm">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">CC</Label>
+                    <Input value={form.cc} onChange={(event) => updateForm('cc', event.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">BCC</Label>
+                    <Input value={form.bcc} onChange={(event) => updateForm('bcc', event.target.value)} />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-3">
+                    <Label className="text-xs text-muted-foreground">Subject</Label>
+                    <Input value={form.subject} onChange={(event) => updateForm('subject', event.target.value)} />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-3">
+                    <Label className="text-xs text-muted-foreground">Email content</Label>
+                    <div className="rounded-md border border-input bg-background [&_.ql-container]:min-h-64 [&_.ql-container]:border-0 [&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-border">
+                      <ReactQuill
+                        theme="snow"
+                        modules={QUILL_MODULES}
+                        value={form.body}
+                        onChange={(value) => updateForm('body', value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border bg-card">
+                  <div className="border-b border-border px-4 py-3">
+                    <h3 className="text-sm font-semibold text-foreground">Invoice table preview</h3>
+                    <p className="text-xs text-muted-foreground">{selectedRows.length.toLocaleString()} invoices will be included inline in the email.</p>
+                  </div>
+                  <div className="max-h-[34vh] overflow-auto">
+                    <table className="w-full min-w-[980px] text-xs">
                       <thead>
                         <tr className="border-b border-border bg-muted/40">
-                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Include</th>
-                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Stem Name</th>
-                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer</th>
-                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Group</th>
-                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Receivable Balance</th>
-                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Due Date</th>
-                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recipient</th>
-                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collection</th>
-                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
+                          <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Stem Name</th>
+                          <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Buyer</th>
+                          <th className="sticky top-0 bg-card px-3 py-2 text-right font-semibold uppercase tracking-wide text-muted-foreground">Invoice Amount</th>
+                          <th className="sticky top-0 bg-card px-3 py-2 text-right font-semibold uppercase tracking-wide text-muted-foreground">Receivable</th>
+                          <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Due Date</th>
+                          <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
+                          <th className="sticky top-0 bg-card px-3 py-2 text-right font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {candidates.map((candidate, idx) => (
+                        {selectedRows.map((candidate, idx) => (
                           <tr key={candidate.stemId} className={`border-b border-border/40 ${rowSeverityClass(candidate, idx)}`}>
-                            <td className="px-3 py-2">
-                              <input
-                                type="checkbox"
-                                checked={selectedIds.includes(candidate.stemId)}
-                                onChange={() => toggleInvoice(candidate.stemId)}
-                              />
-                            </td>
                             <td className="px-3 py-2 font-medium text-foreground">{candidate.stemName || '-'}</td>
                             <td className="px-3 py-2 text-muted-foreground">{candidate.buyerName || '-'}</td>
-                            <td className="px-3 py-2 text-muted-foreground">{candidate.buyerGroupName || '-'}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.invoiceAmount)}</td>
                             <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.receivableBalance)}</td>
                             <td className="px-3 py-2 text-foreground">{fmtDate(candidate.buyerInvoiceDueDate)}</td>
-                            <td className="px-3 py-2 text-muted-foreground">{candidate.paymentReminderRecipient || '-'}</td>
-                            <td className="px-3 py-2">
-                              <span className={`w-fit rounded-full border px-2 py-0.5 text-xs font-medium ${collectionPill(collectionStatus(candidate))}`}>
-                                {collectionStatus(candidate)}
-                              </span>
-                            </td>
-                            <td className={`px-3 py-2 text-right font-medium ${dueTextClass(candidate.daysUntilDue)}`}>
-                              {overdueDisplayValue(candidate.daysUntilDue)}
-                            </td>
+                            <td className="px-3 py-2 text-muted-foreground">{candidate.status || '-'}</td>
+                            <td className={`px-3 py-2 text-right font-medium ${dueTextClass(candidate.daysUntilDue)}`}>{overdueDisplayValue(candidate.daysUntilDue)}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  <div className="flex justify-end">
-                    <Button type="button" onClick={() => setStep('edit')} disabled={!selectedRows.length}>
-                      Continue
-                    </Button>
-                  </div>
                 </div>
-              )}
 
-              {step === 'edit' && (
-                <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
-                  <div className="space-y-3">
-                    <div className="rounded-lg border border-border bg-muted/20 p-3">
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Template variables</div>
-                      <VariablePalette onInsert={insertVariable} />
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        Click a variable to insert it into the active field, or drag it into To, CC, BCC, Subject, or Content.
-                      </p>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">To</Label>
-                      <Input
-                        ref={toRef}
-                        value={form.to}
-                        onFocus={() => setActiveTemplateField('to')}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={(event) => dropToken('to', event)}
-                        onChange={(event) => updateForm('to', event.target.value)}
-                        placeholder="buyer@example.com"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">CC</Label>
-                      <Input
-                        ref={ccRef}
-                        value={form.cc}
-                        onFocus={() => setActiveTemplateField('cc')}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={(event) => dropToken('cc', event)}
-                        onChange={(event) => updateForm('cc', event.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">BCC</Label>
-                      <Input
-                        ref={bccRef}
-                        value={form.bcc}
-                        onFocus={() => setActiveTemplateField('bcc')}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={(event) => dropToken('bcc', event)}
-                        onChange={(event) => updateForm('bcc', event.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Subject</Label>
-                      <Input
-                        ref={subjectRef}
-                        value={form.subject}
-                        onFocus={() => setActiveTemplateField('subject')}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={(event) => dropToken('subject', event)}
-                        onChange={(event) => updateForm('subject', event.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Email content</Label>
-                      <div
-                        className="rounded-md border border-input bg-background [&_.ql-container]:min-h-72 [&_.ql-container]:border-0 [&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-border"
-                        onFocus={() => setActiveTemplateField('body')}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={(event) => dropToken('body', event)}
-                      >
-                        <ReactQuill
-                          ref={bodyEditorRef}
-                          theme="snow"
-                          modules={QUILL_MODULES}
-                          value={form.body}
-                          onChange={(value) => updateForm('body', value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <Button type="button" variant="outline" onClick={() => setStep('select')} disabled={sending}>Back</Button>
-                      <Button type="button" onClick={sendReminder} disabled={sending || !selectedRows.length} className="gap-2">
-                        {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                        Send Reminder
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-border bg-background/40">
-                    <div className="border-b border-border px-4 py-3">
-                      <h3 className="text-sm font-semibold text-foreground">Invoice table preview</h3>
-                      <p className="text-xs text-muted-foreground">{selectedRows.length.toLocaleString()} invoices will be included inline in the email.</p>
-                    </div>
-                    <div className="max-h-[58vh] overflow-auto">
-                      <table className="w-full min-w-[980px] text-xs">
-                        <thead>
-                          <tr className="border-b border-border bg-muted/40">
-                            <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Stem Name</th>
-                            <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Buyer</th>
-                            <th className="sticky top-0 bg-card px-3 py-2 text-right font-semibold uppercase tracking-wide text-muted-foreground">Invoice Amount</th>
-                            <th className="sticky top-0 bg-card px-3 py-2 text-right font-semibold uppercase tracking-wide text-muted-foreground">Receivable</th>
-                            <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Due Date</th>
-                            <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
-                            <th className="sticky top-0 bg-card px-3 py-2 text-right font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedRows.map((candidate, idx) => (
-                            <tr key={candidate.stemId} className={`border-b border-border/40 ${rowSeverityClass(candidate, idx)}`}>
-                              <td className="px-3 py-2 font-medium text-foreground">{candidate.stemName || '-'}</td>
-                              <td className="px-3 py-2 text-muted-foreground">{candidate.buyerName || '-'}</td>
-                              <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.invoiceAmount)}</td>
-                              <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.receivableBalance)}</td>
-                              <td className="px-3 py-2 text-foreground">{fmtDate(candidate.buyerInvoiceDueDate)}</td>
-                              <td className="px-3 py-2 text-muted-foreground">{candidate.status || '-'}</td>
-                              <td className={`px-3 py-2 text-right font-medium ${dueTextClass(candidate.daysUntilDue)}`}>{overdueDisplayValue(candidate.daysUntilDue)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                <div className="flex justify-end">
+                  <Button type="button" onClick={sendReminder} disabled={sending || !selectedRows.length} className="gap-2">
+                    {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    Send Reminder
+                  </Button>
                 </div>
-              )}
+              </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaymentReminderTemplateModal({
+  open,
+  emailSettings,
+  updateEmailSetting,
+  emailDirty,
+  emailBusy,
+  emailLoading,
+  emailMessage,
+  emailError,
+  onClose,
+  onCancel,
+  onSave,
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div className="max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border p-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Payment reminder</p>
+            <h2 className="mt-1 text-lg font-semibold text-foreground">Payment Reminder Template</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Default template used when sending a manual reminder from an invoice row.
+            </p>
+          </div>
+          <Button variant="outline" size="icon" onClick={onClose} disabled={emailBusy}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="max-h-[calc(92vh-76px)] overflow-auto p-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1.5 md:col-span-2">
+              <Label className="text-xs text-muted-foreground">Payment reminder recipient field path</Label>
+              <Input
+                value={emailSettings.paymentReminderRecipientFieldPath || ''}
+                onChange={(event) => updateEmailSetting('paymentReminderRecipientFieldPath', event.target.value)}
+                placeholder="Account__r.Payment_Reminder_Email__c"
+              />
+              <p className="text-xs text-muted-foreground">
+                Exact Salesforce field path relative to STEM. The reminder modal uses this to prefill To recipients.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Reminder CC template</Label>
+              <Input
+                value={emailSettings.paymentReminderCc || ''}
+                onChange={(event) => updateEmailSetting('paymentReminderCc', event.target.value)}
+                placeholder="finance@example.com"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Reminder BCC template</Label>
+              <Input
+                value={emailSettings.paymentReminderBcc || ''}
+                onChange={(event) => updateEmailSetting('paymentReminderBcc', event.target.value)}
+                placeholder="archive@example.com"
+              />
+            </div>
+
+            <div className="space-y-1.5 md:col-span-2">
+              <Label className="text-xs text-muted-foreground">Payment reminder subject</Label>
+              <Input
+                value={emailSettings.paymentReminderSubject || ''}
+                onChange={(event) => updateEmailSetting('paymentReminderSubject', event.target.value)}
+              />
+            </div>
+
+            <div className="space-y-1.5 md:col-span-2">
+              <Label className="text-xs text-muted-foreground">Payment reminder content</Label>
+              <div className="rounded-md border border-input bg-background [&_.ql-container]:min-h-72 [&_.ql-container]:border-0 [&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-border">
+                <ReactQuill
+                  theme="snow"
+                  modules={QUILL_MODULES}
+                  value={emailSettings.paymentReminderBody || ''}
+                  onChange={(value) => updateEmailSetting('paymentReminderBody', value)}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Default template includes a 2.00% per month late payment interest charge warning.
+              </p>
+            </div>
+          </div>
+
+          {emailMessage && <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailMessage}</div>}
+          {emailError && <div className="mt-4 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{emailError}</div>}
+
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={onCancel} disabled={emailBusy} className="gap-2">
+              <X className="h-4 w-4" /> Cancel
+            </Button>
+            <Button onClick={onSave} disabled={!emailDirty || emailBusy || emailLoading} className="gap-2">
+              {emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -887,6 +869,7 @@ export default function BuyerInvoices() {
   const [selectedCollectionRow, setSelectedCollectionRow] = useState(null);
   const [selectedReminderRow, setSelectedReminderRow] = useState(null);
   const [showEmailSchedule, setShowEmailSchedule] = useState(false);
+  const [showPaymentReminderTemplate, setShowPaymentReminderTemplate] = useState(false);
   const [savedEmailSettings, setSavedEmailSettings] = useState(readLegacyEmailSettings);
   const [emailSettings, setEmailSettings] = useState(savedEmailSettings);
   const [emailMeta, setEmailMeta] = useState(null);
@@ -902,11 +885,6 @@ export default function BuyerInvoices() {
   const [copiedRowId, setCopiedRowId] = useState(null);
   const traderFilterInitialized = useRef(false);
   const initialBuyerTraderFilter = useRef(initialFilters);
-  const reminderCcRef = useRef(null);
-  const reminderBccRef = useRef(null);
-  const reminderSubjectRef = useRef(null);
-  const reminderBodyEditorRef = useRef(null);
-  const [activeSettingsTemplateField, setActiveSettingsTemplateField] = useState('body');
 
   const emailDirty = useMemo(() => !sameSettings(emailSettings, savedEmailSettings), [emailSettings, savedEmailSettings]);
 
@@ -1064,50 +1042,6 @@ export default function BuyerInvoices() {
     setEmailSettings((prev) => ({ ...prev, [key]: value }));
   };
 
-  const insertSettingsTextVariable = (key, token) => {
-    const refs = {
-      paymentReminderCc: reminderCcRef,
-      paymentReminderBcc: reminderBccRef,
-      paymentReminderSubject: reminderSubjectRef,
-    };
-    const ref = refs[key];
-    const current = emailSettings[key] || '';
-    const node = ref?.current;
-    const start = node?.selectionStart ?? current.length;
-    const end = node?.selectionEnd ?? start;
-    const next = `${current.slice(0, start)}${token}${current.slice(end)}`;
-    updateEmailSetting(key, next);
-    window.setTimeout(() => {
-      node?.focus();
-      node?.setSelectionRange(start + token.length, start + token.length);
-    }, 0);
-  };
-
-  const insertSettingsBodyVariable = (token) => {
-    const editor = reminderBodyEditorRef.current?.getEditor?.();
-    if (!editor) {
-      updateEmailSetting('paymentReminderBody', `${emailSettings.paymentReminderBody || ''}${token}`);
-      return;
-    }
-    const range = editor.getSelection(true);
-    editor.insertText(range?.index ?? editor.getLength(), token);
-    editor.setSelection((range?.index ?? editor.getLength()) + token.length, 0);
-  };
-
-  const insertSettingsVariable = (token) => {
-    if (activeSettingsTemplateField === 'body') insertSettingsBodyVariable(token);
-    else insertSettingsTextVariable(activeSettingsTemplateField, token);
-  };
-
-  const dropSettingsToken = (key, event) => {
-    event.preventDefault();
-    const token = event.dataTransfer.getData('application/x-template-variable') || event.dataTransfer.getData('text/plain');
-    if (!token) return;
-    setActiveSettingsTemplateField(key);
-    if (key === 'body') insertSettingsBodyVariable(token);
-    else insertSettingsTextVariable(key, token);
-  };
-
   const toggleEmailWeekday = (day) => {
     setEmailSettings((prev) => {
       const set = new Set(prev.weekdays || []);
@@ -1163,6 +1097,16 @@ export default function BuyerInvoices() {
   const toggleEmailSchedule = () => {
     if (showEmailSchedule && emailDirty && !window.confirm('Discard unsaved email schedule changes?')) return;
     setShowEmailSchedule((value) => !value);
+  };
+
+  const closePaymentReminderTemplate = () => {
+    if (emailDirty && !window.confirm('Discard unsaved payment reminder template changes?')) return;
+    setShowPaymentReminderTemplate(false);
+  };
+
+  const cancelPaymentReminderTemplate = () => {
+    cancelEmailSettings();
+    setShowPaymentReminderTemplate(false);
   };
 
   const sendEmailReport = async (preview = false) => {
@@ -1222,6 +1166,9 @@ export default function BuyerInvoices() {
           <>
             <Button variant="outline" onClick={toggleEmailSchedule} className="gap-2 w-fit">
               <Mail className="h-4 w-4" /> Internal Email Reminder
+            </Button>
+            <Button variant="outline" onClick={() => setShowPaymentReminderTemplate(true)} className="gap-2 w-fit">
+              <Mail className="h-4 w-4" /> Payment Reminder Template
             </Button>
             <Button variant="outline" onClick={loadRows} disabled={loading} className="gap-2 w-fit">
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
@@ -1412,85 +1359,6 @@ export default function BuyerInvoices() {
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Send times</Label>
               <Input value={emailSettings.sendTimes} onChange={(event) => updateEmailSetting('sendTimes', event.target.value)} placeholder="08:00, 14:00" />
-            </div>
-            <div className="space-y-1.5 lg:col-span-3">
-              <Label className="text-xs text-muted-foreground">Payment reminder recipient field path</Label>
-              <Input
-                value={emailSettings.paymentReminderRecipientFieldPath || ''}
-                onChange={(event) => updateEmailSetting('paymentReminderRecipientFieldPath', event.target.value)}
-                placeholder="Account__r.Payment_Reminder_Email__c"
-              />
-              <p className="text-xs text-muted-foreground">
-                Exact Salesforce field path relative to STEM. The reminder modal uses this to prefill To recipients.
-              </p>
-            </div>
-            <div className="space-y-3 rounded-xl border border-border bg-muted/10 p-4 lg:col-span-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h4 className="text-sm font-semibold text-foreground">Payment reminder template</h4>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Drag variables into CC, BCC, Subject, or Content. Click inserts into the active field.
-                  </p>
-                </div>
-                <VariablePalette onInsert={insertSettingsVariable} />
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Reminder CC template</Label>
-                  <Input
-                    ref={reminderCcRef}
-                    value={emailSettings.paymentReminderCc || ''}
-                    onFocus={() => setActiveSettingsTemplateField('paymentReminderCc')}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => dropSettingsToken('paymentReminderCc', event)}
-                    onChange={(event) => updateEmailSetting('paymentReminderCc', event.target.value)}
-                    placeholder="finance@example.com"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Reminder BCC template</Label>
-                  <Input
-                    ref={reminderBccRef}
-                    value={emailSettings.paymentReminderBcc || ''}
-                    onFocus={() => setActiveSettingsTemplateField('paymentReminderBcc')}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => dropSettingsToken('paymentReminderBcc', event)}
-                    onChange={(event) => updateEmailSetting('paymentReminderBcc', event.target.value)}
-                    placeholder="archive@example.com"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Payment reminder subject</Label>
-                <Input
-                  ref={reminderSubjectRef}
-                  value={emailSettings.paymentReminderSubject || ''}
-                  onFocus={() => setActiveSettingsTemplateField('paymentReminderSubject')}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => dropSettingsToken('paymentReminderSubject', event)}
-                  onChange={(event) => updateEmailSetting('paymentReminderSubject', event.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Payment reminder content</Label>
-                <div
-                  className="rounded-md border border-input bg-background [&_.ql-container]:min-h-52 [&_.ql-container]:border-0 [&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-border"
-                  onFocus={() => setActiveSettingsTemplateField('body')}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => dropSettingsToken('body', event)}
-                >
-                  <ReactQuill
-                    ref={reminderBodyEditorRef}
-                    theme="snow"
-                    modules={QUILL_MODULES}
-                    value={emailSettings.paymentReminderBody || ''}
-                    onChange={(value) => updateEmailSetting('paymentReminderBody', value)}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Default template includes a 2.00% per month late payment interest charge warning.
-                </p>
-              </div>
             </div>
             <div className="space-y-1.5 lg:col-span-2">
               <Label className="text-xs text-muted-foreground">Email content</Label>
@@ -1683,6 +1551,19 @@ export default function BuyerInvoices() {
         daysAhead={Math.max(0, Math.min(Number(daysAhead) || 0, 365))}
         onClose={() => setSelectedReminderRow(null)}
         onSent={handleReminderSent}
+      />
+      <PaymentReminderTemplateModal
+        open={showPaymentReminderTemplate}
+        emailSettings={emailSettings}
+        updateEmailSetting={updateEmailSetting}
+        emailDirty={emailDirty}
+        emailBusy={emailBusy}
+        emailLoading={emailLoading}
+        emailMessage={emailMessage}
+        emailError={emailError}
+        onClose={closePaymentReminderTemplate}
+        onCancel={cancelPaymentReminderTemplate}
+        onSave={saveEmailSettings}
       />
     </div>
   );
