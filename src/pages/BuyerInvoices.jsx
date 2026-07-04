@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CalendarClock, Check, Copy, Download, Eye, Loader2, Mail, MessageSquareText, RefreshCw, ReceiptText, Save, Send, X } from 'lucide-react';
+import { AlertCircle, CalendarClock, Check, Copy, Eye, Loader2, Mail, MessageSquareText, RefreshCw, ReceiptText, Save, Send, X } from 'lucide-react';
 import { format } from 'date-fns';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -87,8 +87,6 @@ const fmtDateTime = (value) => {
   if (!value) return '-';
   try { return format(new Date(value), 'dd MMM yyyy HH:mm'); } catch { return textValue(value); }
 };
-
-const csvValue = (value) => `"${textValue(value, '').replaceAll('"', '""')}"`;
 
 function splitBuyerTraderNames(value) {
   return textValue(value, '')
@@ -898,7 +896,6 @@ export default function BuyerInvoices() {
   const [emailError, setEmailError] = useState(null);
   const [selectedBuyerTraders, setSelectedBuyerTraders] = useState([]);
   const [selectedCollectionStatuses, setSelectedCollectionStatuses] = useState(COLLECTION_STATUSES);
-  const [selectedOwners, setSelectedOwners] = useState([]);
   const [severityFilter, setSeverityFilter] = useState('all');
   const [followUpFilter, setFollowUpFilter] = useState('all');
   const [actionOnly, setActionOnly] = useState(false);
@@ -914,13 +911,12 @@ export default function BuyerInvoices() {
   const emailDirty = useMemo(() => !sameSettings(emailSettings, savedEmailSettings), [emailSettings, savedEmailSettings]);
 
   const buyerTraderOptions = useMemo(() => (
-    [...new Set(rows.flatMap((row) => splitBuyerTraderNames(row.buyerTraderInCharge)))]
+    [...new Set(rows.flatMap((row) => [
+      ...splitBuyerTraderNames(row.buyerTraderInCharge),
+      collectionOwner(row),
+    ].filter(Boolean)))]
       .sort((a, b) => a.localeCompare(b))
   ), [rows]);
-
-  const ownerOptions = useMemo(() => (
-    buyerTraderOptions
-  ), [buyerTraderOptions]);
 
   useEffect(() => {
     if (!buyerTraderOptions.length) {
@@ -943,23 +939,18 @@ export default function BuyerInvoices() {
     });
   }, [buyerTraderOptions]);
 
-  useEffect(() => {
-    setSelectedOwners((prev) => prev.filter((name) => ownerOptions.includes(name)));
-  }, [ownerOptions]);
-
   const filteredRows = useMemo(() => {
     let next = rows;
     if (buyerTraderOptions.length && selectedBuyerTraders.length !== buyerTraderOptions.length) {
       const selected = new Set(selectedBuyerTraders);
-      next = next.filter((row) => splitBuyerTraderNames(row.buyerTraderInCharge).some((name) => selected.has(name)));
+      next = next.filter((row) => (
+        splitBuyerTraderNames(row.buyerTraderInCharge).some((name) => selected.has(name))
+        || selected.has(collectionOwner(row))
+      ));
     }
     if (selectedCollectionStatuses.length !== COLLECTION_STATUSES.length) {
       const selected = new Set(selectedCollectionStatuses);
       next = next.filter((row) => selected.has(collectionStatus(row)));
-    }
-    if (selectedOwners.length) {
-      const selected = new Set(selectedOwners);
-      next = next.filter((row) => selected.has(collectionOwner(row)));
     }
     if (severityFilter !== 'all') {
       next = next.filter((row) => {
@@ -972,7 +963,7 @@ export default function BuyerInvoices() {
     if (followUpFilter === 'scheduled') next = next.filter((row) => Boolean(row.collection?.nextFollowUpDate));
     if (actionOnly) next = next.filter((row) => isNeedsAction(row, today));
     return next;
-  }, [actionOnly, buyerTraderOptions, followUpFilter, rows, selectedBuyerTraders, selectedCollectionStatuses, selectedOwners, severityFilter, today]);
+  }, [actionOnly, buyerTraderOptions, followUpFilter, rows, selectedBuyerTraders, selectedCollectionStatuses, severityFilter, today]);
 
   const loadRows = async () => {
     const nextDays = Math.max(0, Math.min(Number(daysAhead) || 0, 365));
@@ -1054,35 +1045,6 @@ export default function BuyerInvoices() {
       hasBuyerTraderFilter,
       appUrl: window.location.origin,
     };
-  };
-
-  const exportCsv = () => {
-    const headers = ['Stem Name', 'Buyer Name', 'Invoice Amount', 'Receivable Balance', 'Buyer Invoice Due Date', 'Buyer Trader in Charge', 'PSPRS Status', 'Status', 'Overdue', 'Collection Status', 'Payment Handler', 'Next Follow-up Date', 'Promised Payment Date', 'Promised Amount', 'Latest Note'];
-    const csvRows = filteredRows.map((row) => [
-      row.stemName,
-      row.buyerName,
-      row.invoiceAmount,
-      row.receivableBalance,
-      row.buyerInvoiceDueDate,
-      row.buyerTraderInCharge,
-      row.prpspStatus,
-      row.status,
-      row.daysUntilDue == null ? '' : -Number(row.daysUntilDue),
-      collectionStatus(row),
-      collectionOwner(row),
-      row.collection?.nextFollowUpDate,
-      row.collection?.promisedPaymentDate,
-      row.collection?.promisedAmount,
-      row.collection?.latestNote,
-    ]);
-    const csv = [headers, ...csvRows].map((row) => row.map(csvValue).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `buyer-invoices-due-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   const copyInvoiceRecord = async (row) => {
@@ -1176,14 +1138,6 @@ export default function BuyerInvoices() {
     ));
   };
 
-  const toggleOwner = (owner) => {
-    setSelectedOwners((prev) => (
-      prev.includes(owner)
-        ? prev.filter((item) => item !== owner)
-        : [...prev, owner].sort((a, b) => a.localeCompare(b))
-    ));
-  };
-
   const saveEmailSettings = async () => {
     setEmailBusy(true);
     setEmailError(null);
@@ -1267,10 +1221,7 @@ export default function BuyerInvoices() {
         actions={(
           <>
             <Button variant="outline" onClick={toggleEmailSchedule} className="gap-2 w-fit">
-              <Mail className="h-4 w-4" /> Email Schedule
-            </Button>
-            <Button variant="outline" onClick={exportCsv} disabled={loading || !filteredRows.length} className="gap-2 w-fit">
-              <Download className="h-4 w-4" /> Export CSV
+              <Mail className="h-4 w-4" /> Internal Email Reminder
             </Button>
             <Button variant="outline" onClick={loadRows} disabled={loading} className="gap-2 w-fit">
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
@@ -1308,7 +1259,7 @@ export default function BuyerInvoices() {
           {buyerTraderOptions.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Trader in Charge</Label>
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Trader in Charge / Payment Handler</Label>
                 <button type="button" onClick={toggleAllBuyerTraders} className="text-xs text-primary hover:underline">
                   {selectedBuyerTraders.length === buyerTraderOptions.length ? 'Clear all' : 'Select all'}
                 </button>
@@ -1381,28 +1332,6 @@ export default function BuyerInvoices() {
               <option value="scheduled">Follow-up scheduled</option>
             </select>
           </div>
-          {ownerOptions.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Label className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment Handler</Label>
-              {ownerOptions.map((owner) => (
-                <button
-                  key={owner}
-                  type="button"
-                  onClick={() => toggleOwner(owner)}
-                  className={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
-                    selectedOwners.includes(owner)
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
-                  }`}
-                >
-                  {owner}
-                </button>
-              ))}
-              {selectedOwners.length > 0 && (
-                <button type="button" onClick={() => setSelectedOwners([])} className="text-xs text-primary hover:underline">Clear handlers</button>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -1412,7 +1341,7 @@ export default function BuyerInvoices() {
             <div>
               <div className="flex items-center gap-2">
                 <Mail className="h-4 w-4 text-muted-foreground" />
-                <h3 className="text-sm font-semibold text-foreground">Email Report Schedule</h3>
+                <h3 className="text-sm font-semibold text-foreground">Internal Email Reminder</h3>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 Shared server schedule. Production cron runs weekdays at 08:00 and 14:00 Hong Kong time and prevents duplicate sends.
