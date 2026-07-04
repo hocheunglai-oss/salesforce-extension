@@ -12,7 +12,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { hasUsableSmtpSettings, readSmtpSettings } from '@/lib/smtpSettings';
+import {
+  hasUsableSmtpSettings,
+  readPaymentReminderSmtpSettings,
+  readSmtpSettings,
+  smtpFromAddress,
+} from '@/lib/smtpSettings';
 import { numericValue, textValue } from '@/lib/displayValue';
 
 const EMAIL_SETTINGS_KEY = 'salesforce_extension:buyer_invoice_email_settings';
@@ -626,16 +631,16 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
     }
     setSending(true);
     setError(null);
-    const smtpSettings = readSmtpSettings();
+    const smtpSettings = readPaymentReminderSmtpSettings();
     const hasLocalSmtp = hasUsableSmtpSettings(smtpSettings);
     const hasServerEmailProvider = Boolean(data?.settings?.emailDelivery?.hasServerProvider);
     if (!hasLocalSmtp && !hasServerEmailProvider) {
-      setError('Email sending is not configured. Save SMTP credentials in Settings, or add RESEND_API_KEY / SMTP credentials in Vercel.');
+      setError('Payment reminder email sending is not configured. Save Payment Reminder Sender credentials in Settings, or add RESEND_API_KEY / SMTP credentials in Vercel.');
       setSending(false);
       return;
     }
     const credentials = hasLocalSmtp
-      ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587) } }
+      ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587), from: smtpFromAddress(smtpSettings) } }
       : undefined;
     const res = await appClient.functions.invoke('buyerInvoicePaymentReminderSend', {
       stemId: row.stemId,

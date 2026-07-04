@@ -3263,12 +3263,13 @@ async function buyerInvoicePaymentReminderSend(body, req) {
   });
   const credentials = body.credentials || {};
   const useSmtp = credentials.method === 'smtp' || credentials.smtp || (!process.env.RESEND_API_KEY && process.env.SMTP_HOST);
+  const smtpFrom = credentials.smtp?.from || credentials.from || settings.from;
   let result;
   try {
     result = useSmtp
       ? await sendWithSmtp({
           smtp: credentials.smtp || credentials,
-          from: settings.from,
+          from: smtpFrom,
           to,
           cc,
           bcc,

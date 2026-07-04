@@ -7,7 +7,12 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import ObjectSchemaTree from '@/components/settings/ObjectSchemaTree';
 import PageHeader from '@/components/common/PageHeader';
-import { readSmtpSettings, saveSmtpSettings } from '@/lib/smtpSettings';
+import {
+  readPaymentReminderSmtpSettings,
+  readSmtpSettings,
+  savePaymentReminderSmtpSettings,
+  saveSmtpSettings,
+} from '@/lib/smtpSettings';
 import { RATE_PROVIDER_OPTIONS, readExchangeRateSettings, saveExchangeRateSettings } from '@/lib/exchangeRateSettings';
 import { DOCUMENT_SOURCE_GROUPS, readDocumentSettings, saveDocumentSettings } from '@/lib/documentSettings';
 
@@ -16,6 +21,93 @@ const SETTINGS_KEY = 'report_builder_config';
 async function loadSettingsRecord() {
   const records = await appClient.entities.AppSettings.filter({ key: SETTINGS_KEY });
   return records[0] || null;
+}
+
+function SmtpAccountCard({ title, description, settings, onChange, enableLabel }) {
+  const patch = (updates) => onChange((prev) => ({ ...prev, ...updates }));
+
+  return (
+    <div className="bg-card rounded-xl border border-border p-5 mb-6">
+      <div className="mb-4 flex items-start gap-3">
+        <div className="mt-0.5 rounded-lg bg-muted p-2 text-muted-foreground">
+          <Mail className="h-4 w-4" />
+        </div>
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <label className="flex items-center gap-2 text-sm font-medium text-foreground md:col-span-4">
+          <input
+            type="checkbox"
+            checked={settings.enabled}
+            onChange={(event) => patch({ enabled: event.target.checked })}
+          />
+          {enableLabel}
+        </label>
+        <div className="space-y-1.5 md:col-span-2">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sender Name</Label>
+          <Input
+            value={settings.fromName || ''}
+            onChange={(event) => patch({ fromName: event.target.value })}
+            placeholder="Fratelli Cosulich"
+          />
+        </div>
+        <div className="space-y-1.5 md:col-span-2">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">From Email</Label>
+          <Input
+            value={settings.fromEmail || ''}
+            onChange={(event) => patch({ fromEmail: event.target.value })}
+            placeholder="collections@cosulich.com.hk"
+          />
+        </div>
+        <div className="space-y-1.5 md:col-span-2">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">SMTP Host</Label>
+          <Input
+            value={settings.host}
+            onChange={(event) => patch({ host: event.target.value })}
+            placeholder="smtp.office365.com"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Port</Label>
+          <Input
+            type="number"
+            value={settings.port}
+            onChange={(event) => patch({ port: event.target.value })}
+            placeholder="587"
+          />
+        </div>
+        <label className="flex items-end gap-2 pb-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={settings.secure}
+            onChange={(event) => patch({ secure: event.target.checked })}
+          />
+          SSL/TLS immediately
+        </label>
+        <div className="space-y-1.5 md:col-span-2">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Email Username</Label>
+          <Input
+            value={settings.user}
+            onChange={(event) => patch({ user: event.target.value })}
+            placeholder="email@cosulich.com.hk"
+          />
+        </div>
+        <div className="space-y-1.5 md:col-span-2">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Password / App Password</Label>
+          <Input
+            type="password"
+            value={settings.password}
+            onChange={(event) => patch({ password: event.target.value })}
+            placeholder="Saved when you click Save All Settings"
+          />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function SettingsPage() {
@@ -36,6 +128,7 @@ export default function SettingsPage() {
   const [rbFields, setRbFields] = useState([]);
   const [rbFieldsLoading, setRbFieldsLoading] = useState(false);
   const [smtpSettings, setSmtpSettings] = useState(readSmtpSettings);
+  const [paymentReminderSmtpSettings, setPaymentReminderSmtpSettings] = useState(readPaymentReminderSmtpSettings);
   const [exchangeRateSettings, setExchangeRateSettings] = useState(readExchangeRateSettings);
   const [documentSettings, setDocumentSettings] = useState(readDocumentSettings);
 
@@ -76,6 +169,7 @@ export default function SettingsPage() {
       defaultLimit: Number(defaultLimit),
     };
     saveSmtpSettings(smtpSettings);
+    savePaymentReminderSmtpSettings(paymentReminderSmtpSettings);
     saveExchangeRateSettings(exchangeRateSettings);
     saveDocumentSettings(documentSettings);
     if (settingsRecord) {
@@ -173,73 +267,21 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* ── Email Sending Account ── */}
-      <div className="bg-card rounded-xl border border-border p-5 mb-6">
-        <div className="mb-4 flex items-start gap-3">
-          <div className="mt-0.5 rounded-lg bg-muted p-2 text-muted-foreground">
-            <Mail className="h-4 w-4" />
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Email Sending Account</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Saved SMTP credentials are used by Send Now on the Outstanding Buyer Invoices page. The password is saved in this browser's app settings.
-            </p>
-          </div>
-        </div>
+      <SmtpAccountCard
+        title="Internal Email Reminder Sender"
+        description="Used by Send Now for the internal Outstanding Buyer Invoices report. The password is saved in this browser's app settings."
+        settings={smtpSettings}
+        onChange={setSmtpSettings}
+        enableLabel="Use this SMTP account for Internal Email Reminder Send Now"
+      />
 
-        <div className="grid gap-4 md:grid-cols-4">
-          <label className="flex items-center gap-2 text-sm font-medium text-foreground md:col-span-4">
-            <input
-              type="checkbox"
-              checked={smtpSettings.enabled}
-              onChange={(event) => setSmtpSettings((prev) => ({ ...prev, enabled: event.target.checked }))}
-            />
-            Use this SMTP account for Send Now
-          </label>
-          <div className="space-y-1.5 md:col-span-2">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">SMTP Host</Label>
-            <Input
-              value={smtpSettings.host}
-              onChange={(event) => setSmtpSettings((prev) => ({ ...prev, host: event.target.value }))}
-              placeholder="smtp.office365.com"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Port</Label>
-            <Input
-              type="number"
-              value={smtpSettings.port}
-              onChange={(event) => setSmtpSettings((prev) => ({ ...prev, port: event.target.value }))}
-              placeholder="587"
-            />
-          </div>
-          <label className="flex items-end gap-2 pb-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={smtpSettings.secure}
-              onChange={(event) => setSmtpSettings((prev) => ({ ...prev, secure: event.target.checked }))}
-            />
-            SSL/TLS immediately
-          </label>
-          <div className="space-y-1.5 md:col-span-2">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Email Username</Label>
-            <Input
-              value={smtpSettings.user}
-              onChange={(event) => setSmtpSettings((prev) => ({ ...prev, user: event.target.value }))}
-              placeholder="info@cosulich.com.hk"
-            />
-          </div>
-          <div className="space-y-1.5 md:col-span-2">
-            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Password / App Password</Label>
-            <Input
-              type="password"
-              value={smtpSettings.password}
-              onChange={(event) => setSmtpSettings((prev) => ({ ...prev, password: event.target.value }))}
-              placeholder="Saved when you click Save All Settings"
-            />
-          </div>
-        </div>
-      </div>
+      <SmtpAccountCard
+        title="Payment Reminder Sender"
+        description="Used only by customer-facing payment reminder emails. Keep this separate from the internal report sender."
+        settings={paymentReminderSmtpSettings}
+        onChange={setPaymentReminderSmtpSettings}
+        enableLabel="Use this SMTP account for Payment Reminder emails"
+      />
 
       {/* ── Exchange Rate API ── */}
       <div className="bg-card rounded-xl border border-border p-5 mb-6">
