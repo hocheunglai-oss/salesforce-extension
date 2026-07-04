@@ -1,4 +1,5 @@
 import { chunkIds, cleanRecord, getInstanceUrl, sendJson, sfDownload, sfQuery, sfRequest } from '../_salesforce.js';
+import { createClient } from '@supabase/supabase-js';
 
 async function readBody(req) {
   if (req.method === 'GET') return {};
@@ -10,6 +11,296 @@ async function readBody(req) {
   for await (const chunk of req) chunks.push(chunk);
   const raw = Buffer.concat(chunks).toString('utf8');
   return raw ? JSON.parse(raw) : {};
+}
+
+const ADMIN_APP_MODULES = [
+  { id: 'dashboard', label: 'Dashboard', path: '/', sortOrder: 10 },
+  { id: 'review', label: 'Exception Review', path: '/review', sortOrder: 20 },
+  { id: 'disputes', label: 'Dispute Management', path: '/disputes', sortOrder: 30 },
+  { id: 'buyer_invoices', label: 'Outstanding Buyer Invoices', path: '/buyer-invoices', sortOrder: 40 },
+  { id: 'reports', label: 'Report Builder', path: '/reports', sortOrder: 50 },
+  { id: 'pnl', label: 'Stem P&L', path: '/pnl', sortOrder: 60 },
+  { id: 'brokers', label: "Broker's Commission", path: '/brokers', sortOrder: 70 },
+  { id: 'explorer', label: 'Data Explorer', path: '/explorer', sortOrder: 80 },
+  { id: 'settings', label: 'Settings', path: '/settings', sortOrder: 90 },
+  { id: 'admin', label: 'Admin Control', path: '/admin', sortOrder: 100 },
+];
+
+const ADMIN_USER_TYPES = new Set(['administrator', 'manager', 'finance', 'operations', 'viewer']);
+const ADMIN_MODULE_IDS = new Set(ADMIN_APP_MODULES.map((module) => module.id));
+const ADMIN_FULL_ACCESS = Object.fromEntries(ADMIN_APP_MODULES.map((module) => [module.id, true]));
+
+function appError(message, status = 500) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function supabaseUrl() {
+  return process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+}
+
+let cachedSupabaseAdmin = null;
+
+function supabaseAdminClient() {
+  const url = supabaseUrl();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) {
+    throw appError('Missing Supabase server configuration. Set SUPABASE_URL or VITE_SUPABASE_URL, plus SUPABASE_SERVICE_ROLE_KEY in Vercel.', 500);
+  }
+  if (!cachedSupabaseAdmin) {
+    cachedSupabaseAdmin = createClient(url, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+  }
+  return cachedSupabaseAdmin;
+}
+
+function bearerToken(req) {
+  const header = req.headers?.authorization || req.headers?.Authorization || '';
+  const match = String(header).match(/^Bearer\s+(.+)$/i);
+  return match?.[1] || null;
+}
+
+async function requireAdministrator(req) {
+  const token = bearerToken(req);
+  if (!token) throw appError('Administrator sign-in required.', 401);
+
+  const client = supabaseAdminClient();
+  const { data: userData, error: userError } = await client.auth.getUser(token);
+  if (userError || !userData?.user) throw appError('Invalid or expired session. Sign in again.', 401);
+
+  const { data: profile, error: profileError } = await client
+    .from('user_profiles')
+    .select('id,email,full_name,user_type,active')
+    .eq('id', userData.user.id)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  if (!profile?.active || profile.user_type !== 'administrator') {
+    throw appError('Administrator access required.', 403);
+  }
+
+  return { client, authUser: userData.user, profile };
+}
+
+function normalizePermissions(userType, permissions = {}) {
+  if (userType === 'administrator') return ADMIN_FULL_ACCESS;
+  const normalized = {};
+  for (const module of ADMIN_APP_MODULES) {
+    normalized[module.id] = permissions?.[module.id] === true;
+  }
+  return normalized;
+}
+
+function sanitizeManagedUserPayload(body = {}) {
+  const email = String(body.email || '').trim().toLowerCase();
+  const fullName = String(body.full_name || body.fullName || '').trim();
+  const userType = ADMIN_USER_TYPES.has(body.user_type) ? body.user_type : 'viewer';
+  const active = body.active !== false;
+  const password = String(body.password || '');
+  const id = body.id ? String(body.id) : null;
+
+  if (!email || !email.includes('@')) throw appError('Valid email is required.', 400);
+  if (!id && password.length < 8) throw appError('Password must be at least 8 characters.', 400);
+  if (id && password && password.length < 8) throw appError('New password must be at least 8 characters.', 400);
+
+  return {
+    id,
+    email,
+    full_name: fullName || email,
+    user_type: userType,
+    active,
+    password,
+    permissions: normalizePermissions(userType, body.permissions || {}),
+  };
+}
+
+async function findAuthUserByEmail(client, email) {
+  const target = String(email || '').toLowerCase();
+  for (let page = 1; page <= 20; page += 1) {
+    const { data, error } = await client.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw error;
+    const found = (data?.users || []).find((user) => String(user.email || '').toLowerCase() === target);
+    if (found) return found;
+    if (!data?.users?.length || data.users.length < 1000) break;
+  }
+  return null;
+}
+
+async function writeAdminAudit(client, actor, action, targetUserId, targetEmail, metadata = {}) {
+  const row = {
+    actor_user_id: actor?.id || null,
+    actor_email: actor?.email || null,
+    action,
+    target_user_id: targetUserId || null,
+    target_email: targetEmail || null,
+    metadata,
+  };
+  const { error } = await client.from('admin_audit_logs').insert(row);
+  if (error) console.error('Failed to write admin audit log', error.message);
+}
+
+async function persistManagedUser(client, body, actor = null) {
+  const payload = sanitizeManagedUserPayload(body);
+  let authUser = null;
+  const isUpdate = Boolean(payload.id);
+
+  if (isUpdate) {
+    const updatePayload = {
+      email: payload.email,
+      user_metadata: { full_name: payload.full_name },
+      app_metadata: { user_type: payload.user_type },
+    };
+    if (payload.password) updatePayload.password = payload.password;
+    const { data, error } = await client.auth.admin.updateUserById(payload.id, updatePayload);
+    if (error) throw error;
+    authUser = data.user;
+  } else {
+    const existing = await findAuthUserByEmail(client, payload.email);
+    if (existing) {
+      authUser = existing;
+      const updatePayload = {
+        user_metadata: { full_name: payload.full_name },
+        app_metadata: { user_type: payload.user_type },
+      };
+      if (payload.password) updatePayload.password = payload.password;
+      const { error } = await client.auth.admin.updateUserById(existing.id, updatePayload);
+      if (error) throw error;
+    } else {
+      const { data, error } = await client.auth.admin.createUser({
+        email: payload.email,
+        password: payload.password,
+        email_confirm: true,
+        user_metadata: { full_name: payload.full_name },
+        app_metadata: { user_type: payload.user_type },
+      });
+      if (error) throw error;
+      authUser = data.user;
+    }
+  }
+
+  if (!authUser?.id) throw appError('Supabase did not return a user id.', 500);
+
+  const nowIso = new Date().toISOString();
+  const { error: profileError } = await client
+    .from('user_profiles')
+    .upsert({
+      id: authUser.id,
+      email: payload.email,
+      full_name: payload.full_name,
+      user_type: payload.user_type,
+      active: payload.active,
+      updated_at: nowIso,
+    }, { onConflict: 'id' });
+  if (profileError) throw profileError;
+
+  const permissionRows = ADMIN_APP_MODULES.map((module) => ({
+    user_id: authUser.id,
+    module_id: module.id,
+    can_view: payload.permissions[module.id] === true,
+    updated_at: nowIso,
+  }));
+  const { error: deletePermissionError } = await client
+    .from('user_module_permissions')
+    .delete()
+    .eq('user_id', authUser.id);
+  if (deletePermissionError) throw deletePermissionError;
+  const { error: insertPermissionError } = await client
+    .from('user_module_permissions')
+    .insert(permissionRows);
+  if (insertPermissionError) throw insertPermissionError;
+
+  await writeAdminAudit(client, actor, isUpdate ? 'user_updated' : 'user_created', authUser.id, payload.email, {
+    user_type: payload.user_type,
+    active: payload.active,
+    modules: Object.entries(payload.permissions).filter(([, enabled]) => enabled).map(([moduleId]) => moduleId),
+  });
+
+  return {
+    id: authUser.id,
+    email: payload.email,
+    full_name: payload.full_name,
+    user_type: payload.user_type,
+    active: payload.active,
+    permissions: payload.permissions,
+  };
+}
+
+async function adminUsersList(body, req) {
+  const { client } = await requireAdministrator(req);
+  const { data: profiles, error: profileError } = await client
+    .from('user_profiles')
+    .select('id,email,full_name,user_type,active,created_at,updated_at')
+    .order('created_at', { ascending: false });
+  if (profileError) throw profileError;
+
+  const userIds = (profiles || []).map((profile) => profile.id);
+  let permissionRows = [];
+  if (userIds.length) {
+    const { data, error } = await client
+      .from('user_module_permissions')
+      .select('user_id,module_id,can_view')
+      .in('user_id', userIds);
+    if (error) throw error;
+    permissionRows = data || [];
+  }
+
+  const permissionsByUser = {};
+  for (const row of permissionRows) {
+    if (!ADMIN_MODULE_IDS.has(row.module_id)) continue;
+    if (!permissionsByUser[row.user_id]) permissionsByUser[row.user_id] = {};
+    permissionsByUser[row.user_id][row.module_id] = row.can_view === true;
+  }
+
+  const users = (profiles || []).map((profile) => ({
+    ...profile,
+    permissions: profile.user_type === 'administrator'
+      ? ADMIN_FULL_ACCESS
+      : normalizePermissions(profile.user_type, permissionsByUser[profile.id] || {}),
+  }));
+  return { users, modules: ADMIN_APP_MODULES };
+}
+
+async function adminAuditLogs(body, req) {
+  const { client } = await requireAdministrator(req);
+  const limit = Math.max(10, Math.min(Number(body.limit) || 100, 500));
+  const { data, error } = await client
+    .from('admin_audit_logs')
+    .select('id,created_at,actor_user_id,actor_email,action,target_user_id,target_email,metadata')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return { logs: data || [] };
+}
+
+async function adminUserSave(body, req) {
+  const { client, profile } = await requireAdministrator(req);
+  const user = await persistManagedUser(client, body, profile);
+  return { user };
+}
+
+async function adminBootstrap(body = {}) {
+  const expectedSecret = process.env.ADMIN_BOOTSTRAP_SECRET;
+  if (!expectedSecret) throw appError('Missing ADMIN_BOOTSTRAP_SECRET in Vercel.', 500);
+  if (String(body.bootstrapSecret || '') !== expectedSecret) throw appError('Invalid bootstrap secret.', 403);
+
+  const client = supabaseAdminClient();
+  const email = body.email || process.env.INITIAL_ADMIN_EMAIL;
+  const password = body.password || process.env.INITIAL_ADMIN_PASSWORD;
+  const fullName = body.full_name || body.fullName || 'Administrator';
+  const user = await persistManagedUser(client, {
+    email,
+    password,
+    full_name: fullName,
+    user_type: 'administrator',
+    active: true,
+    permissions: ADMIN_FULL_ACCESS,
+  }, { id: null, email: 'bootstrap' });
+
+  return { bootstrapped: true, user: { id: user.id, email: user.email, full_name: user.full_name, user_type: user.user_type } };
 }
 
 async function salesforceSchema() {
@@ -2568,6 +2859,10 @@ const handlers = {
   salesforceDisputeStems,
   stemPnl: stemPnlFull,
   frankfurterUsdCnyRate,
+  adminUsersList,
+  adminAuditLogs,
+  adminUserSave,
+  adminBootstrap,
 };
 
 export default async function handler(req, res) {
@@ -2578,9 +2873,9 @@ export default async function handler(req, res) {
     const fn = handlers[name];
     if (!fn) return sendJson(res, { error: `Unknown function: ${name}` }, 404);
     const body = await readBody(req);
-    const data = await fn(body);
+    const data = await fn(body, req);
     return sendJson(res, data);
   } catch (error) {
-    return sendJson(res, { error: error.message }, 500);
+    return sendJson(res, { error: error.message }, error.status || error.statusCode || 500);
   }
 }

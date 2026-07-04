@@ -1,29 +1,33 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FileBarChart2, Database, PanelLeftClose, PanelLeftOpen, Settings, TrendingUp, DollarSign, ClipboardCheck, ReceiptText, AlertTriangle, ListFilter } from 'lucide-react';
+import { LayoutDashboard, FileBarChart2, Database, PanelLeftClose, PanelLeftOpen, Settings, TrendingUp, DollarSign, ClipboardCheck, ReceiptText, AlertTriangle, ListFilter, ShieldCheck, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/AuthContext';
 
 const navItems = [
   {
     to: '/',
     label: 'Dashboard',
+    moduleId: 'dashboard',
     icon: LayoutDashboard,
     children: [
       { to: '/#filtered-stems', label: 'Filtered STEMs', icon: ListFilter, hash: '#filtered-stems' },
     ],
   },
-  { to: '/review', label: 'Exception Review', icon: ClipboardCheck },
-  { to: '/disputes', label: 'Dispute Management', icon: AlertTriangle },
-  { to: '/buyer-invoices', label: 'Outstanding Buyer Invoices', icon: ReceiptText },
-  { to: '/reports', label: 'Report Builder', icon: FileBarChart2 },
-  { to: '/pnl', label: 'Stem P&L', icon: TrendingUp },
-  { to: '/brokers', label: "Broker's Commission", icon: DollarSign },
-  { to: '/explorer', label: 'Data Explorer', icon: Database },
-  { to: '/settings', label: 'Settings', icon: Settings },
+  { to: '/review', label: 'Exception Review', icon: ClipboardCheck, moduleId: 'review' },
+  { to: '/disputes', label: 'Dispute Management', icon: AlertTriangle, moduleId: 'disputes' },
+  { to: '/buyer-invoices', label: 'Outstanding Buyer Invoices', icon: ReceiptText, moduleId: 'buyer_invoices' },
+  { to: '/reports', label: 'Report Builder', icon: FileBarChart2, moduleId: 'reports' },
+  { to: '/pnl', label: 'Stem P&L', icon: TrendingUp, moduleId: 'pnl' },
+  { to: '/brokers', label: "Broker's Commission", icon: DollarSign, moduleId: 'brokers' },
+  { to: '/explorer', label: 'Data Explorer', icon: Database, moduleId: 'explorer' },
+  { to: '/settings', label: 'Settings', icon: Settings, moduleId: 'settings' },
+  { to: '/admin', label: 'Admin Control', icon: ShieldCheck, moduleId: 'admin' },
 ];
 
 export default function Layout() {
   const location = useLocation();
+  const { user, logout, hasModuleAccess, authMode } = useAuth();
   const [collapsed, setCollapsed] = useState(true);
   const [density, setDensity] = useState(() => localStorage.getItem('table-density') || 'compact');
   const [dirtyState, setDirtyState] = useState({ dirty: false, message: '' });
@@ -103,7 +107,7 @@ export default function Layout() {
 
         {/* Nav */}
         <nav className="flex-1 px-2 py-4 space-y-0.5">
-          {navItems.map(({ to, label, icon: Icon, children }) => {
+          {navItems.filter((item) => hasModuleAccess(item.moduleId)).map(({ to, label, icon: Icon, children }) => {
             const showChildren = children?.length && location.pathname === to;
             return (
               <div key={to} className="space-y-0.5">
@@ -155,6 +159,13 @@ export default function Layout() {
 
         {/* Footer */}
         <div className={cn('py-4 border-t border-sidebar-border space-y-3', collapsed ? 'flex flex-col items-center px-2' : 'px-4')}>
+          {!collapsed && user && (
+            <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+              <div className="truncate text-xs font-semibold text-sidebar-foreground">{user.full_name || user.email}</div>
+              <div className="truncate text-[11px] text-sidebar-foreground/45">{user.email}</div>
+              {authMode === 'local' && <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-amber-300">Local admin mode</div>}
+            </div>
+          )}
           <button
             onClick={() => {
               if (!confirmLeaveWithUnsavedChanges()) return;
@@ -167,6 +178,19 @@ export default function Layout() {
             title={`Table view: ${density === 'compact' ? 'Compact' : 'Comfort'}`}
           >
             {collapsed ? (density === 'compact' ? 'C' : 'Co') : `${density === 'compact' ? 'Compact' : 'Comfort'} view`}
+          </button>
+          <button
+            onClick={() => {
+              if (!confirmLeaveWithUnsavedChanges()) return;
+              logout();
+            }}
+            className={cn(
+              'rounded-md border border-white/10 bg-white/5 text-xs font-medium text-sidebar-foreground/70 shadow-sm transition-colors hover:bg-white/10 hover:text-sidebar-foreground',
+              collapsed ? 'w-8 h-8 flex items-center justify-center' : 'w-full px-3 py-2 flex items-center justify-center gap-2'
+            )}
+            title="Sign out"
+          >
+            {collapsed ? <LogOut className="h-3.5 w-3.5" /> : <><LogOut className="h-3.5 w-3.5" /> Sign out</>}
           </button>
           {collapsed ? (
             <span className="inline-block w-2 h-2 rounded-full bg-green-400" title="Connected to Salesforce" />

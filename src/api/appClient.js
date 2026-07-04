@@ -1,3 +1,5 @@
+import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient';
+
 const STORAGE_PREFIX = 'salesforce_extension';
 
 const storage = {
@@ -69,9 +71,14 @@ function createEntityStore(name) {
 }
 
 async function invoke(name, payload = {}) {
+  const headers = { 'content-type': 'application/json' };
+  if (isSupabaseConfigured) {
+    const { data } = await supabase.auth.getSession();
+    if (data?.session?.access_token) headers.authorization = `Bearer ${data.session.access_token}`;
+  }
   const res = await fetch(`/api/functions/${name}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify(payload),
   });
   const data = await res.json().catch(() => ({}));
@@ -91,14 +98,21 @@ export const appClient = {
   },
   auth: {
     async me() {
+      if (isSupabaseConfigured) {
+        const { data, error } = await supabase.auth.getUser();
+        if (error) throw error;
+        return data.user;
+      }
       return {
         id: 'local-admin',
-        full_name: 'Local Admin',
-        email: 'local@salesforce-extension.app',
+        full_name: 'Vincent',
+        email: 'vincent@cosulich.com.hk',
         role: 'admin',
       };
     },
-    logout() {},
+    async logout() {
+      if (isSupabaseConfigured) await supabase.auth.signOut();
+    },
     redirectToLogin() {},
   },
 };
