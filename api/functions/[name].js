@@ -1302,11 +1302,27 @@ async function salesforceStemDocumentUpload(body = {}) {
   return salesforceStemDocuments({ stemId: actualStemId });
 }
 
+async function assertDirectStemDocument(stemId, { kind, id }) {
+  const actualStemId = await resolveStemId(stemId);
+  const documentsResponse = await salesforceStemDocuments({ stemId: actualStemId });
+  const directStemDocument = (documentsResponse.documents || []).find((document) => {
+    const documentId = kind === 'attachment'
+      ? document.attachmentId
+      : document.contentDocumentId || document.id;
+    return document.sourceGroup === 'Direct STEM' && documentId === id;
+  });
+  if (!directStemDocument) {
+    throw appError('Only Direct STEM dispute-flow documents can be renamed or deleted here.', 403);
+  }
+  return actualStemId;
+}
+
 async function salesforceDocumentRename(body = {}) {
   const title = cleanDownloadFilename(body.title || body.fileName || 'Salesforce File');
   const kind = body.kind === 'attachment' || body.attachmentId ? 'attachment' : 'contentDocument';
   const id = body.attachmentId || body.contentDocumentId || body.id;
   if (!isSalesforceId(id)) throw appError('Valid document id required.', 400);
+  const actualStemId = await assertDirectStemDocument(body.stemId, { kind, id });
 
   if (kind === 'attachment') {
     await sfRequest(`/sobjects/Attachment/${encodeURIComponent(id)}`, {
@@ -1320,20 +1336,21 @@ async function salesforceDocumentRename(body = {}) {
     });
   }
 
-  return body.stemId ? salesforceStemDocuments({ stemId: body.stemId }) : { success: true };
+  return salesforceStemDocuments({ stemId: actualStemId });
 }
 
 async function salesforceDocumentDelete(body = {}) {
   const kind = body.kind === 'attachment' || body.attachmentId ? 'attachment' : 'contentDocument';
   const id = body.attachmentId || body.contentDocumentId || body.id;
   if (!isSalesforceId(id)) throw appError('Valid document id required.', 400);
+  const actualStemId = await assertDirectStemDocument(body.stemId, { kind, id });
 
   const path = kind === 'attachment'
     ? `/sobjects/Attachment/${encodeURIComponent(id)}`
     : `/sobjects/ContentDocument/${encodeURIComponent(id)}`;
   await sfRequest(path, { method: 'DELETE' });
 
-  return body.stemId ? salesforceStemDocuments({ stemId: body.stemId }) : { success: true };
+  return salesforceStemDocuments({ stemId: actualStemId });
 }
 
 async function salesforceStemDocuments(body = {}) {

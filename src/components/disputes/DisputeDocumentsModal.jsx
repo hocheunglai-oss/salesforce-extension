@@ -4,6 +4,7 @@ import { appClient } from '@/api/appClient';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { textValue } from '@/lib/displayValue';
 
 const fmtDate = (value) => {
@@ -38,6 +39,46 @@ const documentPreviewKind = (document) => {
 };
 
 const documentKind = (document) => document.attachmentId ? 'attachment' : 'contentDocument';
+
+const documentSearchText = (document) => [
+  document.fileName,
+  document.title,
+  document.sourceGroup,
+  document.sourceLabel,
+  document.sourceObject,
+  document.fileType,
+  document.fileExtension,
+].filter(Boolean).join(' ').toLowerCase();
+
+const isDisputeFlowDocument = (document) => document.sourceGroup === 'Direct STEM';
+const isBdnDocument = (document) => (
+  document.sourceGroup === 'Product Line Attachments'
+  || /\b(bdn|delivery|bunker delivery|delivery note)\b/i.test(documentSearchText(document))
+);
+const isStemDocument = (document) => (
+  document.sourceGroup === 'Invoices to Buyer'
+  || document.sourceGroup === 'Invoices from Suppliers'
+  || document.sourceGroup === 'Contracts and Compliance'
+  || isBdnDocument(document)
+);
+
+const documentSourceLabel = (document) => {
+  if (isBdnDocument(document)) return 'BDN';
+  if (document.sourceGroup === 'Invoices to Buyer') {
+    return document.sourceLabel && /factoring/i.test(document.sourceLabel)
+      ? 'Invoices to Buyer / Factoring Invoice'
+      : 'Invoices to Buyer';
+  }
+  return document.sourceGroup || 'Document';
+};
+
+const documentSourceDetail = (document) => {
+  const sourceLabel = documentSourceLabel(document);
+  const detail = document.sourceLabel;
+  if (!detail || detail === sourceLabel) return '';
+  if (/factoring/i.test(sourceLabel) && /factoring/i.test(detail)) return '';
+  return ` · ${detail}`;
+};
 
 const readFileAsBase64 = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -103,6 +144,7 @@ function DocumentPreview({ document, onClose }) {
 
 export default function DisputeDocumentsModal({ stem, open, onClose }) {
   const [documents, setDocuments] = useState([]);
+  const [activeTab, setActiveTab] = useState('disputeFlow');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [file, setFile] = useState(null);
@@ -119,6 +161,10 @@ export default function DisputeDocumentsModal({ stem, open, onClose }) {
   const sortedDocuments = useMemo(() => documents.slice().sort((a, b) => {
     return String(b.createdDate || '').localeCompare(String(a.createdDate || ''));
   }), [documents]);
+  const disputeFlowDocuments = useMemo(() => sortedDocuments.filter(isDisputeFlowDocument), [sortedDocuments]);
+  const stemDocuments = useMemo(() => sortedDocuments.filter(isStemDocument), [sortedDocuments]);
+  const activeDocuments = activeTab === 'disputeFlow' ? disputeFlowDocuments : stemDocuments;
+  const canManageActiveDocuments = activeTab === 'disputeFlow';
 
   const loadDocuments = async () => {
     if (!stemId) return;
@@ -137,6 +183,7 @@ export default function DisputeDocumentsModal({ stem, open, onClose }) {
   useEffect(() => {
     if (!open) return;
     setDocuments([]);
+    setActiveTab('disputeFlow');
     setFile(null);
     setUploadName('');
     setRenameKey(null);
@@ -223,37 +270,63 @@ export default function DisputeDocumentsModal({ stem, open, onClose }) {
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onClose}>
-        <DialogContent className="flex max-h-[90vh] w-[min(1120px,94vw)] max-w-none flex-col overflow-hidden p-0">
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && previewDocument) return;
+          if (!nextOpen) onClose();
+        }}
+      >
+        <DialogContent
+          className="flex max-h-[90vh] w-[min(1120px,94vw)] max-w-none flex-col overflow-hidden p-0"
+          onEscapeKeyDown={(event) => {
+            if (previewDocument) event.preventDefault();
+          }}
+          onPointerDownOutside={(event) => {
+            if (previewDocument) event.preventDefault();
+          }}
+          onInteractOutside={(event) => {
+            if (previewDocument) event.preventDefault();
+          }}
+        >
           <DialogHeader className="border-b border-border px-5 py-4">
             <DialogTitle className="pr-8">Documents</DialogTitle>
             <div className="text-sm text-muted-foreground">{stemName}</div>
           </DialogHeader>
 
           <div className="space-y-4 overflow-y-auto px-5 py-4">
-            <div className="rounded-xl border border-border bg-muted/10 p-3">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upload Document</div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">The file will be linked directly to this STEM in Salesforce.</div>
-                </div>
-                <Button variant="outline" size="sm" onClick={loadDocuments} disabled={loading} className="gap-2">
-                  {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Refresh
-                </Button>
-              </div>
-              <div className="grid gap-2 md:grid-cols-[1.2fr_1fr_auto]">
-                <Input type="file" onChange={handleFileChange} className="h-9 text-xs" />
-                <Input
-                  value={uploadName}
-                  onChange={(event) => setUploadName(event.target.value)}
-                  placeholder="Document name shown in Salesforce"
-                  className="h-9 text-xs"
-                />
-                <Button onClick={handleUpload} disabled={!file || uploading} className="h-9 gap-2">
-                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload
-                </Button>
-              </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Tabs value={activeTab} onValueChange={setActiveTab}>
+                <TabsList>
+                  <TabsTrigger value="disputeFlow">Dispute Flow ({disputeFlowDocuments.length})</TabsTrigger>
+                  <TabsTrigger value="stemDocuments">Stem Documents ({stemDocuments.length})</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <Button variant="outline" size="sm" onClick={loadDocuments} disabled={loading} className="gap-2">
+                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Refresh
+              </Button>
             </div>
+
+            {activeTab === 'disputeFlow' && (
+              <div className="rounded-xl border border-border bg-muted/10 p-3">
+                <div className="mb-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upload Document</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">The file will be linked directly to this STEM as a Dispute Flow document.</div>
+                </div>
+                <div className="grid gap-2 md:grid-cols-[1.2fr_1fr_auto]">
+                  <Input type="file" onChange={handleFileChange} className="h-9 text-xs" />
+                  <Input
+                    value={uploadName}
+                    onChange={(event) => setUploadName(event.target.value)}
+                    placeholder="Document name shown in Salesforce"
+                    className="h-9 text-xs"
+                  />
+                  <Button onClick={handleUpload} disabled={!file || uploading} className="h-9 gap-2">
+                    {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {error && (
               <div className="flex gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -264,15 +337,18 @@ export default function DisputeDocumentsModal({ stem, open, onClose }) {
             <div className="overflow-hidden rounded-xl border border-border">
               <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-2">
                 <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Related Documents ({sortedDocuments.length})
+                  {activeTab === 'disputeFlow' ? 'Dispute Flow Documents' : 'Stem Documents'} ({activeDocuments.length})
                 </div>
+                {activeTab === 'stemDocuments' && (
+                  <div className="text-[11px] text-muted-foreground">View only: invoices, BDN, contracts, and compliance documents</div>
+                )}
               </div>
 
               {loading ? (
                 <div className="flex items-center gap-2 px-4 py-8 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading Salesforce documents…
                 </div>
-              ) : sortedDocuments.length ? (
+              ) : activeDocuments.length ? (
                 <div className="max-h-[48vh] overflow-auto">
                   <table className="w-full min-w-[940px] text-xs">
                     <thead>
@@ -286,7 +362,7 @@ export default function DisputeDocumentsModal({ stem, open, onClose }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedDocuments.map((document, index) => {
+                      {activeDocuments.map((document, index) => {
                         const isRenaming = renameKey === document.key;
                         const isBusy = busyKey === document.key;
                         return (
@@ -310,7 +386,7 @@ export default function DisputeDocumentsModal({ stem, open, onClose }) {
                                 </div>
                               )}
                             </td>
-                            <td className="px-3 py-2.5 text-muted-foreground">{document.sourceGroup || '—'}{document.sourceLabel ? ` · ${document.sourceLabel}` : ''}</td>
+                            <td className="px-3 py-2.5 text-muted-foreground">{documentSourceLabel(document)}{documentSourceDetail(document)}</td>
                             <td className="px-3 py-2.5 text-muted-foreground">{document.fileType || document.fileExtension || 'File'}</td>
                             <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{fmtBytes(document.contentSize)}</td>
                             <td className="px-3 py-2.5 text-muted-foreground">{fmtDate(document.createdDate)}</td>
@@ -330,12 +406,16 @@ export default function DisputeDocumentsModal({ stem, open, onClose }) {
                                     <Download className="h-3.5 w-3.5" /> View
                                   </a>
                                 )}
-                                <Button size="sm" variant="outline" onClick={() => startRename(document)} disabled={isBusy} className="h-8 gap-1">
-                                  <Pencil className="h-3.5 w-3.5" /> Rename
-                                </Button>
-                                <Button size="sm" variant="outline" onClick={() => handleDelete(document)} disabled={isBusy} className="h-8 gap-1 text-destructive hover:text-destructive">
-                                  {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Delete
-                                </Button>
+                                {canManageActiveDocuments && (
+                                  <>
+                                    <Button size="sm" variant="outline" onClick={() => startRename(document)} disabled={isBusy} className="h-8 gap-1">
+                                      <Pencil className="h-3.5 w-3.5" /> Rename
+                                    </Button>
+                                    <Button size="sm" variant="outline" onClick={() => handleDelete(document)} disabled={isBusy} className="h-8 gap-1 text-destructive hover:text-destructive">
+                                      {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Delete
+                                    </Button>
+                                  </>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -346,7 +426,9 @@ export default function DisputeDocumentsModal({ stem, open, onClose }) {
                 </div>
               ) : (
                 <div className="px-4 py-8 text-sm text-muted-foreground">
-                  No Salesforce documents were found for this STEM or its related records.
+                  {activeTab === 'disputeFlow'
+                    ? 'No Direct STEM documents were found for this Dispute Flow.'
+                    : 'No buyer invoice, supplier invoice, BDN, contract, or compliance documents were found for this STEM.'}
                 </div>
               )}
             </div>
