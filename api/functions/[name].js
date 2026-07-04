@@ -2787,7 +2787,7 @@ async function salesforceDisputeStems(body) {
 
     if (disputeObjectFieldNames.includes('STEM__c')) {
       const disputeSelectFields = ['Id', 'STEM__c'];
-      for (const field of ['Status_Buyer__c', 'Status_Supplier__c', 'Dispute_Status__c', 'Supplier_Key__c']) {
+      for (const field of ['Status_Buyer__c', 'Status_Supplier__c', 'Description_Buyer__c', 'Description_Supplier__c', 'Dispute_Status__c', 'Supplier_Key__c']) {
         if (disputeObjectFieldNames.includes(field)) disputeSelectFields.push(field);
       }
       if (disputeObjectFieldNames.includes('Buyer__c')) {
@@ -2933,31 +2933,59 @@ async function salesforceDisputeStems(body) {
         const buyerDisputes = disputeRecords
           .filter((dispute) => dispute.Status_Buyer__c || dispute.Buyer__c)
           .map((dispute) => ({
+            id: dispute.Id,
             buyerName: dispute[disputeBuyerRelationship]?.Name || dispute.Buyer__c || null,
             status: dispute.Status_Buyer__c || dispute.Dispute_Status__c || 'Yes',
+            description: dispute.Description_Buyer__c || null,
           }));
         const supplierDisputes = disputeRecords
           .filter((dispute) => dispute.Status_Supplier__c || dispute.Supplier__c || dispute.Supplier_Key__c)
           .map((dispute) => ({
+            id: dispute.Id,
             supplierName: dispute[disputeSupplierRelationship]?.Name || dispute.Supplier_Key__c || dispute.Supplier__c || null,
             status: dispute.Status_Supplier__c || dispute.Dispute_Status__c || 'Yes',
+            description: dispute.Description_Supplier__c || null,
           }));
-        const seenSupplierDisputeRows = new Set();
+        const groupedBuyerDisputes = [];
+        const buyerDisputeGroupMap = new Map();
+        for (const dispute of buyerDisputes) {
+          const key = `${supplierMatchKey(dispute.buyerName)}\u0000${dispute.status || ''}\u0000${dispute.description || ''}`;
+          const existing = buyerDisputeGroupMap.get(key);
+          if (existing) {
+            existing.disputeIds.push(dispute.id);
+          } else {
+            const row = {
+              disputeIds: [dispute.id],
+              buyerName: dispute.buyerName,
+              status: dispute.status,
+              description: dispute.description,
+            };
+            buyerDisputeGroupMap.set(key, row);
+            groupedBuyerDisputes.push(row);
+          }
+        }
+        const seenSupplierDisputeRows = new Map();
         const supplierDisputeRows = supplierDisputes
           .map((dispute) => {
             const supplierKey = supplierMatchKey(dispute.supplierName);
             const finance = supplierFinanceByKey.get(supplierKey);
             return {
+              disputeIds: [dispute.id],
               supplierName: dispute.supplierName,
               status: dispute.status,
+              description: dispute.description,
               supplierInvoiceAmount: finance?.supplierInvoiceAmount ?? null,
               payableBalance: finance?.payableBalance ?? null,
             };
           })
           .filter((row) => {
-            const key = `${supplierMatchKey(row.supplierName)}\u0000${row.status || ''}`;
-            if (seenSupplierDisputeRows.has(key)) return false;
-            seenSupplierDisputeRows.add(key);
+            const key = `${supplierMatchKey(row.supplierName)}\u0000${row.status || ''}\u0000${row.description || ''}`;
+            const existing = seenSupplierDisputeRows.get(key);
+            if (existing) {
+              existing.disputeIds.push(...row.disputeIds);
+              return false;
+            }
+            seenSupplierDisputeRows.set(key, row);
             return true;
           });
         const supplierFinanceOnlyRows = [...supplierFinanceByKey.values()]
@@ -2978,11 +3006,12 @@ async function salesforceDisputeStems(body) {
           _Supplier_Names: [...supplierNames].sort().join(', ') || null,
           _Product_Names: [...productNames].sort().join(', ') || null,
           _Supplier_Product_Pairs: supplierProductPairs,
-          _Buyer_Disputes: buyerDisputes,
+          _Buyer_Disputes: groupedBuyerDisputes,
+          _Buyer_Dispute_Rows: groupedBuyerDisputes,
           _Supplier_Disputes: supplierDisputes,
           _Supplier_Dispute_Rows: supplierFinanceRows,
-          _Buyer_Dispute_Label: buyerDisputes.map((dispute) => [dispute.buyerName, dispute.status].filter(Boolean).join(': ')).join('\n') || null,
-          _Supplier_Dispute_Label: supplierFinanceRows.map((dispute) => [dispute.supplierName, dispute.status].filter(Boolean).join(': ')).join('\n') || null,
+          _Buyer_Dispute_Label: groupedBuyerDisputes.map((dispute) => [dispute.buyerName, dispute.status, dispute.description].filter(Boolean).join(': ')).join('\n') || null,
+          _Supplier_Dispute_Label: supplierFinanceRows.map((dispute) => [dispute.supplierName, dispute.status, dispute.description].filter(Boolean).join(': ')).join('\n') || null,
           _Supplier_Invoice_Split_Label: supplierFinanceRows.map((dispute) => dispute.supplierInvoiceAmount).join('\n') || null,
           _Payable_Balance_Split_Label: supplierFinanceRows.map((dispute) => dispute.payableBalance).join('\n') || null,
           _Payable_Balance: payableBalance,
@@ -2992,6 +3021,35 @@ async function salesforceDisputeStems(body) {
         };
       }),
   };
+}
+
+async function salesforceDisputePartyUpdate(body = {}) {
+  const disputeIds = Array.isArray(body.disputeIds)
+    ? body.disputeIds
+    : body.disputeId
+      ? [body.disputeId]
+      : [];
+  const validIds = [...new Set(disputeIds.filter(isSalesforceId))];
+  if (!validIds.length) throw appError('Valid dispute id required.', 400);
+
+  const side = String(body.side || '').toLowerCase();
+  const updates = {};
+  if (side === 'buyer') {
+    updates.Status_Buyer__c = body.status || null;
+    updates.Description_Buyer__c = body.description || null;
+  } else if (side === 'supplier') {
+    updates.Status_Supplier__c = body.status || null;
+    updates.Description_Supplier__c = body.description || null;
+  } else {
+    throw appError('side must be buyer or supplier.', 400);
+  }
+
+  await Promise.all(validIds.map((id) => sfRequest(`/sobjects/Dispute__c/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: updates,
+  })));
+
+  return { success: true, updated: validIds.length };
 }
 
 async function salesforceStemDetailFull(body) {
@@ -3436,6 +3494,7 @@ const handlers = {
   salesforceBuyerInvoicesDue,
   outstandingBuyerInvoicesEmailReport,
   salesforceDisputeStems,
+  salesforceDisputePartyUpdate,
   stemPnl: stemPnlFull,
   frankfurterUsdCnyRate,
   adminUsersList,

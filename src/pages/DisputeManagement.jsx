@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Download, FileText, Loader2, RefreshCw, Search, X } from 'lucide-react';
+import { AlertTriangle, Download, FileText, Loader2, Pencil, RefreshCw, Search, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { appClient } from '@/api/appClient';
 import PageHeader from '@/components/common/PageHeader';
@@ -8,8 +8,10 @@ import TableShell from '@/components/common/TableShell';
 import StemDetailModal from '@/components/dashboard/StemDetailModal';
 import DisputeDocumentsModal from '@/components/disputes/DisputeDocumentsModal';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { numericValue, textValue } from '@/lib/displayValue';
 
 const ACTIVE_DISPUTE_STATUSES = [
@@ -60,15 +62,37 @@ function MultilineValue({ value }) {
   );
 }
 
-function SupplierDisputeLines({ rows }) {
-  if (!Array.isArray(rows)) return <MultilineValue value={rows} />;
+function PartyDisputeLines({ rows, side, fallback, onEdit }) {
+  if (!Array.isArray(rows)) return <MultilineValue value={fallback ?? rows} />;
   const lines = Array.isArray(rows) ? rows : [];
   if (!lines.length) return '—';
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       {lines.map((line, idx) => (
-        <div key={`${line.supplierName || 'supplier'}-${line.status || 'status'}-${idx}`} className="whitespace-nowrap leading-5">
-          {[line.supplierName, line.status].filter(Boolean).join(': ') || '—'}
+        <div key={`${line.disputeIds?.join('-') || side}-${line.supplierName || line.buyerName || 'party'}-${idx}`} className="group flex items-start gap-2 leading-5">
+          <div className="min-w-0">
+            <div className="whitespace-nowrap">
+              {[side === 'buyer' ? line.buyerName : line.supplierName, line.status].filter(Boolean).join(': ') || '—'}
+            </div>
+            {line.description && (
+              <div className="mt-0.5 whitespace-pre-wrap text-[11px] leading-4 text-muted-foreground/85">
+                {line.description}
+              </div>
+            )}
+          </div>
+          {line.disputeIds?.length ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit?.({ ...line, side });
+              }}
+              className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground opacity-70 hover:border-primary/50 hover:text-primary group-hover:opacity-100"
+              title="Edit dispute status and description"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+          ) : null}
         </div>
       ))}
     </div>
@@ -121,6 +145,11 @@ export default function DisputeManagement() {
   const [selectedStatuses, setSelectedStatuses] = useState(NOT_CLOSED_STATUSES);
   const [selectedStemId, setSelectedStemId] = useState(null);
   const [documentsStem, setDocumentsStem] = useState(null);
+  const [editingDispute, setEditingDispute] = useState(null);
+  const [editStatus, setEditStatus] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editError, setEditError] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const loadRows = async () => {
     setLoading(true);
@@ -154,6 +183,43 @@ export default function DisputeManagement() {
 
   const toggleNotClosed = () => {
     setSelectedStatuses(notClosedActive ? [] : NOT_CLOSED_STATUSES);
+  };
+
+  const openDisputeEdit = (line) => {
+    setEditingDispute(line);
+    setEditStatus(line.status || '');
+    setEditDescription(line.description || '');
+    setEditError(null);
+  };
+
+  const closeDisputeEdit = () => {
+    if (savingEdit) return;
+    setEditingDispute(null);
+    setEditStatus('');
+    setEditDescription('');
+    setEditError(null);
+  };
+
+  const saveDisputeEdit = async () => {
+    if (!editingDispute?.disputeIds?.length || savingEdit) return;
+    setSavingEdit(true);
+    setEditError(null);
+    const res = await appClient.functions.invoke('salesforceDisputePartyUpdate', {
+      disputeIds: editingDispute.disputeIds,
+      side: editingDispute.side,
+      status: editStatus,
+      description: editDescription,
+    });
+    if (res.data?.error) {
+      setEditError(res.data.error);
+      setSavingEdit(false);
+      return;
+    }
+    setEditingDispute(null);
+    setEditStatus('');
+    setEditDescription('');
+    setSavingEdit(false);
+    await loadRows();
   };
 
   const filteredRows = useMemo(() => {
@@ -305,6 +371,7 @@ export default function DisputeManagement() {
                 {filteredRows.map((row, idx) => {
                   const pairs = Array.isArray(row._Supplier_Product_Pairs) ? row._Supplier_Product_Pairs : [];
                   const supplierDisputeRows = Array.isArray(row._Supplier_Dispute_Rows) ? row._Supplier_Dispute_Rows : [];
+                  const buyerDisputeRows = Array.isArray(row._Buyer_Dispute_Rows) ? row._Buyer_Dispute_Rows : [];
                   return (
                     <tr key={row.Id} onClick={() => setSelectedStemId(row.Id)} className={`cursor-pointer border-b border-border/40 hover:bg-muted/30 ${idx % 2 ? 'bg-muted/10' : ''}`}>
                       <td className="whitespace-nowrap px-3 py-2.5 font-medium text-foreground">{row._Display_Name || row.Name || '—'}</td>
@@ -336,10 +403,10 @@ export default function DisputeManagement() {
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-muted-foreground" title={row._Buyer_Dispute_Label || ''}>
-                        <MultilineValue value={row._Buyer_Dispute_Label} />
+                        <PartyDisputeLines rows={buyerDisputeRows.length ? buyerDisputeRows : row._Buyer_Dispute_Label} side="buyer" fallback={row._Buyer_Dispute_Label} onEdit={openDisputeEdit} />
                       </td>
                       <td className="px-3 py-2.5 text-muted-foreground" title={supplierRowsTitle(supplierDisputeRows, (line) => [line.supplierName, line.status].filter(Boolean).join(': ')) || row._Supplier_Dispute_Label || ''}>
-                        <SupplierDisputeLines rows={supplierDisputeRows.length ? supplierDisputeRows : row._Supplier_Dispute_Label} />
+                        <PartyDisputeLines rows={supplierDisputeRows.length ? supplierDisputeRows : row._Supplier_Dispute_Label} side="supplier" fallback={row._Supplier_Dispute_Label} onEdit={openDisputeEdit} />
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5">{displayStatus(row.Dispute_Status__c) || '—'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5">{fmtDate(row._Effective_Date)}</td>
@@ -379,6 +446,50 @@ export default function DisputeManagement() {
 
       <StemDetailModal stemId={selectedStemId} open={!!selectedStemId} onClose={() => setSelectedStemId(null)} onUpdated={loadRows} />
       <DisputeDocumentsModal stem={documentsStem} open={!!documentsStem} onClose={() => setDocumentsStem(null)} />
+      <Dialog open={!!editingDispute} onOpenChange={(open) => { if (!open) closeDisputeEdit(); }}>
+        <DialogContent className="w-[min(560px,94vw)] max-w-none">
+          <DialogHeader>
+            <DialogTitle>Edit {editingDispute?.side === 'buyer' ? 'Buyer' : 'Supplier'} Dispute</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Party</div>
+              <div className="mt-1 font-medium text-foreground">
+                {editingDispute?.side === 'buyer' ? editingDispute?.buyerName : editingDispute?.supplierName || '—'}
+              </div>
+              {editingDispute?.disputeIds?.length > 1 && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  This will update {editingDispute.disputeIds.length} duplicate dispute records for the same party.
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</Label>
+              <Input value={editStatus} onChange={(event) => setEditStatus(event.target.value)} placeholder="Dispute status" />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Description</Label>
+              <Textarea value={editDescription} onChange={(event) => setEditDescription(event.target.value)} placeholder="Dispute description" rows={5} />
+            </div>
+
+            {editError && (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {editError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={closeDisputeEdit} disabled={savingEdit}>Cancel</Button>
+              <Button type="button" onClick={saveDisputeEdit} disabled={savingEdit} className="gap-2">
+                {savingEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Save
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
