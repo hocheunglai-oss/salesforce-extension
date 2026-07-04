@@ -886,7 +886,7 @@ export default function BuyerInvoices() {
                 <h3 className="text-sm font-semibold text-foreground">Email Report Schedule</h3>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Shared server schedule. Cron checks these Hong Kong times and prevents duplicate sends.
+                Shared server schedule. Production cron runs weekdays at 08:00 and 14:00 Hong Kong time and prevents duplicate sends.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
