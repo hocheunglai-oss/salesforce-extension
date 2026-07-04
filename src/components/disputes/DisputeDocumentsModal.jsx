@@ -347,6 +347,7 @@ export default function DisputeDocumentsModal({ stem, open, onClose, onEditDispu
   }
   const supplierCount = supplierNames.size;
   const supplierSummary = supplierCount > 1 ? `${supplierCount} suppliers` : [...supplierNames][0] || '—';
+  const hasStatusChange = managedStatus && managedStatus !== stem?.Dispute_Status__c;
 
   const sortedDocuments = useMemo(() => documents.slice().sort((a, b) => {
     return String(b.createdDate || '').localeCompare(String(a.createdDate || ''));
@@ -570,11 +571,11 @@ export default function DisputeDocumentsModal({ stem, open, onClose, onEditDispu
           </DialogHeader>
 
           <div className="grid gap-3 border-b border-border bg-muted/10 px-5 py-3 sm:grid-cols-3 lg:grid-cols-6">
-            <div className="lg:col-span-2">
+            <div>
               <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Dispute Status</div>
-              <div className="mt-1 flex gap-2">
+              <div className="mt-0.5 flex items-center gap-1.5">
                 <Select value={managedStatus} onValueChange={setManagedStatus} disabled={savingStatus}>
-                  <SelectTrigger className="h-8 min-w-0 text-xs">
+                  <SelectTrigger className="h-7 min-w-0 border-0 bg-transparent px-0 py-0 text-sm font-semibold shadow-none focus:ring-0">
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
                   <SelectContent>
@@ -583,15 +584,17 @@ export default function DisputeDocumentsModal({ stem, open, onClose, onEditDispu
                     ))}
                   </SelectContent>
                 </Select>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-8"
-                  onClick={saveManagedStatus}
-                  disabled={savingStatus || !managedStatus || managedStatus === stem?.Dispute_Status__c}
-                >
-                  {savingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save'}
-                </Button>
+                {hasStatusChange && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={saveManagedStatus}
+                    disabled={savingStatus}
+                  >
+                    {savingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save'}
+                  </Button>
+                )}
               </div>
               {statusError && <div className="mt-1 text-[11px] text-destructive">{statusError}</div>}
             </div>
