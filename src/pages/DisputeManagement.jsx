@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { numericValue, textValue } from '@/lib/displayValue';
 
@@ -21,10 +22,20 @@ const ACTIVE_DISPUTE_STATUSES = [
   'Closed',
 ];
 const NOT_CLOSED_STATUSES = ACTIVE_DISPUTE_STATUSES.filter(status => status !== 'Closed');
+const BUYER_DISPUTE_STATUS_OPTIONS = [
+  'No agreement yet',
+  'Settlement Agreement Concluded',
+];
+const SUPPLIER_DISPUTE_STATUS_OPTIONS = [
+  'Decision Pending',
+  'Deduct below amount...',
+  'Pay Full Supplier Invoice Amount',
+];
 
 const normalizeStatus = (value) => textValue(value, '').toLowerCase();
 const displayStatus = (value) =>
   ACTIVE_DISPUTE_STATUSES.find(status => normalizeStatus(status) === normalizeStatus(value)) || value;
+const isDeductBelowAmountStatus = (value) => /deduct\s+below\s+amount/i.test(textValue(value, ''));
 
 const fmtMoney = (value) => {
   const number = numericValue(value);
@@ -79,6 +90,11 @@ function PartyDisputeLines({ rows, side, fallback, onEdit }) {
                 {line.description}
               </div>
             )}
+            {side === 'supplier' && isDeductBelowAmountStatus(line.status) && numericValue(line.deductionAmount) != null && (
+              <div className="mt-0.5 text-[11px] font-medium leading-4 text-amber-700">
+                Deduction amount: {fmtMoney(line.deductionAmount)}
+              </div>
+            )}
           </div>
           {line.disputeIds?.length ? (
             <button
@@ -118,6 +134,13 @@ const supplierRowsTitle = (rows, formatter) =>
     ? rows.map(formatter).join('\n')
     : '';
 
+const disputeStatusOptions = (side, currentStatus) => {
+  const base = side === 'buyer' ? BUYER_DISPUTE_STATUS_OPTIONS : SUPPLIER_DISPUTE_STATUS_OPTIONS;
+  const current = textValue(currentStatus, '').trim();
+  if (!current || base.some(option => normalizeStatus(option) === normalizeStatus(current))) return base;
+  return [...base, current];
+};
+
 const supplierMoneyCsv = (rows, field, fallback) =>
   Array.isArray(rows) && rows.length
     ? rows.map((row) => {
@@ -148,6 +171,7 @@ export default function DisputeManagement() {
   const [editingDispute, setEditingDispute] = useState(null);
   const [editStatus, setEditStatus] = useState('');
   const [editDescription, setEditDescription] = useState('');
+  const [editDeductionAmount, setEditDeductionAmount] = useState('');
   const [editError, setEditError] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -189,6 +213,7 @@ export default function DisputeManagement() {
     setEditingDispute(line);
     setEditStatus(line.status || '');
     setEditDescription(line.description || '');
+    setEditDeductionAmount(line.deductionAmount ?? '');
     setEditError(null);
   };
 
@@ -197,11 +222,13 @@ export default function DisputeManagement() {
     setEditingDispute(null);
     setEditStatus('');
     setEditDescription('');
+    setEditDeductionAmount('');
     setEditError(null);
   };
 
   const saveDisputeEdit = async () => {
     if (!editingDispute?.disputeIds?.length || savingEdit) return;
+    const showDeductionAmount = editingDispute.side === 'supplier' && isDeductBelowAmountStatus(editStatus);
     setSavingEdit(true);
     setEditError(null);
     const res = await appClient.functions.invoke('salesforceDisputePartyUpdate', {
@@ -209,6 +236,7 @@ export default function DisputeManagement() {
       side: editingDispute.side,
       status: editStatus,
       description: editDescription,
+      deductionAmount: showDeductionAmount ? editDeductionAmount : null,
     });
     if (res.data?.error) {
       setEditError(res.data.error);
@@ -218,6 +246,7 @@ export default function DisputeManagement() {
     setEditingDispute(null);
     setEditStatus('');
     setEditDescription('');
+    setEditDeductionAmount('');
     setSavingEdit(false);
     await loadRows();
   };
@@ -274,6 +303,12 @@ export default function DisputeManagement() {
     link.click();
     URL.revokeObjectURL(url);
   };
+
+  const editStatusOptions = useMemo(
+    () => disputeStatusOptions(editingDispute?.side, editStatus),
+    [editingDispute?.side, editStatus]
+  );
+  const showEditDeductionAmount = editingDispute?.side === 'supplier' && isDeductBelowAmountStatus(editStatus);
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
@@ -466,8 +501,31 @@ export default function DisputeManagement() {
 
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</Label>
-              <Input value={editStatus} onChange={(event) => setEditStatus(event.target.value)} placeholder="Dispute status" />
+              <Select value={editStatus} onValueChange={setEditStatus}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select dispute status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {editStatusOptions.map((status) => (
+                    <SelectItem key={status} value={status}>{status}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+
+            {showEditDeductionAmount && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Deduction Amount</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editDeductionAmount}
+                  onChange={(event) => setEditDeductionAmount(event.target.value)}
+                  placeholder="Amount to deduct"
+                />
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Description</Label>

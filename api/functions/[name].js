@@ -2787,7 +2787,7 @@ async function salesforceDisputeStems(body) {
 
     if (disputeObjectFieldNames.includes('STEM__c')) {
       const disputeSelectFields = ['Id', 'STEM__c'];
-      for (const field of ['Status_Buyer__c', 'Status_Supplier__c', 'Description_Buyer__c', 'Description_Supplier__c', 'Dispute_Status__c', 'Supplier_Key__c']) {
+      for (const field of ['Status_Buyer__c', 'Status_Supplier__c', 'Description_Buyer__c', 'Description_Supplier__c', 'Deduction_Amount_Supplier__c', 'Dispute_Status__c', 'Supplier_Key__c']) {
         if (disputeObjectFieldNames.includes(field)) disputeSelectFields.push(field);
       }
       if (disputeObjectFieldNames.includes('Buyer__c')) {
@@ -2945,6 +2945,7 @@ async function salesforceDisputeStems(body) {
             supplierName: dispute[disputeSupplierRelationship]?.Name || dispute.Supplier_Key__c || dispute.Supplier__c || null,
             status: dispute.Status_Supplier__c || dispute.Dispute_Status__c || 'Yes',
             description: dispute.Description_Supplier__c || null,
+            deductionAmount: dispute.Deduction_Amount_Supplier__c ?? null,
           }));
         const groupedBuyerDisputes = [];
         const buyerDisputeGroupMap = new Map();
@@ -2974,12 +2975,13 @@ async function salesforceDisputeStems(body) {
               supplierName: dispute.supplierName,
               status: dispute.status,
               description: dispute.description,
+              deductionAmount: dispute.deductionAmount,
               supplierInvoiceAmount: finance?.supplierInvoiceAmount ?? null,
               payableBalance: finance?.payableBalance ?? null,
             };
           })
           .filter((row) => {
-            const key = `${supplierMatchKey(row.supplierName)}\u0000${row.status || ''}\u0000${row.description || ''}`;
+            const key = `${supplierMatchKey(row.supplierName)}\u0000${row.status || ''}\u0000${row.description || ''}\u0000${row.deductionAmount ?? ''}`;
             const existing = seenSupplierDisputeRows.get(key);
             if (existing) {
               existing.disputeIds.push(...row.disputeIds);
@@ -3011,7 +3013,14 @@ async function salesforceDisputeStems(body) {
           _Supplier_Disputes: supplierDisputes,
           _Supplier_Dispute_Rows: supplierFinanceRows,
           _Buyer_Dispute_Label: groupedBuyerDisputes.map((dispute) => [dispute.buyerName, dispute.status, dispute.description].filter(Boolean).join(': ')).join('\n') || null,
-          _Supplier_Dispute_Label: supplierFinanceRows.map((dispute) => [dispute.supplierName, dispute.status, dispute.description].filter(Boolean).join(': ')).join('\n') || null,
+          _Supplier_Dispute_Label: supplierFinanceRows.map((dispute) => [
+            dispute.supplierName,
+            dispute.status,
+            /deduct\s+below\s+amount/i.test(String(dispute.status || '')) && dispute.deductionAmount != null
+              ? `Deduction Amount ${Number(dispute.deductionAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : null,
+            dispute.description,
+          ].filter(Boolean).join(': ')).join('\n') || null,
           _Supplier_Invoice_Split_Label: supplierFinanceRows.map((dispute) => dispute.supplierInvoiceAmount).join('\n') || null,
           _Payable_Balance_Split_Label: supplierFinanceRows.map((dispute) => dispute.payableBalance).join('\n') || null,
           _Payable_Balance: payableBalance,
@@ -3021,6 +3030,15 @@ async function salesforceDisputeStems(body) {
         };
       }),
   };
+}
+
+const isDeductBelowAmountStatus = (value) => /deduct\s+below\s+amount/i.test(String(value || ''));
+
+function parseOptionalCurrency(value, label) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) throw appError(`${label} must be a positive number.`, 400);
+  return number;
 }
 
 async function salesforceDisputePartyUpdate(body = {}) {
@@ -3038,8 +3056,13 @@ async function salesforceDisputePartyUpdate(body = {}) {
     updates.Status_Buyer__c = body.status || null;
     updates.Description_Buyer__c = body.description || null;
   } else if (side === 'supplier') {
+    const deductionAmount = parseOptionalCurrency(body.deductionAmount, 'Deduction amount');
+    if (isDeductBelowAmountStatus(body.status) && deductionAmount == null) {
+      throw appError('Deduction amount is required when supplier status is Deduct below amount.', 400);
+    }
     updates.Status_Supplier__c = body.status || null;
     updates.Description_Supplier__c = body.description || null;
+    updates.Deduction_Amount_Supplier__c = isDeductBelowAmountStatus(body.status) ? deductionAmount : null;
   } else {
     throw appError('side must be buyer or supplier.', 400);
   }
