@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { FULL_ACCESS } from '@/lib/authModules';
+import { APP_MODULES, FULL_ACCESS } from '@/lib/authModules';
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient';
 
 const AuthContext = createContext();
@@ -20,8 +20,17 @@ function profileToUser(profile, authUser) {
     email: profile.email || authUser.email,
     role: profile.user_type === 'administrator' ? 'admin' : profile.user_type,
     user_type: profile.user_type,
+    use_type_defaults: profile.use_type_defaults !== false,
     active: profile.active,
   };
+}
+
+function normalizeAccess(permissionRows = []) {
+  const access = Object.fromEntries(APP_MODULES.map((module) => [module.id, false]));
+  for (const row of permissionRows || []) {
+    access[row.module_id] = row.can_view === true;
+  }
+  return access;
 }
 
 async function loadSupabaseUser() {
@@ -42,7 +51,7 @@ async function loadSupabaseUser() {
 
   const { data: profile, error: profileError } = await supabase
     .from('user_profiles')
-    .select('id,email,full_name,user_type,active')
+    .select('id,email,full_name,user_type,active,use_type_defaults')
     .eq('id', authUser.id)
     .maybeSingle();
   if (profileError) throw profileError;
@@ -53,14 +62,23 @@ async function loadSupabaseUser() {
     return { user: profileToUser(profile, authUser), access: FULL_ACCESS, error: null };
   }
 
+  if (profile.use_type_defaults !== false) {
+    const { data: permissions, error: permissionsError } = await supabase
+      .from('user_type_module_permissions')
+      .select('module_id,can_view')
+      .eq('user_type_id', profile.user_type);
+    if (permissionsError) throw permissionsError;
+
+    return { user: profileToUser(profile, authUser), access: normalizeAccess(permissions), error: null };
+  }
+
   const { data: permissions, error: permissionsError } = await supabase
     .from('user_module_permissions')
     .select('module_id,can_view')
     .eq('user_id', authUser.id);
   if (permissionsError) throw permissionsError;
 
-  const access = Object.fromEntries((permissions || []).map((row) => [row.module_id, row.can_view === true]));
-  return { user: profileToUser(profile, authUser), access, error: null };
+  return { user: profileToUser(profile, authUser), access: normalizeAccess(permissions), error: null };
 }
 
 export const AuthProvider = ({ children }) => {

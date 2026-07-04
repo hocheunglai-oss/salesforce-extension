@@ -26,9 +26,22 @@ const ADMIN_APP_MODULES = [
   { id: 'admin', label: 'Admin Control', path: '/admin', sortOrder: 100 },
 ];
 
-const ADMIN_USER_TYPES = new Set(['administrator', 'manager', 'finance', 'operations', 'viewer']);
 const ADMIN_MODULE_IDS = new Set(ADMIN_APP_MODULES.map((module) => module.id));
 const ADMIN_FULL_ACCESS = Object.fromEntries(ADMIN_APP_MODULES.map((module) => [module.id, true]));
+const DEFAULT_USER_TYPES = [
+  { id: 'administrator', label: 'Administrator', description: 'Full system administration access.', is_system: true, sort_order: 10 },
+  { id: 'manager', label: 'Manager', description: 'Operational management access without user administration.', is_system: true, sort_order: 20 },
+  { id: 'finance', label: 'Finance', description: 'Finance, invoice, report, and commission review access.', is_system: true, sort_order: 30 },
+  { id: 'operations', label: 'Operations', description: 'Operational review and dispute workflow access.', is_system: true, sort_order: 40 },
+  { id: 'viewer', label: 'Viewer', description: 'Read-only dashboard access.', is_system: true, sort_order: 50 },
+];
+const FALLBACK_TYPE_PERMISSIONS = {
+  administrator: ADMIN_FULL_ACCESS,
+  manager: { dashboard: true, review: true, disputes: true, buyer_invoices: true, reports: true, pnl: true, brokers: true, explorer: false, settings: true, admin: false },
+  finance: { dashboard: true, review: true, disputes: true, buyer_invoices: true, reports: true, pnl: true, brokers: true, explorer: false, settings: false, admin: false },
+  operations: { dashboard: true, review: true, disputes: true, buyer_invoices: false, reports: true, pnl: true, brokers: false, explorer: false, settings: false, admin: false },
+  viewer: { dashboard: true, review: false, disputes: false, buyer_invoices: false, reports: false, pnl: false, brokers: false, explorer: false, settings: false, admin: false },
+};
 
 function appError(message, status = 500) {
   const error = new Error(message);
@@ -95,13 +108,68 @@ function normalizePermissions(userType, permissions = {}) {
   return normalized;
 }
 
-function sanitizeManagedUserPayload(body = {}) {
+function slugifyUserTypeId(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+}
+
+function normalizeUserTypePermissions(userTypeId, permissions = {}) {
+  if (userTypeId === 'administrator') return ADMIN_FULL_ACCESS;
+  const base = FALLBACK_TYPE_PERMISSIONS[userTypeId] || {};
+  const normalized = {};
+  for (const module of ADMIN_APP_MODULES) {
+    normalized[module.id] = permissions?.[module.id] ?? base[module.id] ?? false;
+  }
+  return normalized;
+}
+
+async function listAccessModel(client) {
+  const [typesRes, permissionsRes] = await Promise.all([
+    client
+      .from('user_types')
+      .select('id,label,description,is_system,sort_order,created_at,updated_at')
+      .order('sort_order', { ascending: true })
+      .order('label', { ascending: true }),
+    client
+      .from('user_type_module_permissions')
+      .select('user_type_id,module_id,can_view'),
+  ]);
+  if (typesRes.error) throw typesRes.error;
+  if (permissionsRes.error) throw permissionsRes.error;
+
+  const userTypes = (typesRes.data?.length ? typesRes.data : DEFAULT_USER_TYPES).map((type) => ({
+    ...type,
+    label: type.label || type.id,
+    description: type.description || '',
+    is_system: type.is_system === true,
+    sort_order: Number(type.sort_order ?? 100),
+  }));
+  const typePermissions = Object.fromEntries(userTypes.map((type) => [type.id, normalizeUserTypePermissions(type.id)]));
+  for (const row of permissionsRes.data || []) {
+    if (!ADMIN_MODULE_IDS.has(row.module_id)) continue;
+    if (!typePermissions[row.user_type_id]) typePermissions[row.user_type_id] = normalizeUserTypePermissions(row.user_type_id);
+    typePermissions[row.user_type_id][row.module_id] = row.can_view === true;
+  }
+  for (const type of userTypes) {
+    typePermissions[type.id] = normalizeUserTypePermissions(type.id, typePermissions[type.id]);
+  }
+  return { userTypes, typePermissions };
+}
+
+async function sanitizeManagedUserPayload(client, body = {}) {
   const email = String(body.email || '').trim().toLowerCase();
   const fullName = String(body.full_name || body.fullName || '').trim();
-  const userType = ADMIN_USER_TYPES.has(body.user_type) ? body.user_type : 'viewer';
+  const { userTypes, typePermissions } = await listAccessModel(client);
+  const typeIds = new Set(userTypes.map((type) => type.id));
+  const userType = typeIds.has(body.user_type) ? body.user_type : 'viewer';
   const active = body.active !== false;
   const password = String(body.password || '');
   const id = body.id ? String(body.id) : null;
+  const useTypeDefaults = userType === 'administrator' ? true : body.use_type_defaults !== false;
 
   if (!email || !email.includes('@')) throw appError('Valid email is required.', 400);
   if (!id && password.length < 8) throw appError('Password must be at least 8 characters.', 400);
@@ -114,7 +182,10 @@ function sanitizeManagedUserPayload(body = {}) {
     user_type: userType,
     active,
     password,
-    permissions: normalizePermissions(userType, body.permissions || {}),
+    use_type_defaults: useTypeDefaults,
+    permissions: useTypeDefaults
+      ? normalizePermissions(userType, typePermissions[userType] || {})
+      : normalizePermissions(userType, body.permissions || {}),
   };
 }
 
@@ -144,7 +215,7 @@ async function writeAdminAudit(client, actor, action, targetUserId, targetEmail,
 }
 
 async function persistManagedUser(client, body, actor = null) {
-  const payload = sanitizeManagedUserPayload(body);
+  const payload = await sanitizeManagedUserPayload(client, body);
   let authUser = null;
   const isUpdate = Boolean(payload.id);
 
@@ -193,29 +264,34 @@ async function persistManagedUser(client, body, actor = null) {
       full_name: payload.full_name,
       user_type: payload.user_type,
       active: payload.active,
+      use_type_defaults: payload.use_type_defaults,
       updated_at: nowIso,
     }, { onConflict: 'id' });
   if (profileError) throw profileError;
 
-  const permissionRows = ADMIN_APP_MODULES.map((module) => ({
-    user_id: authUser.id,
-    module_id: module.id,
-    can_view: payload.permissions[module.id] === true,
-    updated_at: nowIso,
-  }));
   const { error: deletePermissionError } = await client
     .from('user_module_permissions')
     .delete()
     .eq('user_id', authUser.id);
   if (deletePermissionError) throw deletePermissionError;
-  const { error: insertPermissionError } = await client
-    .from('user_module_permissions')
-    .insert(permissionRows);
-  if (insertPermissionError) throw insertPermissionError;
+
+  if (!payload.use_type_defaults) {
+    const permissionRows = ADMIN_APP_MODULES.map((module) => ({
+      user_id: authUser.id,
+      module_id: module.id,
+      can_view: payload.permissions[module.id] === true,
+      updated_at: nowIso,
+    }));
+    const { error: insertPermissionError } = await client
+      .from('user_module_permissions')
+      .insert(permissionRows);
+    if (insertPermissionError) throw insertPermissionError;
+  }
 
   await writeAdminAudit(client, actor, isUpdate ? 'user_updated' : 'user_created', authUser.id, payload.email, {
     user_type: payload.user_type,
     active: payload.active,
+    use_type_defaults: payload.use_type_defaults,
     modules: Object.entries(payload.permissions).filter(([, enabled]) => enabled).map(([moduleId]) => moduleId),
   });
 
@@ -225,15 +301,17 @@ async function persistManagedUser(client, body, actor = null) {
     full_name: payload.full_name,
     user_type: payload.user_type,
     active: payload.active,
+    use_type_defaults: payload.use_type_defaults,
     permissions: payload.permissions,
   };
 }
 
 async function adminUsersList(body, req) {
   const { client } = await requireAdministrator(req);
+  const { userTypes, typePermissions } = await listAccessModel(client);
   const { data: profiles, error: profileError } = await client
     .from('user_profiles')
-    .select('id,email,full_name,user_type,active,created_at,updated_at')
+    .select('id,email,full_name,user_type,active,use_type_defaults,created_at,updated_at')
     .order('created_at', { ascending: false });
   if (profileError) throw profileError;
 
@@ -257,11 +335,15 @@ async function adminUsersList(body, req) {
 
   const users = (profiles || []).map((profile) => ({
     ...profile,
+    type_label: userTypes.find((type) => type.id === profile.user_type)?.label || profile.user_type,
+    use_type_defaults: profile.user_type === 'administrator' ? true : profile.use_type_defaults !== false,
     permissions: profile.user_type === 'administrator'
       ? ADMIN_FULL_ACCESS
-      : normalizePermissions(profile.user_type, permissionsByUser[profile.id] || {}),
+      : profile.use_type_defaults !== false
+        ? normalizePermissions(profile.user_type, typePermissions[profile.user_type] || {})
+        : normalizePermissions(profile.user_type, permissionsByUser[profile.id] || {}),
   }));
-  return { users, modules: ADMIN_APP_MODULES };
+  return { users, modules: ADMIN_APP_MODULES, userTypes, typePermissions };
 }
 
 async function adminAuditLogs(body, req) {
@@ -280,6 +362,116 @@ async function adminUserSave(body, req) {
   const { client, profile } = await requireAdministrator(req);
   const user = await persistManagedUser(client, body, profile);
   return { user };
+}
+
+async function adminUserDelete(body, req) {
+  const { client, authUser, profile } = await requireAdministrator(req);
+  const userId = String(body.id || '');
+  if (!userId) throw appError('User id is required.', 400);
+  if (userId === authUser.id) throw appError('You cannot delete your own administrator account.', 400);
+
+  const { data: target, error: targetError } = await client
+    .from('user_profiles')
+    .select('id,email,user_type')
+    .eq('id', userId)
+    .maybeSingle();
+  if (targetError) throw targetError;
+  if (!target) throw appError('User not found.', 404);
+
+  const { error: deleteError } = await client.auth.admin.deleteUser(userId);
+  if (deleteError) throw deleteError;
+
+  await writeAdminAudit(client, profile, 'user_deleted', target.id, target.email, {
+    user_type: target.user_type,
+  });
+  return { deleted: true, id: userId };
+}
+
+async function adminUserTypeSave(body, req) {
+  const { client, profile } = await requireAdministrator(req);
+  const existingId = body.id ? String(body.id) : null;
+  const label = String(body.label || '').trim();
+  const id = slugifyUserTypeId(existingId || label);
+  if (!id) throw appError('User type name is required.', 400);
+  if (!label) throw appError('User type label is required.', 400);
+
+  const { data: existing, error: existingError } = await client
+    .from('user_types')
+    .select('id,is_system,sort_order')
+    .eq('id', id)
+    .maybeSingle();
+  if (existingError) throw existingError;
+
+  const sortOrder = Number.isFinite(Number(body.sort_order)) ? Number(body.sort_order) : existing?.sort_order ?? 100;
+  const userType = {
+    id,
+    label,
+    description: String(body.description || '').trim(),
+    is_system: existing?.is_system === true,
+    sort_order: sortOrder,
+    updated_at: new Date().toISOString(),
+  };
+  const { error: typeError } = await client
+    .from('user_types')
+    .upsert(userType, { onConflict: 'id' });
+  if (typeError) throw typeError;
+
+  const permissions = normalizeUserTypePermissions(id, body.permissions || {});
+  const { error: deletePermissionError } = await client
+    .from('user_type_module_permissions')
+    .delete()
+    .eq('user_type_id', id);
+  if (deletePermissionError) throw deletePermissionError;
+  const { error: insertPermissionError } = await client
+    .from('user_type_module_permissions')
+    .insert(ADMIN_APP_MODULES.map((module) => ({
+      user_type_id: id,
+      module_id: module.id,
+      can_view: permissions[module.id] === true,
+      updated_at: new Date().toISOString(),
+    })));
+  if (insertPermissionError) throw insertPermissionError;
+
+  await writeAdminAudit(client, profile, existing ? 'user_type_updated' : 'user_type_created', null, id, {
+    label,
+    modules: Object.entries(permissions).filter(([, enabled]) => enabled).map(([moduleId]) => moduleId),
+  });
+
+  return { userType: { ...userType, permissions } };
+}
+
+async function adminUserTypeDelete(body, req) {
+  const { client, profile } = await requireAdministrator(req);
+  const id = String(body.id || '').trim();
+  if (!id) throw appError('User type id is required.', 400);
+  if (id === 'administrator') throw appError('Administrator user type cannot be deleted.', 400);
+
+  const { data: userType, error: typeError } = await client
+    .from('user_types')
+    .select('id,label,is_system')
+    .eq('id', id)
+    .maybeSingle();
+  if (typeError) throw typeError;
+  if (!userType) throw appError('User type not found.', 404);
+  if (userType.is_system) throw appError('System user types cannot be deleted. You can edit their access rights instead.', 400);
+
+  const { count, error: assignedError } = await client
+    .from('user_profiles')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_type', id);
+  if (assignedError) throw assignedError;
+  if (count > 0) throw appError('This user type is assigned to users. Reassign those users before deleting it.', 400);
+
+  const { error: deleteError } = await client
+    .from('user_types')
+    .delete()
+    .eq('id', id);
+  if (deleteError) throw deleteError;
+
+  await writeAdminAudit(client, profile, 'user_type_deleted', null, id, {
+    label: userType.label,
+  });
+  return { deleted: true, id };
 }
 
 async function adminBootstrap(body = {}) {
@@ -2862,6 +3054,9 @@ const handlers = {
   adminUsersList,
   adminAuditLogs,
   adminUserSave,
+  adminUserDelete,
+  adminUserTypeSave,
+  adminUserTypeDelete,
   adminBootstrap,
 };
 
