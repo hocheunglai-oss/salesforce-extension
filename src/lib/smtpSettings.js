@@ -48,9 +48,19 @@ export function hasUsableSmtpSettings(settings) {
   return Boolean(settings?.enabled && settings.host && settings.user && settings.password);
 }
 
-export function smtpFromAddress(settings) {
-  const email = String(settings?.fromEmail || settings?.user || '').trim();
+function parseSenderAddress(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return { name: '', email: '' };
+  const match = raw.match(/^\s*(?:"?([^"<]*)"?\s*)?<([^<>@\s]+@[^<>@\s]+)>\s*$/);
+  if (match) return { name: String(match[1] || '').trim(), email: match[2].trim() };
+  const email = raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '';
+  return { name: email && raw !== email ? raw.replace(email, '').replace(/[<>()"]/g, '').trim() : '', email };
+}
+
+export function smtpFromAddress(settings, fallbackFrom = '') {
+  const fallback = parseSenderAddress(fallbackFrom);
+  const email = String(settings?.fromEmail || fallback.email || settings?.user || '').trim();
   if (!email) return '';
-  const name = String(settings?.fromName || '').trim();
+  const name = String(settings?.fromName || fallback.name || '').trim();
   return name ? `${name} <${email}>` : email;
 }

@@ -3019,7 +3019,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right;position:sticky;top:0;background:#f8fafc">Receivable Balance</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Due Date</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Buyer Trader</th>
-            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">PSPRS Status</th>
+            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">PSPRS</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Status</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right;position:sticky;top:0;background:#f8fafc">Overdue</th>
           </tr>
@@ -3036,7 +3036,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
     <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">
       ${reportBodyHtml}
     </div>`;
-  const tableText = rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS Status ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`).join('\n');
+  const tableText = rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`).join('\n');
   const introText = hasAttentionMarker && tableText
     ? insertAfterAttentionSentence(content, `\n\n${tableText}\n\n`)
     : content;
@@ -3047,7 +3047,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
     `Open all invoices: ${buyerInvoiceFilterUrl(settings, report, null)}`,
     ...((report.buyerTraderOptions || []).map((name) => `Open ${name}: ${buyerInvoiceFilterUrl(settings, report, name)}`)),
     '',
-    ...(hasAttentionMarker ? [] : rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS Status ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`)),
+    ...(hasAttentionMarker ? [] : rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`)),
   ];
   return { subject, html, text: textLines.join('\n'), totals };
 }
@@ -3199,7 +3199,7 @@ function buildBuyerInvoicePaymentReminderEmail(report, settings, selected, rows,
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right">Receivable Balance</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">Due Date</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">Buyer Trader</th>
-            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">PSPRS Status</th>
+            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">PSPRS</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">Status</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right">Overdue</th>
           </tr>
@@ -3209,7 +3209,7 @@ function buildBuyerInvoicePaymentReminderEmail(report, settings, selected, rows,
     </div>`;
   const bodyHtml = paymentReminderContentHtml(body);
   const htmlWithTable = insertAfterAttentionSentence(bodyHtml, tableHtml);
-  const invoiceText = selectedRows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS Status ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`).join('\n');
+  const invoiceText = selectedRows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`).join('\n');
   const bodyText = hasHtmlMarkup(body) ? htmlToPlainText(body) : body;
   const html = `
     <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">

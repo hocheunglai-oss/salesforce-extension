@@ -95,7 +95,7 @@ const COPY_COLUMNS = [
   { header: 'Receivable Balance', value: (row) => fmtMoney(row.receivableBalance), align: 'right' },
   { header: 'Buyer Invoice Due Date', value: (row) => fmtDate(row.buyerInvoiceDueDate) },
   { header: 'Buyer Trader in Charge', value: (row) => row.buyerTraderInCharge || '-' },
-  { header: 'PSPRS Status', value: (row) => row.prpspStatus || '-' },
+  { header: 'PSPRS', value: (row) => row.prpspStatus || '-' },
   { header: 'Status', value: (row) => row.status || '-' },
   { header: 'Overdue', value: (row) => overdueDisplayValue(row.daysUntilDue), align: 'right' },
 ];
@@ -640,7 +640,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
       return;
     }
     const credentials = hasLocalSmtp
-      ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587), from: smtpFromAddress(smtpSettings) } }
+      ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587), from: smtpFromAddress(smtpSettings, data?.settings?.from) } }
       : undefined;
     const res = await appClient.functions.invoke('buyerInvoicePaymentReminderSend', {
       stemId: row.stemId,
@@ -1292,7 +1292,7 @@ export default function BuyerInvoices() {
     setEmailMessage(null);
     const smtpSettings = readSmtpSettings();
     const credentials = hasUsableSmtpSettings(smtpSettings) && !preview
-      ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587), from: smtpFromAddress(smtpSettings) } }
+      ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587), from: smtpFromAddress(smtpSettings, emailSettings.from) } }
       : undefined;
     const res = await appClient.functions.invoke('outstandingBuyerInvoicesEmailReport', { settings: settingsForServer(), credentials, preview, force: !preview });
     if (res.data?.error) {
@@ -1614,7 +1614,7 @@ export default function BuyerInvoices() {
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Receivable Balance</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Invoice Due Date</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Trader in Charge</th>
-                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">PSPRS Status</th>
+                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">PSPRS</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collection / Payment Handler</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Next Follow-up</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
