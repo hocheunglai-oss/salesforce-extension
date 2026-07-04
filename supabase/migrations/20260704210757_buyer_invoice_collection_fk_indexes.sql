@@ -1,0 +1,11 @@
+create index if not exists buyer_invoice_collection_items_owner_user_idx
+on public.buyer_invoice_collection_items(owner_user_id);
+
+create index if not exists buyer_invoice_collection_items_last_updated_by_idx
+on public.buyer_invoice_collection_items(last_updated_by);
+
+create index if not exists buyer_invoice_collection_events_actor_user_idx
+on public.buyer_invoice_collection_events(actor_user_id);
+
+create index if not exists buyer_invoice_email_settings_updated_by_idx
+on public.buyer_invoice_email_settings(updated_by);

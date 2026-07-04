@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CalendarClock, Check, Copy, Download, Eye, Loader2, Mail, RefreshCw, ReceiptText, Save, Send, X } from 'lucide-react';
+import { AlertCircle, CalendarClock, Check, Copy, Download, Eye, Loader2, Mail, MessageSquareText, RefreshCw, ReceiptText, Save, Send, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { appClient } from '@/api/appClient';
 import PageHeader from '@/components/common/PageHeader';
@@ -11,11 +11,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { hasUsableSmtpSettings, readSmtpSettings } from '@/lib/smtpSettings';
+import { useAuth } from '@/lib/AuthContext';
 import { numericValue, textValue } from '@/lib/displayValue';
 
 const EMAIL_SETTINGS_KEY = 'salesforce_extension:buyer_invoice_email_settings';
 const OLD_DEFAULT_EMAIL_INTRO = 'Please find below the latest overdue buyer invoices and buyer invoices due soon.';
+const COLLECTION_STATUSES = ['Not Started', 'Reminder Sent', 'Awaiting Buyer Reply', 'Promise to Pay', 'Escalated', 'Paid / Closed', 'On Hold'];
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const DEFAULT_EMAIL_SETTINGS = {
+  enabled: true,
   from: 'Fratelli Cosulich <info@cosulich.com.hk>',
   to: 'bt@cosulich.com.hk',
   cc: 'lousia@cosulich.com.hk, laureen@cosulich.com.hk',
@@ -24,32 +28,37 @@ const DEFAULT_EMAIL_SETTINGS = {
   intro: 'Outstanding Buyer Invoices\n\nPlease find below the latest overdue buyer invoices and buyer invoices due in {{daysAhead}} days.\n\nReport window: {{reportStart}} to {{reportEnd}}. Overdue invoices are always included.',
   includeSummary: true,
   includeTable: true,
-  weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+  weekdays: WEEKDAYS,
   sendTimes: '08:00, 14:00',
 };
 
 const COPY_COLUMNS = [
-  { header: 'Stem Name', value: (row) => row.stemName || '—' },
-  { header: 'Buyer Name', value: (row) => row.buyerName || '—' },
+  { header: 'Stem Name', value: (row) => row.stemName || '-' },
+  { header: 'Buyer Name', value: (row) => row.buyerName || '-' },
   { header: 'Invoice Amount', value: (row) => fmtMoney(row.invoiceAmount), align: 'right' },
   { header: 'Receivable Balance', value: (row) => fmtMoney(row.receivableBalance), align: 'right' },
   { header: 'Buyer Invoice Due Date', value: (row) => fmtDate(row.buyerInvoiceDueDate) },
-  { header: 'Buyer Trader in Charge', value: (row) => row.buyerTraderInCharge || '—' },
-  { header: 'PSPRS Status', value: (row) => row.prpspStatus || '—' },
-  { header: 'Status', value: (row) => row.status || '—' },
+  { header: 'Buyer Trader in Charge', value: (row) => row.buyerTraderInCharge || '-' },
+  { header: 'PSPRS Status', value: (row) => row.prpspStatus || '-' },
+  { header: 'Status', value: (row) => row.status || '-' },
   { header: 'Overdue', value: (row) => overdueDisplayValue(row.daysUntilDue), align: 'right' },
 ];
 
 const fmtMoney = (value) => {
   const number = numericValue(value);
-  if (number == null) return '—';
+  if (number == null) return '-';
   return `$${number.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 const fmtDate = (value) => {
-  if (!value) return '—';
+  if (!value) return '-';
   if (typeof value === 'object') return textValue(value);
   try { return format(new Date(value), 'dd MMM yyyy'); } catch { return textValue(value); }
+};
+
+const fmtDateTime = (value) => {
+  if (!value) return '-';
+  try { return format(new Date(value), 'dd MMM yyyy HH:mm'); } catch { return textValue(value); }
 };
 
 const csvValue = (value) => `"${textValue(value, '').replaceAll('"', '""')}"`;
@@ -61,12 +70,43 @@ function splitBuyerTraderNames(value) {
     .filter(Boolean);
 }
 
+function arrayToInput(value) {
+  return Array.isArray(value) ? value.join(', ') : textValue(value, '');
+}
+
+function emailSettingsToForm(settings = DEFAULT_EMAIL_SETTINGS) {
+  const merged = { ...DEFAULT_EMAIL_SETTINGS, ...settings };
+  if (String(merged.from || '').includes('admin@fcuno.com')) merged.from = DEFAULT_EMAIL_SETTINGS.from;
+  if (!merged.intro || merged.intro === OLD_DEFAULT_EMAIL_INTRO) merged.intro = DEFAULT_EMAIL_SETTINGS.intro;
+  return {
+    ...merged,
+    to: arrayToInput(merged.to),
+    cc: arrayToInput(merged.cc),
+    sendTimes: arrayToInput(merged.sendTimes),
+    weekdays: Array.isArray(merged.weekdays) ? merged.weekdays : WEEKDAYS,
+  };
+}
+
+function readLegacyEmailSettings() {
+  try {
+    const raw = localStorage.getItem(EMAIL_SETTINGS_KEY);
+    return emailSettingsToForm(raw ? JSON.parse(raw) : DEFAULT_EMAIL_SETTINGS);
+  } catch {
+    return emailSettingsToForm(DEFAULT_EMAIL_SETTINGS);
+  }
+}
+
+function sameSettings(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 function SummaryCard({ label, value, tone = 'default' }) {
   const toneClass = {
     default: 'text-foreground',
     red: 'text-red-600',
     blue: 'text-blue-600',
     green: 'text-emerald-600',
+    amber: 'text-amber-700',
   }[tone];
 
   return (
@@ -87,8 +127,7 @@ function overdueSeverity(daysUntilDue) {
 
 function rowSeverityClass(row, idx) {
   if (row.prpspStatus === 'Conditional-Not Sent') return 'bg-purple-200 hover:bg-purple-300/80';
-  const { daysUntilDue } = row;
-  const severity = overdueSeverity(daysUntilDue);
+  const severity = overdueSeverity(row.daysUntilDue);
   if (severity === 'red') return 'bg-red-100 hover:bg-red-200/80';
   if (severity === 'orange') return 'bg-orange-200 hover:bg-orange-300/80';
   if (severity === 'yellow') return 'bg-yellow-200 hover:bg-yellow-300/80';
@@ -112,14 +151,23 @@ function statusPill(status, daysUntilDue) {
   return 'bg-blue-50 text-blue-700 border-blue-200';
 }
 
+function collectionPill(status) {
+  if (status === 'Escalated') return 'bg-red-50 text-red-700 border-red-200';
+  if (status === 'Promise to Pay') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (status === 'Reminder Sent' || status === 'Awaiting Buyer Reply') return 'bg-blue-50 text-blue-700 border-blue-200';
+  if (status === 'On Hold') return 'bg-amber-50 text-amber-700 border-amber-200';
+  if (status === 'Paid / Closed') return 'bg-muted text-muted-foreground border-border';
+  return 'bg-background text-foreground border-border';
+}
+
 function overdueDisplayValue(daysUntilDue) {
-  if (daysUntilDue == null) return '—';
+  if (daysUntilDue == null) return '-';
   const overdue = -Number(daysUntilDue);
   return Object.is(overdue, -0) ? '0' : overdue.toLocaleString();
 }
 
 function copyCell(value) {
-  return textValue(value, '—').replace(/\s+/g, ' ').trim() || '—';
+  return textValue(value, '-').replace(/\s+/g, ' ').trim() || '-';
 }
 
 function escapeHtml(value) {
@@ -198,37 +246,191 @@ function readInitialFilters() {
   };
 }
 
-function readEmailSettings() {
-  try {
-    const raw = localStorage.getItem(EMAIL_SETTINGS_KEY);
-    const saved = raw ? { ...DEFAULT_EMAIL_SETTINGS, ...JSON.parse(raw) } : DEFAULT_EMAIL_SETTINGS;
-    if (String(saved.from || '').includes('admin@fcuno.com')) saved.from = DEFAULT_EMAIL_SETTINGS.from;
-    if (!saved.intro || saved.intro === OLD_DEFAULT_EMAIL_INTRO) saved.intro = DEFAULT_EMAIL_SETTINGS.intro;
-    return saved;
-  } catch {
-    return DEFAULT_EMAIL_SETTINGS;
-  }
+function collectionStatus(row) {
+  return row.collection?.status || 'Not Started';
 }
 
-function sameSettings(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
+function collectionOwner(row) {
+  return row.collection?.ownerName || '';
+}
+
+function isFollowUpDue(row, today) {
+  const date = row.collection?.nextFollowUpDate;
+  return Boolean(date && date <= today && collectionStatus(row) !== 'Paid / Closed');
+}
+
+function isNeedsAction(row, today) {
+  return row.status === 'Overdue' || isFollowUpDue(row, today);
+}
+
+function CollectionModal({ row, open, onClose, onSaved, currentUser }) {
+  const [form, setForm] = useState({
+    status: 'Not Started',
+    ownerName: '',
+    latestNote: '',
+    nextFollowUpDate: '',
+    promisedPaymentDate: '',
+    promisedAmount: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!row) return;
+    setForm({
+      status: collectionStatus(row),
+      ownerName: row.collection?.ownerName || currentUser?.full_name || currentUser?.email || '',
+      latestNote: row.collection?.latestNote || '',
+      nextFollowUpDate: row.collection?.nextFollowUpDate || '',
+      promisedPaymentDate: row.collection?.promisedPaymentDate || '',
+      promisedAmount: row.collection?.promisedAmount ?? '',
+    });
+    setError(null);
+  }, [row, currentUser]);
+
+  if (!open || !row) return null;
+
+  const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    const res = await appClient.functions.invoke('buyerInvoiceCollectionSave', {
+      stemId: row.stemId,
+      updates: form,
+    });
+    if (res.data?.error) {
+      setError(res.data.error);
+    } else {
+      onSaved(res.data);
+      onClose();
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border p-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Collection follow-up</p>
+            <h2 className="mt-1 text-lg font-semibold text-foreground">{row.stemName}</h2>
+            <p className="text-sm text-muted-foreground">{row.buyerName || '-'}</p>
+          </div>
+          <Button variant="outline" size="icon" onClick={onClose} disabled={saving}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="grid max-h-[calc(90vh-76px)] gap-4 overflow-auto p-4 lg:grid-cols-[1fr_0.9fr]">
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Collection Status</Label>
+                <select
+                  value={form.status}
+                  onChange={(event) => update('status', event.target.value)}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  {COLLECTION_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Owner</Label>
+                <Input value={form.ownerName} onChange={(event) => update('ownerName', event.target.value)} placeholder="Collection owner" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Next Follow-up Date</Label>
+                <Input type="date" value={form.nextFollowUpDate} onChange={(event) => update('nextFollowUpDate', event.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Promised Payment Date</Label>
+                <Input type="date" value={form.promisedPaymentDate} onChange={(event) => update('promisedPaymentDate', event.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Promised Amount</Label>
+                <Input type="number" min="0" step="0.01" value={form.promisedAmount} onChange={(event) => update('promisedAmount', event.target.value)} />
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+                <div><span className="font-semibold text-foreground">Due:</span> {fmtDate(row.buyerInvoiceDueDate)}</div>
+                <div><span className="font-semibold text-foreground">Receivable:</span> {fmtMoney(row.receivableBalance)}</div>
+                <div><span className="font-semibold text-foreground">PSPRS:</span> {row.prpspStatus || '-'}</div>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Latest Note</Label>
+              <Textarea value={form.latestNote} onChange={(event) => update('latestNote', event.target.value)} className="min-h-32" placeholder="Add the latest follow-up note..." />
+            </div>
+            {error && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+              <Button onClick={save} disabled={saving} className="gap-2">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-background/50">
+            <div className="border-b border-border px-4 py-3">
+              <h3 className="text-sm font-semibold text-foreground">History</h3>
+              <p className="text-xs text-muted-foreground">Status, note, owner, follow-up, and promise changes.</p>
+            </div>
+            <div className="max-h-[58vh] overflow-auto p-3">
+              {(row.collectionEvents || []).length ? (
+                <div className="space-y-2">
+                  {row.collectionEvents.map((event) => (
+                    <div key={event.id} className="rounded-lg border border-border bg-card p-3 text-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="font-medium text-foreground">{event.status || event.eventType}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{fmtDateTime(event.createdAt)}</span>
+                      </div>
+                      {event.note && <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{event.note}</p>}
+                      <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
+                        {event.ownerName && <span>Owner: {event.ownerName}</span>}
+                        {event.nextFollowUpDate && <span>Next follow-up: {fmtDate(event.nextFollowUpDate)}</span>}
+                        {event.promisedPaymentDate && <span>Promise date: {fmtDate(event.promisedPaymentDate)}</span>}
+                        {event.promisedAmount != null && <span>Promise amount: {fmtMoney(event.promisedAmount)}</span>}
+                        {event.actorEmail && <span>Updated by: {event.actorEmail}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <StateBlock title="No collection history" description="Save a status or note to create the first collection history entry." />
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function BuyerInvoices() {
+  const { user } = useAuth();
   const initialFilters = useMemo(() => readInitialFilters(), []);
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [daysAhead, setDaysAhead] = useState(initialFilters.daysAhead);
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedStemId, setSelectedStemId] = useState(null);
+  const [selectedCollectionRow, setSelectedCollectionRow] = useState(null);
   const [showEmailSchedule, setShowEmailSchedule] = useState(false);
-  const [savedEmailSettings, setSavedEmailSettings] = useState(readEmailSettings);
+  const [savedEmailSettings, setSavedEmailSettings] = useState(readLegacyEmailSettings);
   const [emailSettings, setEmailSettings] = useState(savedEmailSettings);
+  const [emailMeta, setEmailMeta] = useState(null);
+  const [emailLoading, setEmailLoading] = useState(true);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMessage, setEmailMessage] = useState(null);
   const [emailError, setEmailError] = useState(null);
   const [selectedBuyerTraders, setSelectedBuyerTraders] = useState([]);
+  const [selectedCollectionStatuses, setSelectedCollectionStatuses] = useState(COLLECTION_STATUSES);
+  const [selectedOwners, setSelectedOwners] = useState([]);
+  const [severityFilter, setSeverityFilter] = useState('all');
+  const [followUpFilter, setFollowUpFilter] = useState('all');
+  const [actionOnly, setActionOnly] = useState(false);
   const [copiedRowId, setCopiedRowId] = useState(null);
   const traderFilterInitialized = useRef(false);
   const initialBuyerTraderFilter = useRef(initialFilters);
@@ -237,6 +439,11 @@ export default function BuyerInvoices() {
 
   const buyerTraderOptions = useMemo(() => (
     [...new Set(rows.flatMap((row) => splitBuyerTraderNames(row.buyerTraderInCharge)))]
+      .sort((a, b) => a.localeCompare(b))
+  ), [rows]);
+
+  const ownerOptions = useMemo(() => (
+    [...new Set(rows.map(collectionOwner).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b))
   ), [rows]);
 
@@ -261,11 +468,36 @@ export default function BuyerInvoices() {
     });
   }, [buyerTraderOptions]);
 
+  useEffect(() => {
+    setSelectedOwners((prev) => prev.filter((name) => ownerOptions.includes(name)));
+  }, [ownerOptions]);
+
   const filteredRows = useMemo(() => {
-    if (!buyerTraderOptions.length || selectedBuyerTraders.length === buyerTraderOptions.length) return rows;
-    const selected = new Set(selectedBuyerTraders);
-    return rows.filter((row) => splitBuyerTraderNames(row.buyerTraderInCharge).some((name) => selected.has(name)));
-  }, [buyerTraderOptions, rows, selectedBuyerTraders]);
+    let next = rows;
+    if (buyerTraderOptions.length && selectedBuyerTraders.length !== buyerTraderOptions.length) {
+      const selected = new Set(selectedBuyerTraders);
+      next = next.filter((row) => splitBuyerTraderNames(row.buyerTraderInCharge).some((name) => selected.has(name)));
+    }
+    if (selectedCollectionStatuses.length !== COLLECTION_STATUSES.length) {
+      const selected = new Set(selectedCollectionStatuses);
+      next = next.filter((row) => selected.has(collectionStatus(row)));
+    }
+    if (selectedOwners.length) {
+      const selected = new Set(selectedOwners);
+      next = next.filter((row) => selected.has(collectionOwner(row)));
+    }
+    if (severityFilter !== 'all') {
+      next = next.filter((row) => {
+        const severity = overdueSeverity(row.daysUntilDue);
+        if (severityFilter === 'due-soon') return !severity;
+        return severity === severityFilter;
+      });
+    }
+    if (followUpFilter === 'due') next = next.filter((row) => isFollowUpDue(row, today));
+    if (followUpFilter === 'scheduled') next = next.filter((row) => Boolean(row.collection?.nextFollowUpDate));
+    if (actionOnly) next = next.filter((row) => isNeedsAction(row, today));
+    return next;
+  }, [actionOnly, buyerTraderOptions, followUpFilter, rows, selectedBuyerTraders, selectedCollectionStatuses, selectedOwners, severityFilter, today]);
 
   const loadRows = async () => {
     const nextDays = Math.max(0, Math.min(Number(daysAhead) || 0, 365));
@@ -282,8 +514,24 @@ export default function BuyerInvoices() {
     setLoading(false);
   };
 
+  const loadEmailSettings = async () => {
+    setEmailLoading(true);
+    const res = await appClient.functions.invoke('buyerInvoiceEmailSettingsGet');
+    if (res.data?.error) {
+      setEmailError(res.data.error);
+    } else {
+      const formSettings = emailSettingsToForm(res.data.settings);
+      setSavedEmailSettings(formSettings);
+      setEmailSettings(formSettings);
+      setEmailMeta(res.data.meta || null);
+      setEmailError(null);
+    }
+    setEmailLoading(false);
+  };
+
   useEffect(() => {
     loadRows();
+    loadEmailSettings();
   }, []);
 
   useEffect(() => {
@@ -311,16 +559,30 @@ export default function BuyerInvoices() {
   const totals = useMemo(() => {
     const overdue = filteredRows.filter((row) => row.status === 'Overdue');
     const dueSoon = filteredRows.filter((row) => row.status !== 'Overdue');
+    const needsAction = filteredRows.filter((row) => isNeedsAction(row, today));
     return {
       overdueCount: overdue.length,
       overdueReceivable: overdue.reduce((sum, row) => sum + Number(row.receivableBalance || 0), 0),
       dueSoonCount: dueSoon.length,
       dueSoonReceivable: dueSoon.reduce((sum, row) => sum + Number(row.receivableBalance || 0), 0),
+      needsActionCount: needsAction.length,
+      needsActionReceivable: needsAction.reduce((sum, row) => sum + Number(row.receivableBalance || 0), 0),
     };
-  }, [filteredRows]);
+  }, [filteredRows, today]);
+
+  const settingsForServer = () => {
+    const hasBuyerTraderFilter = buyerTraderOptions.length > 0 && selectedBuyerTraders.length !== buyerTraderOptions.length;
+    return {
+      ...emailSettings,
+      daysAhead: Number(emailSettings.daysAhead || daysAhead || 7),
+      buyerTraders: hasBuyerTraderFilter ? selectedBuyerTraders : [],
+      hasBuyerTraderFilter,
+      appUrl: window.location.origin,
+    };
+  };
 
   const exportCsv = () => {
-    const headers = ['Stem Name', 'Buyer Name', 'Invoice Amount', 'Receivable Balance', 'Buyer Invoice Due Date', 'Buyer Trader in Charge', 'PSPRS Status', 'Status', 'Overdue'];
+    const headers = ['Stem Name', 'Buyer Name', 'Invoice Amount', 'Receivable Balance', 'Buyer Invoice Due Date', 'Buyer Trader in Charge', 'PSPRS Status', 'Status', 'Overdue', 'Collection Status', 'Collection Owner', 'Next Follow-up Date', 'Promised Payment Date', 'Promised Amount', 'Latest Note'];
     const csvRows = filteredRows.map((row) => [
       row.stemName,
       row.buyerName,
@@ -331,6 +593,12 @@ export default function BuyerInvoices() {
       row.prpspStatus,
       row.status,
       row.daysUntilDue == null ? '' : -Number(row.daysUntilDue),
+      collectionStatus(row),
+      collectionOwner(row),
+      row.collection?.nextFollowUpDate,
+      row.collection?.promisedPaymentDate,
+      row.collection?.promisedAmount,
+      row.collection?.latestNote,
     ]);
     const csv = [headers, ...csvRows].map((row) => row.map(csvValue).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -364,7 +632,7 @@ export default function BuyerInvoices() {
       const set = new Set(prev.weekdays || []);
       if (set.has(day)) set.delete(day);
       else set.add(day);
-      return { ...prev, weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].filter((item) => set.has(item)) };
+      return { ...prev, weekdays: WEEKDAYS.filter((item) => set.has(item)) };
     });
   };
 
@@ -381,11 +649,36 @@ export default function BuyerInvoices() {
     ));
   };
 
-  const saveEmailSettings = () => {
-    localStorage.setItem(EMAIL_SETTINGS_KEY, JSON.stringify(emailSettings));
-    setSavedEmailSettings(emailSettings);
-    setEmailMessage('Email report schedule saved.');
+  const toggleCollectionStatus = (status) => {
+    setSelectedCollectionStatuses((prev) => (
+      prev.includes(status)
+        ? prev.filter((item) => item !== status)
+        : [...prev, status].sort((a, b) => COLLECTION_STATUSES.indexOf(a) - COLLECTION_STATUSES.indexOf(b))
+    ));
+  };
+
+  const toggleOwner = (owner) => {
+    setSelectedOwners((prev) => (
+      prev.includes(owner)
+        ? prev.filter((item) => item !== owner)
+        : [...prev, owner].sort((a, b) => a.localeCompare(b))
+    ));
+  };
+
+  const saveEmailSettings = async () => {
+    setEmailBusy(true);
     setEmailError(null);
+    const res = await appClient.functions.invoke('buyerInvoiceEmailSettingsSave', { settings: settingsForServer() });
+    if (res.data?.error) {
+      setEmailError(res.data.error);
+    } else {
+      const formSettings = emailSettingsToForm(res.data.settings);
+      setSavedEmailSettings(formSettings);
+      setEmailSettings(formSettings);
+      setEmailMeta(res.data.meta || null);
+      setEmailMessage('Email report schedule saved.');
+    }
+    setEmailBusy(false);
   };
 
   const cancelEmailSettings = () => {
@@ -403,25 +696,35 @@ export default function BuyerInvoices() {
     setEmailBusy(true);
     setEmailError(null);
     setEmailMessage(null);
-    const settings = {
-      ...emailSettings,
-      daysAhead: Number(emailSettings.daysAhead || daysAhead || 7),
-      buyerTraders: selectedBuyerTraders,
-      appUrl: window.location.origin,
-    };
     const smtpSettings = readSmtpSettings();
     const credentials = hasUsableSmtpSettings(smtpSettings) && !preview
       ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587) } }
       : undefined;
-    const res = await appClient.functions.invoke('outstandingBuyerInvoicesEmailReport', { settings, credentials, preview, force: !preview });
+    const res = await appClient.functions.invoke('outstandingBuyerInvoicesEmailReport', { settings: settingsForServer(), credentials, preview, force: !preview });
     if (res.data?.error) {
       setEmailError(res.data.error);
     } else if (preview) {
+      setEmailMeta((prev) => ({ ...(prev || {}), lastPreviewAt: new Date().toISOString(), lastPreviewRowCount: res.data.report?.rows?.length ?? 0 }));
       setEmailMessage(`Preview ready: ${res.data.report?.rows?.length ?? 0} invoice rows. Subject: ${res.data.email?.subject}`);
     } else {
+      setEmailMeta((prev) => ({ ...(prev || {}), lastSentAt: new Date().toISOString(), lastSentRowCount: res.data.rows ?? 0, lastError: null }));
       setEmailMessage(`Sent ${res.data.rows ?? 0} invoice rows to ${res.data.to?.join(', ') || emailSettings.to}.`);
     }
     setEmailBusy(false);
+  };
+
+  const mergeCollectionResult = (result) => {
+    if (!result?.item) return;
+    setRows((prev) => prev.map((row) => {
+      if (row.stemId !== result.item.stemId) return row;
+      return {
+        ...row,
+        collection: result.item,
+        collectionEvents: result.event
+          ? [result.event, ...(row.collectionEvents || [])]
+          : row.collectionEvents || [],
+      };
+    }));
   };
 
   return (
@@ -430,7 +733,7 @@ export default function BuyerInvoices() {
         icon={ReceiptText}
         eyebrow="Buyer invoice follow-up"
         title="Outstanding Buyer Invoices"
-        description="Manage overdue buyer invoices and invoices due within the selected number of days."
+        description="Manage overdue buyer invoices, due invoices, and AR collection follow-up."
         meta={meta ? `Window: ${fmtDate(meta.today)} to ${fmtDate(meta.dueThrough)} · ${filteredRows.length.toLocaleString()} of ${rows.length.toLocaleString()} invoices` : undefined}
         actions={(
           <>
@@ -465,142 +768,241 @@ export default function BuyerInvoices() {
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
             Apply
           </Button>
-          <p className="pb-2 text-xs text-muted-foreground">
-            Overdue invoices are always included.
-          </p>
+          <Button variant={actionOnly ? 'default' : 'outline'} onClick={() => setActionOnly((value) => !value)} className="gap-2">
+            <MessageSquareText className="h-4 w-4" />
+            Needs Action Today
+          </Button>
+          <p className="pb-2 text-xs text-muted-foreground">Overdue invoices are always included.</p>
         </div>
-        {buyerTraderOptions.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border pt-4">
-            <Label className="w-44 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Trader in Charge</Label>
+
+        <div className="mt-4 grid gap-4 border-t border-border pt-4 xl:grid-cols-[1fr_1fr]">
+          {buyerTraderOptions.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Trader in Charge</Label>
+                <button type="button" onClick={toggleAllBuyerTraders} className="text-xs text-primary hover:underline">
+                  {selectedBuyerTraders.length === buyerTraderOptions.length ? 'Clear all' : 'Select all'}
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {buyerTraderOptions.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => toggleBuyerTrader(name)}
+                    className={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
+                      selectedBuyerTraders.includes(name)
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
+                    }`}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collection Status</Label>
+              <button
+                type="button"
+                onClick={() => setSelectedCollectionStatuses(selectedCollectionStatuses.length === COLLECTION_STATUSES.length ? [] : COLLECTION_STATUSES)}
+                className="text-xs text-primary hover:underline"
+              >
+                {selectedCollectionStatuses.length === COLLECTION_STATUSES.length ? 'Clear all' : 'Select all'}
+              </button>
+            </div>
             <div className="flex flex-wrap gap-1.5">
-              {buyerTraderOptions.map((name) => (
+              {COLLECTION_STATUSES.map((status) => (
                 <button
-                  key={name}
+                  key={status}
                   type="button"
-                  onClick={() => toggleBuyerTrader(name)}
+                  onClick={() => toggleCollectionStatus(status)}
                   className={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
-                    selectedBuyerTraders.includes(name)
+                    selectedCollectionStatuses.includes(status)
                       ? 'border-primary bg-primary text-primary-foreground'
                       : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
                   }`}
                 >
-                  {name}
+                  {status}
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={toggleAllBuyerTraders}
-              className="text-xs text-primary hover:underline"
-            >
-              {selectedBuyerTraders.length === buyerTraderOptions.length ? 'Clear all' : 'Select all'}
-            </button>
           </div>
-        )}
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Overdue Severity</Label>
+            <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm">
+              <option value="all">All</option>
+              <option value="red">Overdue 14+ days</option>
+              <option value="orange">Overdue 7-13 days</option>
+              <option value="yellow">Overdue 0-6 days</option>
+              <option value="due-soon">Due today / due soon</option>
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Follow-up</Label>
+            <select value={followUpFilter} onChange={(event) => setFollowUpFilter(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm">
+              <option value="all">All</option>
+              <option value="due">Follow-up due</option>
+              <option value="scheduled">Follow-up scheduled</option>
+            </select>
+          </div>
+          {ownerOptions.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Label className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Owner</Label>
+              {ownerOptions.map((owner) => (
+                <button
+                  key={owner}
+                  type="button"
+                  onClick={() => toggleOwner(owner)}
+                  className={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
+                    selectedOwners.includes(owner)
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
+                  }`}
+                >
+                  {owner}
+                </button>
+              ))}
+              {selectedOwners.length > 0 && (
+                <button type="button" onClick={() => setSelectedOwners([])} className="text-xs text-primary hover:underline">Clear owners</button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {showEmailSchedule && (
-      <div className="rounded-xl border border-border bg-card p-4">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <Mail className="h-4 w-4 text-muted-foreground" />
-              <h3 className="text-sm font-semibold text-foreground">Email Report Schedule</h3>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Mail className="h-4 w-4 text-muted-foreground" />
+                <h3 className="text-sm font-semibold text-foreground">Email Report Schedule</h3>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Shared server schedule. Cron checks these Hong Kong times and prevents duplicate sends.
+              </p>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Default production schedule is weekdays at 08:00 and 14:00 Hong Kong time. Save changes before leaving this page.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={cancelEmailSettings} disabled={!emailDirty || emailBusy} className="gap-2">
-              <X className="h-4 w-4" /> Cancel
-            </Button>
-            <Button variant="outline" onClick={saveEmailSettings} disabled={!emailDirty || emailBusy} className="gap-2">
-              <Save className="h-4 w-4" /> Save
-            </Button>
-            <Button variant="outline" onClick={() => sendEmailReport(true)} disabled={emailBusy} className="gap-2">
-              {emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
-              Preview
-            </Button>
-            <Button onClick={() => sendEmailReport(false)} disabled={emailBusy} className="gap-2">
-              {emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Send Now
-            </Button>
-          </div>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">From</Label>
-            <Input value={emailSettings.from} onChange={(event) => updateEmailSetting('from', event.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">To</Label>
-            <Input value={emailSettings.to} onChange={(event) => updateEmailSetting('to', event.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">CC</Label>
-            <Input value={emailSettings.cc} onChange={(event) => updateEmailSetting('cc', event.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Subject</Label>
-            <Input value={emailSettings.subject} onChange={(event) => updateEmailSetting('subject', event.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Due in next days</Label>
-            <Input type="number" min="0" max="365" value={emailSettings.daysAhead} onChange={(event) => updateEmailSetting('daysAhead', event.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Send times</Label>
-            <Input value={emailSettings.sendTimes} onChange={(event) => updateEmailSetting('sendTimes', event.target.value)} placeholder="08:00, 14:00" />
-          </div>
-          <div className="space-y-1.5 lg:col-span-2">
-            <Label className="text-xs text-muted-foreground">Email content</Label>
-            <Textarea value={emailSettings.intro} onChange={(event) => updateEmailSetting('intro', event.target.value)} className="min-h-32" />
-            <p className="text-xs text-muted-foreground">
-              Available placeholders: {'{{reportStart}}'}, {'{{reportEnd}}'}, {'{{daysAhead}}'}.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">Weekdays</Label>
-            <div className="flex flex-wrap gap-1.5">
-              {['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map((day) => (
-                <button
-                  key={day}
-                  type="button"
-                  onClick={() => toggleEmailWeekday(day)}
-                  className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                    emailSettings.weekdays?.includes(day)
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
-                  }`}
-                >
-                  {day}
-                </button>
-              ))}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={cancelEmailSettings} disabled={!emailDirty || emailBusy} className="gap-2">
+                <X className="h-4 w-4" /> Cancel
+              </Button>
+              <Button variant="outline" onClick={saveEmailSettings} disabled={!emailDirty || emailBusy || emailLoading} className="gap-2">
+                {emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
+              </Button>
+              <Button variant="outline" onClick={() => sendEmailReport(true)} disabled={emailBusy || emailLoading} className="gap-2">
+                {emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+                Preview
+              </Button>
+              <Button onClick={() => sendEmailReport(false)} disabled={emailBusy || emailLoading} className="gap-2">
+                {emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Send Now
+              </Button>
             </div>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <input type="checkbox" checked={emailSettings.includeSummary} onChange={(event) => updateEmailSetting('includeSummary', event.target.checked)} />
-              Include KPI summary
-            </label>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <input type="checkbox" checked={emailSettings.includeTable} onChange={(event) => updateEmailSetting('includeTable', event.target.checked)} />
-              Include invoice table
-            </label>
           </div>
-          <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground lg:col-span-3">
-            Send Now uses the saved SMTP email account from Settings when it is enabled. If no saved SMTP account is enabled, the server-side email provider is used.
-          </div>
-        </div>
 
-        {emailMessage && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailMessage}</div>}
-        {emailError && <div className="mt-3 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{emailError}</div>}
-      </div>
+          <div className="mb-4 grid gap-2 md:grid-cols-4">
+            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+              <div className="font-semibold text-foreground">Next Scheduled Run</div>
+              <div className="mt-1 text-muted-foreground">{emailMeta?.nextScheduledRun || '-'}</div>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+              <div className="font-semibold text-foreground">Last Sent</div>
+              <div className="mt-1 text-muted-foreground">{fmtDateTime(emailMeta?.lastSentAt)} · {emailMeta?.lastSentRowCount ?? '-'} rows</div>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+              <div className="font-semibold text-foreground">Last Preview</div>
+              <div className="mt-1 text-muted-foreground">{fmtDateTime(emailMeta?.lastPreviewAt)} · {emailMeta?.lastPreviewRowCount ?? '-'} rows</div>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+              <div className="font-semibold text-foreground">Last Error</div>
+              <div className="mt-1 truncate text-muted-foreground" title={emailMeta?.lastError || ''}>{emailMeta?.lastError || '-'}</div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-foreground lg:col-span-3">
+              <input type="checkbox" checked={emailSettings.enabled !== false} onChange={(event) => updateEmailSetting('enabled', event.target.checked)} />
+              Enable scheduled sending
+            </label>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">From</Label>
+              <Input value={emailSettings.from} onChange={(event) => updateEmailSetting('from', event.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">To</Label>
+              <Input value={emailSettings.to} onChange={(event) => updateEmailSetting('to', event.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">CC</Label>
+              <Input value={emailSettings.cc} onChange={(event) => updateEmailSetting('cc', event.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Subject</Label>
+              <Input value={emailSettings.subject} onChange={(event) => updateEmailSetting('subject', event.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Due in next days</Label>
+              <Input type="number" min="0" max="365" value={emailSettings.daysAhead} onChange={(event) => updateEmailSetting('daysAhead', event.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Send times</Label>
+              <Input value={emailSettings.sendTimes} onChange={(event) => updateEmailSetting('sendTimes', event.target.value)} placeholder="08:00, 14:00" />
+            </div>
+            <div className="space-y-1.5 lg:col-span-2">
+              <Label className="text-xs text-muted-foreground">Email content</Label>
+              <Textarea value={emailSettings.intro} onChange={(event) => updateEmailSetting('intro', event.target.value)} className="min-h-32" />
+              <p className="text-xs text-muted-foreground">
+                Available placeholders: {'{{reportStart}}'}, {'{{reportEnd}}'}, {'{{daysAhead}}'}.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Weekdays</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {WEEKDAYS.map((day) => (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => toggleEmailWeekday(day)}
+                    className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      emailSettings.weekdays?.includes(day)
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
+                    }`}
+                  >
+                    {day}
+                  </button>
+                ))}
+              </div>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input type="checkbox" checked={emailSettings.includeSummary} onChange={(event) => updateEmailSetting('includeSummary', event.target.checked)} />
+                Include KPI summary
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input type="checkbox" checked={emailSettings.includeTable} onChange={(event) => updateEmailSetting('includeTable', event.target.checked)} />
+                Include invoice table
+              </label>
+            </div>
+            <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground lg:col-span-3">
+              Send Now can still use saved SMTP credentials from Settings. Scheduled production email uses server-side Resend or SMTP environment variables.
+            </div>
+          </div>
+
+          {emailMessage && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailMessage}</div>}
+          {emailError && <div className="mt-3 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{emailError}</div>}
+        </div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-3">
         <SummaryCard label="Overdue" value={`${fmtMoney(totals.overdueReceivable)} (${totals.overdueCount.toLocaleString()})`} tone="red" />
         <SummaryCard label={`Due in ${Number(meta?.daysAhead ?? daysAhead ?? 7).toLocaleString()} Days`} value={`${fmtMoney(totals.dueSoonReceivable)} (${totals.dueSoonCount.toLocaleString()})`} tone="blue" />
+        <SummaryCard label="Needs Action Today" value={`${fmtMoney(totals.needsActionReceivable)} (${totals.needsActionCount.toLocaleString()})`} tone="amber" />
       </div>
 
       {error && (
@@ -610,14 +1012,14 @@ export default function BuyerInvoices() {
       )}
 
       {loading && (
-        <StateBlock icon={Loader2} title="Loading buyer invoices..." description="Fetching due dates, invoice amounts, buyers, and trader assignments from Salesforce." />
+        <StateBlock icon={Loader2} title="Loading buyer invoices..." description="Fetching due dates, invoice amounts, buyers, trader assignments, and collection state." />
       )}
 
       {!loading && !error && (
         <TableShell title="Buyer Invoice Due List" meta={`${filteredRows.length.toLocaleString()} rows`} bodyClassName="p-0">
           {filteredRows.length ? (
             <div className="max-h-[68vh] overflow-auto">
-              <table className="w-full min-w-[1240px] text-sm">
+              <table className="w-full min-w-[1540px] text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/40">
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Stem Name</th>
@@ -627,9 +1029,11 @@ export default function BuyerInvoices() {
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Invoice Due Date</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Trader in Charge</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">PSPRS Status</th>
+                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collection</th>
+                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Next Follow-up</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
-                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Copy</th>
+                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -639,13 +1043,26 @@ export default function BuyerInvoices() {
                       onClick={() => setSelectedStemId(row.stemId)}
                       className={`cursor-pointer border-b border-border/40 transition-colors ${rowSeverityClass(row, idx)}`}
                     >
-                      <td className="px-4 py-3 font-medium text-foreground">{row.stemName || '—'}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{row.buyerName || '—'}</td>
+                      <td className="px-4 py-3 font-medium text-foreground">{row.stemName || '-'}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{row.buyerName || '-'}</td>
                       <td className="px-4 py-3 text-right font-semibold text-foreground">{fmtMoney(row.invoiceAmount)}</td>
                       <td className="px-4 py-3 text-right font-semibold text-foreground">{fmtMoney(row.receivableBalance)}</td>
                       <td className="px-4 py-3 text-foreground">{fmtDate(row.buyerInvoiceDueDate)}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{row.buyerTraderInCharge || '—'}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{row.prpspStatus || '—'}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{row.buyerTraderInCharge || '-'}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{row.prpspStatus || '-'}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-1">
+                          <span className={`w-fit rounded-full border px-2 py-0.5 text-xs font-medium ${collectionPill(collectionStatus(row))}`}>
+                            {collectionStatus(row)}
+                          </span>
+                          {collectionOwner(row) && <span className="text-xs text-muted-foreground">{collectionOwner(row)}</span>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-foreground">
+                        <div className={isFollowUpDue(row, today) ? 'font-semibold text-amber-800' : ''}>
+                          {fmtDate(row.collection?.nextFollowUpDate)}
+                        </div>
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${statusPill(row.status, row.daysUntilDue)}`}>
                           {row.status}
@@ -655,20 +1072,36 @@ export default function BuyerInvoices() {
                         {overdueDisplayValue(row.daysUntilDue)}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          title="Copy row details"
-                          aria-label={`Copy ${row.stemName || 'invoice'} details`}
-                          className="h-7 px-2"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            copyInvoiceRecord(row);
-                          }}
-                        >
-                          {copiedRowId === row.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                        </Button>
+                        <div className="flex justify-end gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            title="Manage collection"
+                            aria-label={`Manage collection for ${row.stemName || 'invoice'}`}
+                            className="h-7 px-2"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedCollectionRow(row);
+                            }}
+                          >
+                            <MessageSquareText className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            title="Copy row details"
+                            aria-label={`Copy ${row.stemName || 'invoice'} details`}
+                            className="h-7 px-2"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              copyInvoiceRecord(row);
+                            }}
+                          >
+                            {copiedRowId === row.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -676,12 +1109,19 @@ export default function BuyerInvoices() {
               </table>
             </div>
           ) : (
-            <StateBlock title="No buyer invoices found" description="No overdue invoices or invoices due inside the selected window." />
+            <StateBlock title="No buyer invoices found" description="No overdue invoices, due invoices, or collection rows match the selected filters." />
           )}
         </TableShell>
       )}
 
       <StemDetailModal stemId={selectedStemId} open={!!selectedStemId} onClose={() => setSelectedStemId(null)} onUpdated={loadRows} />
+      <CollectionModal
+        row={selectedCollectionRow}
+        open={!!selectedCollectionRow}
+        onClose={() => setSelectedCollectionRow(null)}
+        onSaved={mergeCollectionResult}
+        currentUser={user}
+      />
     </div>
   );
 }

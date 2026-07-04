@@ -99,6 +99,33 @@ async function requireAdministrator(req) {
   return { client, authUser: userData.user, profile };
 }
 
+function safeSupabaseAdminClient() {
+  try {
+    return supabaseAdminClient();
+  } catch {
+    return null;
+  }
+}
+
+async function requireActiveUser(req) {
+  const token = bearerToken(req);
+  if (!token) throw appError('Sign-in required.', 401);
+
+  const client = supabaseAdminClient();
+  const { data: userData, error: userError } = await client.auth.getUser(token);
+  if (userError || !userData?.user) throw appError('Invalid or expired session. Sign in again.', 401);
+
+  const { data: profile, error: profileError } = await client
+    .from('user_profiles')
+    .select('id,email,full_name,user_type,active')
+    .eq('id', userData.user.id)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  if (!profile?.active) throw appError('User is inactive.', 403);
+
+  return { client, authUser: userData.user, profile };
+}
+
 function normalizePermissions(userType, permissions = {}) {
   if (userType === 'administrator') return ADMIN_FULL_ACCESS;
   const normalized = {};
@@ -492,6 +519,88 @@ async function adminBootstrap(body = {}) {
   }, { id: null, email: 'bootstrap' });
 
   return { bootstrapped: true, user: { id: user.id, email: user.email, full_name: user.full_name, user_type: user.user_type } };
+}
+
+async function buyerInvoiceCollectionList(body, req) {
+  await requireActiveUser(req);
+  const stemIds = Array.isArray(body.stemIds)
+    ? body.stemIds.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
+  const map = await loadBuyerInvoiceCollectionMap(stemIds);
+  return {
+    items: Object.values(map).map((entry) => entry.item).filter(Boolean),
+    events: Object.values(map).flatMap((entry) => entry.events || []),
+    byStemId: map,
+  };
+}
+
+async function persistBuyerInvoiceCollection(body, req, eventOverride = null) {
+  const { client, profile } = await requireActiveUser(req);
+  const stemId = String(body.stemId || body.stem_id || '').trim();
+  if (!stemId) throw appError('stemId is required.', 400);
+
+  const updates = normalizeCollectionUpdates(body.updates || body, profile);
+  const nowIso = new Date().toISOString();
+  const itemPayload = {
+    stem_id: stemId,
+    ...updates,
+    last_event_at: nowIso,
+    last_updated_by: profile.id,
+    last_updated_by_email: profile.email,
+    updated_at: nowIso,
+  };
+  if (!Object.prototype.hasOwnProperty.call(itemPayload, 'status')) itemPayload.status = 'Not Started';
+
+  const { data: item, error: itemError } = await client
+    .from('buyer_invoice_collection_items')
+    .upsert(itemPayload, { onConflict: 'stem_id' })
+    .select('stem_id,status,owner_user_id,owner_name,latest_note,next_follow_up_date,promised_payment_date,promised_amount,last_event_at,last_updated_by,last_updated_by_email,created_at,updated_at')
+    .single();
+  if (itemError) throw itemError;
+
+  const eventInput = eventOverride || body.event || {};
+  const eventPayload = {
+    stem_id: stemId,
+    event_type: normalizeEventType(eventInput.eventType || eventInput.event_type || collectionEventTypeFromChanges(updates)),
+    status: Object.prototype.hasOwnProperty.call(updates, 'status') ? updates.status : eventInput.status || null,
+    owner_name: Object.prototype.hasOwnProperty.call(updates, 'owner_name') ? updates.owner_name : eventInput.ownerName || eventInput.owner_name || null,
+    note: Object.prototype.hasOwnProperty.call(updates, 'latest_note') ? updates.latest_note : eventInput.note || null,
+    next_follow_up_date: Object.prototype.hasOwnProperty.call(updates, 'next_follow_up_date') ? updates.next_follow_up_date : dateOrNull(eventInput.nextFollowUpDate || eventInput.next_follow_up_date),
+    promised_payment_date: Object.prototype.hasOwnProperty.call(updates, 'promised_payment_date') ? updates.promised_payment_date : dateOrNull(eventInput.promisedPaymentDate || eventInput.promised_payment_date),
+    promised_amount: Object.prototype.hasOwnProperty.call(updates, 'promised_amount') ? updates.promised_amount : decimalOrNull(eventInput.promisedAmount || eventInput.promised_amount),
+    actor_user_id: profile.id,
+    actor_email: profile.email,
+  };
+  const { data: event, error: eventError } = await client
+    .from('buyer_invoice_collection_events')
+    .insert(eventPayload)
+    .select('id,stem_id,event_type,status,owner_name,note,next_follow_up_date,promised_payment_date,promised_amount,actor_user_id,actor_email,created_at')
+    .single();
+  if (eventError) throw eventError;
+
+  return { item: serializeCollectionItem(item), event: serializeCollectionEvent(event) };
+}
+
+async function buyerInvoiceCollectionSave(body, req) {
+  return persistBuyerInvoiceCollection(body, req);
+}
+
+async function buyerInvoiceCollectionEventCreate(body, req) {
+  const event = body.event || {};
+  const updates = {};
+  if (event.status) updates.status = event.status;
+  if (event.ownerName || event.owner_name) updates.ownerName = event.ownerName || event.owner_name;
+  if (event.note) updates.latestNote = event.note;
+  if (Object.prototype.hasOwnProperty.call(event, 'nextFollowUpDate') || Object.prototype.hasOwnProperty.call(event, 'next_follow_up_date')) {
+    updates.nextFollowUpDate = event.nextFollowUpDate || event.next_follow_up_date;
+  }
+  if (Object.prototype.hasOwnProperty.call(event, 'promisedPaymentDate') || Object.prototype.hasOwnProperty.call(event, 'promised_payment_date')) {
+    updates.promisedPaymentDate = event.promisedPaymentDate || event.promised_payment_date;
+  }
+  if (Object.prototype.hasOwnProperty.call(event, 'promisedAmount') || Object.prototype.hasOwnProperty.call(event, 'promised_amount')) {
+    updates.promisedAmount = event.promisedAmount ?? event.promised_amount;
+  }
+  return persistBuyerInvoiceCollection({ ...body, updates }, req, event);
 }
 
 async function salesforceSchema() {
@@ -971,6 +1080,16 @@ const DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS = {
   weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
   sendTimes: ['08:00', '14:00'],
 };
+const BUYER_INVOICE_COLLECTION_STATUSES = [
+  'Not Started',
+  'Reminder Sent',
+  'Awaiting Buyer Reply',
+  'Promise to Pay',
+  'Escalated',
+  'Paid / Closed',
+  'On Hold',
+];
+const BUYER_INVOICE_EVENT_TYPES = ['update', 'status_change', 'note', 'follow_up', 'promise', 'owner_change'];
 
 function normalizedUrl(value) {
   const raw = String(value || '').trim();
@@ -1110,6 +1229,158 @@ function parseStringList(value, fallback = []) {
   if (typeof value !== 'string') return fallback;
   const parsed = value.split(/[,\n;]/).map((item) => item.trim()).filter(Boolean);
   return parsed.length ? parsed : fallback;
+}
+
+function normalizeCollectionStatus(value) {
+  const status = String(value || '').trim();
+  return BUYER_INVOICE_COLLECTION_STATUSES.includes(status) ? status : 'Not Started';
+}
+
+function dateOrNull(value) {
+  if (!value) return null;
+  const raw = String(value).slice(0, 10);
+  const date = new Date(`${raw}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) ? null : raw;
+}
+
+function decimalOrNull(value) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeEventType(value) {
+  const type = String(value || '').trim();
+  return BUYER_INVOICE_EVENT_TYPES.includes(type) ? type : 'update';
+}
+
+function collectionEventTypeFromChanges(changes) {
+  if (Object.prototype.hasOwnProperty.call(changes, 'status')) return 'status_change';
+  if (Object.prototype.hasOwnProperty.call(changes, 'owner_name')) return 'owner_change';
+  if (Object.prototype.hasOwnProperty.call(changes, 'promised_payment_date') || Object.prototype.hasOwnProperty.call(changes, 'promised_amount')) return 'promise';
+  if (Object.prototype.hasOwnProperty.call(changes, 'next_follow_up_date')) return 'follow_up';
+  if (Object.prototype.hasOwnProperty.call(changes, 'latest_note')) return 'note';
+  return 'update';
+}
+
+function serializeCollectionItem(row) {
+  if (!row) return null;
+  return {
+    stemId: row.stem_id,
+    status: row.status || 'Not Started',
+    ownerUserId: row.owner_user_id || null,
+    ownerName: row.owner_name || '',
+    latestNote: row.latest_note || '',
+    nextFollowUpDate: row.next_follow_up_date || null,
+    promisedPaymentDate: row.promised_payment_date || null,
+    promisedAmount: row.promised_amount == null ? null : Number(row.promised_amount),
+    lastEventAt: row.last_event_at || null,
+    lastUpdatedBy: row.last_updated_by || null,
+    lastUpdatedByEmail: row.last_updated_by_email || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function serializeCollectionEvent(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    stemId: row.stem_id,
+    eventType: row.event_type || 'update',
+    status: row.status || null,
+    ownerName: row.owner_name || null,
+    note: row.note || null,
+    nextFollowUpDate: row.next_follow_up_date || null,
+    promisedPaymentDate: row.promised_payment_date || null,
+    promisedAmount: row.promised_amount == null ? null : Number(row.promised_amount),
+    actorUserId: row.actor_user_id || null,
+    actorEmail: row.actor_email || null,
+    createdAt: row.created_at || null,
+  };
+}
+
+async function loadBuyerInvoiceCollectionMap(stemIds = []) {
+  const ids = [...new Set((stemIds || []).filter(Boolean))];
+  if (!ids.length) return {};
+  const client = safeSupabaseAdminClient();
+  if (!client) return {};
+
+  try {
+    const [itemsRes, eventsRes] = await Promise.all([
+      client
+        .from('buyer_invoice_collection_items')
+        .select('stem_id,status,owner_user_id,owner_name,latest_note,next_follow_up_date,promised_payment_date,promised_amount,last_event_at,last_updated_by,last_updated_by_email,created_at,updated_at')
+        .in('stem_id', ids),
+      client
+        .from('buyer_invoice_collection_events')
+        .select('id,stem_id,event_type,status,owner_name,note,next_follow_up_date,promised_payment_date,promised_amount,actor_user_id,actor_email,created_at')
+        .in('stem_id', ids)
+        .order('created_at', { ascending: false })
+        .limit(Math.max(100, Math.min(ids.length * 20, 2000))),
+    ]);
+    if (itemsRes.error) throw itemsRes.error;
+    if (eventsRes.error) throw eventsRes.error;
+
+    const map = {};
+    for (const item of itemsRes.data || []) {
+      map[item.stem_id] = { item: serializeCollectionItem(item), events: [] };
+    }
+    for (const event of eventsRes.data || []) {
+      if (!map[event.stem_id]) map[event.stem_id] = { item: null, events: [] };
+      map[event.stem_id].events.push(serializeCollectionEvent(event));
+    }
+    return map;
+  } catch (error) {
+    console.error('Failed to load buyer invoice collection metadata', error.message);
+    return {};
+  }
+}
+
+function normalizeCollectionUpdates(updates = {}, profile = {}) {
+  const normalized = {};
+  if (Object.prototype.hasOwnProperty.call(updates, 'status')) normalized.status = normalizeCollectionStatus(updates.status);
+  if (Object.prototype.hasOwnProperty.call(updates, 'ownerName') || Object.prototype.hasOwnProperty.call(updates, 'owner_name')) {
+    normalized.owner_name = String(updates.ownerName ?? updates.owner_name ?? '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'latestNote') || Object.prototype.hasOwnProperty.call(updates, 'latest_note')) {
+    normalized.latest_note = String(updates.latestNote ?? updates.latest_note ?? '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'nextFollowUpDate') || Object.prototype.hasOwnProperty.call(updates, 'next_follow_up_date')) {
+    normalized.next_follow_up_date = dateOrNull(updates.nextFollowUpDate ?? updates.next_follow_up_date);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'promisedPaymentDate') || Object.prototype.hasOwnProperty.call(updates, 'promised_payment_date')) {
+    normalized.promised_payment_date = dateOrNull(updates.promisedPaymentDate ?? updates.promised_payment_date);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'promisedAmount') || Object.prototype.hasOwnProperty.call(updates, 'promised_amount')) {
+    normalized.promised_amount = decimalOrNull(updates.promisedAmount ?? updates.promised_amount);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'ownerUserId') || Object.prototype.hasOwnProperty.call(updates, 'owner_user_id')) {
+    normalized.owner_user_id = updates.ownerUserId || updates.owner_user_id || null;
+  } else if (normalized.owner_name && profile?.full_name && normalized.owner_name === profile.full_name) {
+    normalized.owner_user_id = profile.id;
+  }
+  return normalized;
+}
+
+function normalizeBuyerInvoiceEmailSettings(input = {}, defaults = DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS) {
+  return {
+    ...defaults,
+    ...input,
+    enabled: input.enabled ?? defaults.enabled,
+    from: String(input.from ?? defaults.from),
+    to: parseEmailList(input.to, defaults.to),
+    cc: parseEmailList(input.cc, defaults.cc),
+    daysAhead: Math.max(0, Math.min(Number(input.daysAhead ?? defaults.daysAhead) || defaults.daysAhead, 365)),
+    subject: String(input.subject ?? defaults.subject),
+    intro: String(input.intro ?? defaults.intro),
+    includeSummary: input.includeSummary ?? defaults.includeSummary,
+    includeTable: input.includeTable ?? defaults.includeTable,
+    buyerTraders: parseStringList(input.buyerTraders, defaults.buyerTraders),
+    weekdays: parseStringList(input.weekdays, defaults.weekdays),
+    sendTimes: parseStringList(input.sendTimes, defaults.sendTimes),
+    appUrl: input.appUrl || defaults.appUrl,
+  };
 }
 
 function escapeHtml(value) {
@@ -2333,7 +2604,17 @@ async function salesforceBuyerInvoicesDue(body) {
       return String(a.stemName || '').localeCompare(String(b.stemName || ''));
     });
 
-  const buyerTraderOptions = [...new Set(allRows.flatMap((row) => splitBuyerTraderNames(row.buyerTraderInCharge)))].sort((a, b) => a.localeCompare(b));
+  const collectionMap = await loadBuyerInvoiceCollectionMap(allRows.map((row) => row.stemId));
+  const rowsWithCollection = allRows.map((row) => {
+    const collection = collectionMap[row.stemId] || {};
+    return {
+      ...row,
+      collection: collection.item || null,
+      collectionEvents: collection.events || [],
+    };
+  });
+
+  const buyerTraderOptions = [...new Set(rowsWithCollection.flatMap((row) => splitBuyerTraderNames(row.buyerTraderInCharge)))].sort((a, b) => a.localeCompare(b));
   const selectedBuyerTraders = selectedBuyerTradersInput
     .map((name) => String(name || '').trim())
     .filter((name) => buyerTraderOptions.includes(name));
@@ -2342,8 +2623,8 @@ async function salesforceBuyerInvoicesDue(body) {
   const rows = hasBuyerTraderFilter && !activeBuyerTraderSet.size
     ? []
     : activeBuyerTraderSet.size && activeBuyerTraderSet.size < buyerTraderOptions.length
-    ? allRows.filter((row) => splitBuyerTraderNames(row.buyerTraderInCharge).some((name) => activeBuyerTraderSet.has(name)))
-    : allRows;
+    ? rowsWithCollection.filter((row) => splitBuyerTraderNames(row.buyerTraderInCharge).some((name) => activeBuyerTraderSet.has(name)))
+    : rowsWithCollection;
 
   return { rows, today, dueThrough, daysAhead, buyerTraderOptions, selectedBuyerTraders: activeBuyerTraders, hasBuyerTraderFilter };
 }
@@ -2363,25 +2644,90 @@ function buyerInvoiceEmailSettings(input = {}) {
     sendTimes: parseStringList(process.env.BUYER_INVOICE_REPORT_SEND_TIMES, DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS.sendTimes),
   };
   return {
-    ...defaults,
-    ...input,
-    to: parseEmailList(input.to, defaults.to),
-    cc: parseEmailList(input.cc, defaults.cc),
-    daysAhead: Math.max(0, Math.min(Number(input.daysAhead ?? defaults.daysAhead) || defaults.daysAhead, 365)),
-    appUrl: input.appUrl || defaults.appUrl,
-    includeSummary: input.includeSummary ?? defaults.includeSummary,
-    includeTable: input.includeTable ?? defaults.includeTable,
-    buyerTraders: parseStringList(input.buyerTraders, defaults.buyerTraders),
+    ...normalizeBuyerInvoiceEmailSettings(input, defaults),
     hasBuyerTraderFilter,
-    weekdays: parseStringList(input.weekdays, defaults.weekdays),
-    sendTimes: parseStringList(input.sendTimes, defaults.sendTimes),
   };
+}
+
+function serializeBuyerInvoiceEmailSettingsRow(row, fallbackSettings = null) {
+  const settings = normalizeBuyerInvoiceEmailSettings(row?.settings || fallbackSettings || {});
+  return {
+    settings,
+    meta: {
+      lastPreviewAt: row?.last_preview_at || null,
+      lastPreviewRowCount: row?.last_preview_row_count ?? null,
+      lastSentAt: row?.last_sent_at || null,
+      lastSentRowCount: row?.last_sent_row_count ?? null,
+      lastError: row?.last_error || null,
+      updatedByEmail: row?.updated_by_email || null,
+      updatedAt: row?.updated_at || null,
+      nextScheduledRun: nextBuyerInvoiceScheduleRun(settings),
+    },
+  };
+}
+
+async function loadStoredBuyerInvoiceEmailSettings() {
+  const client = safeSupabaseAdminClient();
+  if (!client) return serializeBuyerInvoiceEmailSettingsRow(null);
+  try {
+    const { data, error } = await client
+      .from('buyer_invoice_email_settings')
+      .select('id,settings,last_preview_at,last_preview_row_count,last_sent_at,last_sent_row_count,last_error,updated_by_email,updated_at')
+      .eq('id', 'default')
+      .maybeSingle();
+    if (error) throw error;
+    return serializeBuyerInvoiceEmailSettingsRow(data);
+  } catch (error) {
+    console.error('Failed to load buyer invoice email settings', error.message);
+    return serializeBuyerInvoiceEmailSettingsRow(null);
+  }
+}
+
+async function saveStoredBuyerInvoiceEmailSettings(settings, profile = null) {
+  const client = supabaseAdminClient();
+  const normalized = normalizeBuyerInvoiceEmailSettings(settings);
+  const nowIso = new Date().toISOString();
+  const { data, error } = await client
+    .from('buyer_invoice_email_settings')
+    .upsert({
+      id: 'default',
+      settings: normalized,
+      updated_by: profile?.id || null,
+      updated_by_email: profile?.email || null,
+      updated_at: nowIso,
+    }, { onConflict: 'id' })
+    .select('id,settings,last_preview_at,last_preview_row_count,last_sent_at,last_sent_row_count,last_error,updated_by_email,updated_at')
+    .single();
+  if (error) throw error;
+  return serializeBuyerInvoiceEmailSettingsRow(data);
+}
+
+async function updateBuyerInvoiceEmailSettingsMeta(patch = {}) {
+  const client = safeSupabaseAdminClient();
+  if (!client) return;
+  const { error } = await client
+    .from('buyer_invoice_email_settings')
+    .upsert({ id: 'default', ...patch, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+  if (error) console.error('Failed to update buyer invoice email settings metadata', error.message);
+}
+
+async function buyerInvoiceEmailSettingsGet(body, req) {
+  await requireActiveUser(req);
+  return loadStoredBuyerInvoiceEmailSettings();
+}
+
+async function buyerInvoiceEmailSettingsSave(body, req) {
+  const { profile } = await requireActiveUser(req);
+  return saveStoredBuyerInvoiceEmailSettings(body.settings || body, profile);
 }
 
 function hongKongScheduleParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Hong_Kong',
     weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
@@ -2389,15 +2735,63 @@ function hongKongScheduleParts(date = new Date()) {
   const value = (type) => parts.find((part) => part.type === type)?.value;
   return {
     weekday: value('weekday'),
+    date: `${value('year')}-${value('month')}-${value('day')}`,
     time: `${value('hour')}:${value('minute')}`,
+    minuteOfDay: Number(value('hour')) * 60 + Number(value('minute')),
   };
 }
 
-function isBuyerInvoiceReportDue(settings, date = new Date()) {
+function scheduleMinuteOfDay(time) {
+  const match = String(time || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function buyerInvoiceScheduledWindow(settings, date = new Date()) {
   const now = hongKongScheduleParts(date);
   const weekdays = new Set((settings.weekdays || []).map((day) => String(day).slice(0, 3).toLowerCase()));
-  const sendTimes = new Set((settings.sendTimes || []).map((time) => String(time).trim()));
-  return weekdays.has(String(now.weekday).slice(0, 3).toLowerCase()) && sendTimes.has(now.time);
+  if (!weekdays.has(String(now.weekday).slice(0, 3).toLowerCase())) return null;
+  for (const time of settings.sendTimes || []) {
+    const scheduleMinute = scheduleMinuteOfDay(time);
+    if (scheduleMinute == null) continue;
+    const diff = now.minuteOfDay - scheduleMinute;
+    if (diff >= 0 && diff < 5) {
+      const scheduleTime = String(time).trim().padStart(5, '0');
+      return {
+        date: now.date,
+        time: scheduleTime,
+        runKey: `buyer-invoices:${now.date}:${scheduleTime}`,
+      };
+    }
+  }
+  return null;
+}
+
+function isBuyerInvoiceReportDue(settings, date = new Date()) {
+  return Boolean(buyerInvoiceScheduledWindow(settings, date));
+}
+
+function nextBuyerInvoiceScheduleRun(settings, fromDate = new Date()) {
+  const weekdays = new Set((settings.weekdays || []).map((day) => String(day).slice(0, 3).toLowerCase()));
+  const sendTimes = (settings.sendTimes || [])
+    .map((time) => String(time).trim().padStart(5, '0'))
+    .filter((time) => scheduleMinuteOfDay(time) != null)
+    .sort();
+  if (!weekdays.size || !sendTimes.length) return null;
+
+  const now = hongKongScheduleParts(fromDate);
+  for (let offset = 0; offset < 14; offset += 1) {
+    const probe = hongKongScheduleParts(new Date(fromDate.getTime() + offset * 86400000));
+    if (!weekdays.has(String(probe.weekday).slice(0, 3).toLowerCase())) continue;
+    for (const time of sendTimes) {
+      if (offset === 0 && scheduleMinuteOfDay(time) <= now.minuteOfDay) continue;
+      return `${probe.date} ${time} HKT`;
+    }
+  }
+  return null;
 }
 
 function overdueSeverity(daysUntilDue) {
@@ -2586,8 +2980,55 @@ async function sendWithSmtp({ smtp = {}, from, to, cc, subject, html, text }) {
   return { id: result.messageId, accepted: result.accepted, rejected: result.rejected };
 }
 
+async function startBuyerInvoiceEmailRun(window) {
+  const client = safeSupabaseAdminClient();
+  if (!client) return { allowed: true, run: null };
+  const { data, error } = await client
+    .from('buyer_invoice_email_runs')
+    .insert({
+      run_key: window.runKey,
+      schedule_time: window.time,
+      status: 'running',
+    })
+    .select('id,run_key,status,created_at')
+    .single();
+  if (error?.code === '23505') return { allowed: false, duplicate: true };
+  if (error) throw error;
+  return { allowed: true, run: data };
+}
+
+async function finishBuyerInvoiceEmailRun(runKey, patch = {}) {
+  const client = safeSupabaseAdminClient();
+  if (!client || !runKey) return;
+  const { error } = await client
+    .from('buyer_invoice_email_runs')
+    .update({
+      ...patch,
+      completed_at: new Date().toISOString(),
+    })
+    .eq('run_key', runKey);
+  if (error) console.error('Failed to update buyer invoice email run', error.message);
+}
+
+function requireCronAuthorization(req) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) throw appError('Missing CRON_SECRET in Vercel.', 500);
+  const header = req?.headers?.authorization || req?.headers?.Authorization || '';
+  if (String(header) !== `Bearer ${secret}`) throw appError('Unauthorized cron request.', 401);
+}
+
 async function outstandingBuyerInvoicesEmailReport(body = {}) {
-  const settings = buyerInvoiceEmailSettings(body.settings || body);
+  const hasExplicitSettings = Boolean(body.settings) || ['from', 'to', 'cc', 'daysAhead', 'subject', 'intro', 'includeSummary', 'includeTable', 'buyerTraders', 'weekdays', 'sendTimes', 'appUrl']
+    .some((key) => Object.prototype.hasOwnProperty.call(body, key));
+  const stored = hasExplicitSettings ? null : await loadStoredBuyerInvoiceEmailSettings();
+  const explicitSettings = hasExplicitSettings ? buyerInvoiceEmailSettings(body.settings || body) : null;
+  if (explicitSettings && (body.settings || body).hasBuyerTraderFilter === false) explicitSettings.hasBuyerTraderFilter = false;
+  const settings = hasExplicitSettings
+    ? explicitSettings
+    : {
+        ...buyerInvoiceEmailSettings(stored.settings),
+        hasBuyerTraderFilter: (stored.settings.buyerTraders || []).length > 0,
+      };
   if (!body.preview && !body.dryRun && !body.force && !isBuyerInvoiceReportDue(settings)) {
     return {
       sent: false,
@@ -2601,6 +3042,11 @@ async function outstandingBuyerInvoicesEmailReport(body = {}) {
   const report = await salesforceBuyerInvoicesDue(reportPayload);
   const email = buildBuyerInvoiceReportEmail(report, settings);
   if (body.preview || body.dryRun) {
+    await updateBuyerInvoiceEmailSettingsMeta({
+      last_preview_at: new Date().toISOString(),
+      last_preview_row_count: report.rows.length,
+      last_error: null,
+    });
     return {
       sent: false,
       preview: true,
@@ -2619,24 +3065,35 @@ async function outstandingBuyerInvoicesEmailReport(body = {}) {
   }
   const credentials = body.credentials || {};
   const useSmtp = credentials.method === 'smtp' || credentials.smtp || (!process.env.RESEND_API_KEY && process.env.SMTP_HOST);
-  const result = useSmtp
-    ? await sendWithSmtp({
-        smtp: credentials.smtp || credentials,
-        from: settings.from,
-        to: settings.to,
-        cc: settings.cc,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-      })
-    : await sendWithResend({
-        from: settings.from,
-        to: settings.to,
-        cc: settings.cc,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-      });
+  let result;
+  try {
+    result = useSmtp
+      ? await sendWithSmtp({
+          smtp: credentials.smtp || credentials,
+          from: settings.from,
+          to: settings.to,
+          cc: settings.cc,
+          subject: email.subject,
+          html: email.html,
+          text: email.text,
+        })
+      : await sendWithResend({
+          from: settings.from,
+          to: settings.to,
+          cc: settings.cc,
+          subject: email.subject,
+          html: email.html,
+          text: email.text,
+        });
+  } catch (error) {
+    await updateBuyerInvoiceEmailSettingsMeta({ last_error: error.message });
+    throw error;
+  }
+  await updateBuyerInvoiceEmailSettingsMeta({
+    last_sent_at: new Date().toISOString(),
+    last_sent_row_count: report.rows.length,
+    last_error: null,
+  });
   return {
     sent: true,
     id: result.id,
@@ -2646,6 +3103,46 @@ async function outstandingBuyerInvoicesEmailReport(body = {}) {
     rows: report.rows.length,
     totals: email.totals,
   };
+}
+
+async function outstandingBuyerInvoicesEmailCron(body, req) {
+  requireCronAuthorization(req);
+  const stored = await loadStoredBuyerInvoiceEmailSettings();
+  const settings = {
+    ...buyerInvoiceEmailSettings(stored.settings),
+    hasBuyerTraderFilter: (stored.settings.buyerTraders || []).length > 0,
+  };
+  if (settings.enabled === false) return { sent: false, skipped: true, reason: 'Email schedule is disabled.' };
+
+  const window = buyerInvoiceScheduledWindow(settings);
+  if (!window) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: 'Current Hong Kong time is outside the configured report schedule.',
+      schedule: { weekdays: settings.weekdays, sendTimes: settings.sendTimes, now: hongKongScheduleParts() },
+    };
+  }
+
+  const run = await startBuyerInvoiceEmailRun(window);
+  if (!run.allowed) return { sent: false, skipped: true, duplicate: true, runKey: window.runKey };
+
+  try {
+    const result = await outstandingBuyerInvoicesEmailReport({ settings, force: true, scheduled: true });
+    await finishBuyerInvoiceEmailRun(window.runKey, {
+      status: 'sent',
+      rows_count: result.rows,
+      totals: result.totals || {},
+      provider_result: { id: result.id || null, to: result.to || [], cc: result.cc || [], subject: result.subject || null },
+    });
+    return { ...result, scheduled: true, runKey: window.runKey };
+  } catch (error) {
+    await finishBuyerInvoiceEmailRun(window.runKey, {
+      status: 'failed',
+      error: error.message,
+    });
+    throw error;
+  }
 }
 
 async function salesforceDisputeStems(body) {
@@ -3515,7 +4012,13 @@ const handlers = {
   salesforceTopBuyers,
   salesforceBrokerRegister: salesforceBrokerRegisterFull,
   salesforceBuyerInvoicesDue,
+  buyerInvoiceCollectionList,
+  buyerInvoiceCollectionSave,
+  buyerInvoiceCollectionEventCreate,
+  buyerInvoiceEmailSettingsGet,
+  buyerInvoiceEmailSettingsSave,
   outstandingBuyerInvoicesEmailReport,
+  outstandingBuyerInvoicesEmailCron,
   salesforceDisputeStems,
   salesforceDisputePartyUpdate,
   stemPnl: stemPnlFull,
