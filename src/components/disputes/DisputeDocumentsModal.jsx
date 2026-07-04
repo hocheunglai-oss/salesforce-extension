@@ -4,6 +4,7 @@ import { appClient } from '@/api/appClient';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { numericValue, textValue } from '@/lib/displayValue';
 
@@ -35,6 +36,12 @@ const UPLOAD_NAME_PRESETS = [
   { label: 'To Supplier', value: 'to supplier' },
   { label: 'From Buyer', value: 'from buyer' },
   { label: 'To Buyer', value: 'to buyer' },
+];
+const DISPUTE_STATUS_OPTIONS = [
+  'Opened',
+  'Closed with Supplier only',
+  'Closed with Buyer only',
+  'Closed',
 ];
 
 const todayUploadDate = () => {
@@ -306,12 +313,15 @@ function DocumentPreview({ document, onClose }) {
   );
 }
 
-export default function DisputeDocumentsModal({ stem, open, onClose, onEditDispute }) {
+export default function DisputeDocumentsModal({ stem, open, onClose, onEditDispute, onStatusUpdated }) {
   const fileInputRef = useRef(null);
   const [documents, setDocuments] = useState([]);
   const [activeTab, setActiveTab] = useState('disputeFlow');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [statusError, setStatusError] = useState(null);
+  const [managedStatus, setManagedStatus] = useState(stem?.Dispute_Status__c || '');
+  const [savingStatus, setSavingStatus] = useState(false);
   const [file, setFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploadDate, setUploadDate] = useState(todayUploadDate());
@@ -388,8 +398,14 @@ export default function DisputeDocumentsModal({ stem, open, onClose, onEditDispu
     setRenameKey(null);
     setRenameValue('');
     setPreviewDocument(null);
+    setStatusError(null);
+    setManagedStatus(stem?.Dispute_Status__c || '');
     loadDocuments();
   }, [open, stemId]);
+
+  useEffect(() => {
+    if (open) setManagedStatus(stem?.Dispute_Status__c || '');
+  }, [open, stem?.Dispute_Status__c]);
 
   const applyDocumentResponse = (data) => {
     if (data?.error) {
@@ -503,6 +519,23 @@ export default function DisputeDocumentsModal({ stem, open, onClose, onEditDispu
     setBusyKey(null);
   };
 
+  const saveManagedStatus = async () => {
+    if (!stemId || savingStatus || !managedStatus || managedStatus === stem?.Dispute_Status__c) return;
+    setSavingStatus(true);
+    setStatusError(null);
+    const res = await appClient.functions.invoke('salesforceStemDetail', {
+      stemId,
+      updates: { Dispute_Status__c: managedStatus },
+    });
+    if (res.data?.error) {
+      setStatusError(res.data.error);
+      setSavingStatus(false);
+      return;
+    }
+    await onStatusUpdated?.(stemId);
+    setSavingStatus(false);
+  };
+
   return (
     <>
       <Dialog
@@ -537,7 +570,31 @@ export default function DisputeDocumentsModal({ stem, open, onClose, onEditDispu
           </DialogHeader>
 
           <div className="grid gap-3 border-b border-border bg-muted/10 px-5 py-3 sm:grid-cols-3 lg:grid-cols-6">
-            <SummaryItem label="Status" value={textValue(stem?.Dispute_Status__c)} />
+            <div className="lg:col-span-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Dispute Status</div>
+              <div className="mt-1 flex gap-2">
+                <Select value={managedStatus} onValueChange={setManagedStatus} disabled={savingStatus}>
+                  <SelectTrigger className="h-8 min-w-0 text-xs">
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DISPUTE_STATUS_OPTIONS.map((status) => (
+                      <SelectItem key={status} value={status}>{status}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8"
+                  onClick={saveManagedStatus}
+                  disabled={savingStatus || !managedStatus || managedStatus === stem?.Dispute_Status__c}
+                >
+                  {savingStatus ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Save'}
+                </Button>
+              </div>
+              {statusError && <div className="mt-1 text-[11px] text-destructive">{statusError}</div>}
+            </div>
             <SummaryItem label="Delivery" value={fmtDate(stem?._Effective_Date)} />
             <SummaryItem label="Buyer" value={stem?._Buyer_Name || '—'} />
             <SummaryItem label="Supplier(s)" value={supplierSummary} />

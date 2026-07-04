@@ -179,6 +179,14 @@ export default function DisputeManagement() {
     setDocumentsStem(prev => prev ? nextRows.find(row => row.Id === prev.Id) || prev : prev);
   };
 
+  const refreshManagedStem = async (stemId) => {
+    const nextRows = await loadRows();
+    setDocumentsStem(prev => {
+      const targetId = stemId || prev?.Id;
+      return prev && targetId ? nextRows.find(row => row.Id === targetId) || prev : prev;
+    });
+  };
+
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(row => {
@@ -331,7 +339,13 @@ export default function DisputeManagement() {
       </TableShell>
 
       <StemDetailModal stemId={selectedStemId} open={!!selectedStemId} onClose={() => setSelectedStemId(null)} onUpdated={loadRows} />
-      <DisputeDocumentsModal stem={documentsStem} open={!!documentsStem} onClose={() => setDocumentsStem(null)} onEditDispute={openDisputeEdit} />
+      <DisputeDocumentsModal
+        stem={documentsStem}
+        open={!!documentsStem}
+        onClose={() => setDocumentsStem(null)}
+        onEditDispute={openDisputeEdit}
+        onStatusUpdated={refreshManagedStem}
+      />
       <Dialog open={!!editingDispute} onOpenChange={(open) => { if (!open) closeDisputeEdit(); }}>
         <DialogContent className="w-[min(560px,94vw)] max-w-none">
           <DialogHeader>
