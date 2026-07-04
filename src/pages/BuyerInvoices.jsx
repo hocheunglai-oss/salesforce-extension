@@ -29,6 +29,9 @@ const DEFAULT_EMAIL_SETTINGS = {
   includeTable: true,
   weekdays: WEEKDAYS,
   sendTimes: '08:00, 14:00',
+  paymentReminderRecipientFieldPath: '',
+  paymentReminderSubject: 'Payment Reminder - {{buyerName}} - Outstanding Buyer Invoices',
+  paymentReminderBody: 'Dear {{buyerName}},\n\nPlease find below the outstanding buyer invoices for your attention.\n\nThis reminder includes overdue invoices and invoices due within {{daysAhead}} days. Please arrange payment or let us know the expected payment date.\n\nRegards,\nFratelli Cosulich',
 };
 
 const COPY_COLUMNS = [
@@ -426,6 +429,293 @@ function CollectionModal({ row, open, onClose, onSaved, ownerOptions = [] }) {
   );
 }
 
+function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+  const [step, setStep] = useState('select');
+  const [data, setData] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [form, setForm] = useState({
+    to: '',
+    cc: '',
+    subject: '',
+    body: '',
+  });
+
+  useEffect(() => {
+    if (!open || !row) return;
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      setStep('select');
+      const res = await appClient.functions.invoke('buyerInvoicePaymentReminderPrepare', {
+        stemId: row.stemId,
+        daysAhead,
+      });
+      if (cancelled) return;
+      if (res.data?.error) {
+        setError(res.data.error);
+        setData(null);
+      } else {
+        const candidates = res.data.candidates || [];
+        setData(res.data);
+        setSelectedIds(candidates.map((candidate) => candidate.stemId));
+        setForm({
+          to: arrayToInput(res.data.to || []),
+          cc: arrayToInput(res.data.cc || []),
+          subject: res.data.subject || '',
+          body: res.data.body || '',
+        });
+      }
+      setLoading(false);
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [daysAhead, open, row]);
+
+  const candidates = data?.candidates || [];
+  const selectedRows = useMemo(() => {
+    const selected = new Set(selectedIds);
+    return candidates.filter((candidate) => selected.has(candidate.stemId));
+  }, [candidates, selectedIds]);
+  const selectedReceivable = useMemo(() => (
+    selectedRows.reduce((sum, candidate) => sum + Number(candidate.receivableBalance || 0), 0)
+  ), [selectedRows]);
+
+  if (!open || !row) return null;
+
+  const updateForm = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const toggleInvoice = (stemId) => {
+    setSelectedIds((prev) => (
+      prev.includes(stemId)
+        ? prev.filter((id) => id !== stemId)
+        : [...prev, stemId]
+    ));
+  };
+  const toggleAll = () => {
+    setSelectedIds((prev) => (
+      prev.length === candidates.length ? [] : candidates.map((candidate) => candidate.stemId)
+    ));
+  };
+  const sendReminder = async () => {
+    if (!selectedRows.length) {
+      setError('Select at least one invoice to include.');
+      return;
+    }
+    if (!form.to.trim()) {
+      setError('Payment reminder recipient is required.');
+      return;
+    }
+    setSending(true);
+    setError(null);
+    const smtpSettings = readSmtpSettings();
+    const credentials = hasUsableSmtpSettings(smtpSettings)
+      ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587) } }
+      : undefined;
+    const res = await appClient.functions.invoke('buyerInvoicePaymentReminderSend', {
+      stemId: row.stemId,
+      invoiceStemIds: selectedIds,
+      daysAhead,
+      to: form.to,
+      cc: form.cc,
+      subject: form.subject,
+      body: form.body,
+      credentials,
+    });
+    if (res.data?.error) {
+      setError(res.data.error);
+    } else {
+      onSent(res.data);
+      onClose();
+    }
+    setSending(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border p-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Payment reminder</p>
+            <h2 className="mt-1 text-lg font-semibold text-foreground">{row.stemName}</h2>
+            <p className="text-sm text-muted-foreground">
+              {row.buyerName || '-'}{row.buyerGroupName ? ` · ${row.buyerGroupName}` : ''}
+            </p>
+          </div>
+          <Button variant="outline" size="icon" onClick={onClose} disabled={sending}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="max-h-[calc(92vh-78px)] overflow-auto p-4">
+          {loading && (
+            <StateBlock icon={Loader2} title="Preparing reminder..." description="Finding related buyer and buyer group invoices in the current due window." />
+          )}
+
+          {!loading && error && (
+            <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
+          {!loading && data && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 p-3 text-sm">
+                <div>
+                  <div className="font-semibold text-foreground">
+                    {selectedRows.length.toLocaleString()} selected · {fmtMoney(selectedReceivable)}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Recipient field: {data.settings?.paymentReminderRecipientFieldPath || 'Not configured'}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" variant={step === 'select' ? 'default' : 'outline'} size="sm" onClick={() => setStep('select')}>1. Select invoices</Button>
+                  <Button type="button" variant={step === 'edit' ? 'default' : 'outline'} size="sm" onClick={() => setStep('edit')} disabled={!selectedRows.length}>2. Edit email</Button>
+                </div>
+              </div>
+
+              {step === 'select' && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">Related invoices</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Same buyer and same buyer group, using the current Due in next days value.
+                      </p>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={toggleAll}>
+                      {selectedIds.length === candidates.length ? 'Clear all' : 'Select all'}
+                    </Button>
+                  </div>
+                  <div className="max-h-[48vh] overflow-auto rounded-lg border border-border">
+                    <table className="w-full min-w-[1160px] text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/40">
+                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Include</th>
+                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Stem Name</th>
+                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer</th>
+                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Group</th>
+                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Receivable Balance</th>
+                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Due Date</th>
+                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recipient</th>
+                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collection</th>
+                          <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {candidates.map((candidate, idx) => (
+                          <tr key={candidate.stemId} className={`border-b border-border/40 ${rowSeverityClass(candidate, idx)}`}>
+                            <td className="px-3 py-2">
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.includes(candidate.stemId)}
+                                onChange={() => toggleInvoice(candidate.stemId)}
+                              />
+                            </td>
+                            <td className="px-3 py-2 font-medium text-foreground">{candidate.stemName || '-'}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{candidate.buyerName || '-'}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{candidate.buyerGroupName || '-'}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.receivableBalance)}</td>
+                            <td className="px-3 py-2 text-foreground">{fmtDate(candidate.buyerInvoiceDueDate)}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{candidate.paymentReminderRecipient || '-'}</td>
+                            <td className="px-3 py-2">
+                              <span className={`w-fit rounded-full border px-2 py-0.5 text-xs font-medium ${collectionPill(collectionStatus(candidate))}`}>
+                                {collectionStatus(candidate)}
+                              </span>
+                            </td>
+                            <td className={`px-3 py-2 text-right font-medium ${dueTextClass(candidate.daysUntilDue)}`}>
+                              {overdueDisplayValue(candidate.daysUntilDue)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button type="button" onClick={() => setStep('edit')} disabled={!selectedRows.length}>
+                      Continue
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {step === 'edit' && (
+                <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">To</Label>
+                      <Input value={form.to} onChange={(event) => updateForm('to', event.target.value)} placeholder="buyer@example.com" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">CC</Label>
+                      <Input value={form.cc} onChange={(event) => updateForm('cc', event.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Subject</Label>
+                      <Input value={form.subject} onChange={(event) => updateForm('subject', event.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Email content</Label>
+                      <Textarea value={form.body} onChange={(event) => updateForm('body', event.target.value)} className="min-h-72" />
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <Button type="button" variant="outline" onClick={() => setStep('select')} disabled={sending}>Back</Button>
+                      <Button type="button" onClick={sendReminder} disabled={sending || !selectedRows.length} className="gap-2">
+                        {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        Send Reminder
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-background/40">
+                    <div className="border-b border-border px-4 py-3">
+                      <h3 className="text-sm font-semibold text-foreground">Invoice table preview</h3>
+                      <p className="text-xs text-muted-foreground">{selectedRows.length.toLocaleString()} invoices will be included inline in the email.</p>
+                    </div>
+                    <div className="max-h-[58vh] overflow-auto">
+                      <table className="w-full min-w-[980px] text-xs">
+                        <thead>
+                          <tr className="border-b border-border bg-muted/40">
+                            <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Stem Name</th>
+                            <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Buyer</th>
+                            <th className="sticky top-0 bg-card px-3 py-2 text-right font-semibold uppercase tracking-wide text-muted-foreground">Invoice Amount</th>
+                            <th className="sticky top-0 bg-card px-3 py-2 text-right font-semibold uppercase tracking-wide text-muted-foreground">Receivable</th>
+                            <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Due Date</th>
+                            <th className="sticky top-0 bg-card px-3 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
+                            <th className="sticky top-0 bg-card px-3 py-2 text-right font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedRows.map((candidate, idx) => (
+                            <tr key={candidate.stemId} className={`border-b border-border/40 ${rowSeverityClass(candidate, idx)}`}>
+                              <td className="px-3 py-2 font-medium text-foreground">{candidate.stemName || '-'}</td>
+                              <td className="px-3 py-2 text-muted-foreground">{candidate.buyerName || '-'}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.invoiceAmount)}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.receivableBalance)}</td>
+                              <td className="px-3 py-2 text-foreground">{fmtDate(candidate.buyerInvoiceDueDate)}</td>
+                              <td className="px-3 py-2 text-muted-foreground">{candidate.status || '-'}</td>
+                              <td className={`px-3 py-2 text-right font-medium ${dueTextClass(candidate.daysUntilDue)}`}>{overdueDisplayValue(candidate.daysUntilDue)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BuyerInvoices() {
   const initialFilters = useMemo(() => readInitialFilters(), []);
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -436,6 +726,7 @@ export default function BuyerInvoices() {
   const [error, setError] = useState(null);
   const [selectedStemId, setSelectedStemId] = useState(null);
   const [selectedCollectionRow, setSelectedCollectionRow] = useState(null);
+  const [selectedReminderRow, setSelectedReminderRow] = useState(null);
   const [showEmailSchedule, setShowEmailSchedule] = useState(false);
   const [savedEmailSettings, setSavedEmailSettings] = useState(readLegacyEmailSettings);
   const [emailSettings, setEmailSettings] = useState(savedEmailSettings);
@@ -746,6 +1037,16 @@ export default function BuyerInvoices() {
     }));
   };
 
+  const mergeCollectionResults = (results = []) => {
+    for (const result of results) mergeCollectionResult(result);
+  };
+
+  const handleReminderSent = (result) => {
+    mergeCollectionResults(result.collectionResults || []);
+    setEmailMessage(`Payment reminder sent to ${result.to?.join(', ') || 'recipient'} for ${result.rows ?? 0} invoice rows.`);
+    setEmailError(null);
+  };
+
   return (
     <div className="p-6 lg:p-8 space-y-6">
       <PageHeader
@@ -974,6 +1275,35 @@ export default function BuyerInvoices() {
               <Label className="text-xs text-muted-foreground">Send times</Label>
               <Input value={emailSettings.sendTimes} onChange={(event) => updateEmailSetting('sendTimes', event.target.value)} placeholder="08:00, 14:00" />
             </div>
+            <div className="space-y-1.5 lg:col-span-3">
+              <Label className="text-xs text-muted-foreground">Payment reminder recipient field path</Label>
+              <Input
+                value={emailSettings.paymentReminderRecipientFieldPath || ''}
+                onChange={(event) => updateEmailSetting('paymentReminderRecipientFieldPath', event.target.value)}
+                placeholder="Account__r.Payment_Reminder_Email__c"
+              />
+              <p className="text-xs text-muted-foreground">
+                Exact Salesforce field path relative to STEM. The reminder modal uses this to prefill To recipients.
+              </p>
+            </div>
+            <div className="space-y-1.5 lg:col-span-3">
+              <Label className="text-xs text-muted-foreground">Payment reminder subject</Label>
+              <Input
+                value={emailSettings.paymentReminderSubject || ''}
+                onChange={(event) => updateEmailSetting('paymentReminderSubject', event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5 lg:col-span-3">
+              <Label className="text-xs text-muted-foreground">Payment reminder content</Label>
+              <Textarea
+                value={emailSettings.paymentReminderBody || ''}
+                onChange={(event) => updateEmailSetting('paymentReminderBody', event.target.value)}
+                className="min-h-32"
+              />
+              <p className="text-xs text-muted-foreground">
+                Available placeholders: {'{{buyerName}}'}, {'{{buyerGroupName}}'}, {'{{daysAhead}}'}, {'{{today}}'}, {'{{dueThrough}}'}, {'{{invoiceCount}}'}, {'{{totalReceivable}}'}.
+              </p>
+            </div>
             <div className="space-y-1.5 lg:col-span-2">
               <Label className="text-xs text-muted-foreground">Email content</Label>
               <Textarea value={emailSettings.intro} onChange={(event) => updateEmailSetting('intro', event.target.value)} className="min-h-32" />
@@ -1016,6 +1346,10 @@ export default function BuyerInvoices() {
           {emailMessage && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailMessage}</div>}
           {emailError && <div className="mt-3 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{emailError}</div>}
         </div>
+      )}
+
+      {!showEmailSchedule && emailMessage && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailMessage}</div>
       )}
 
       <div className="grid gap-3 md:grid-cols-3">
@@ -1096,6 +1430,20 @@ export default function BuyerInvoices() {
                             type="button"
                             size="sm"
                             variant="outline"
+                            title="Send payment reminder"
+                            aria-label={`Send payment reminder for ${row.stemName || 'invoice'}`}
+                            className="h-7 px-2"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedReminderRow(row);
+                            }}
+                          >
+                            <Mail className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
                             title="Manage collection"
                             aria-label={`Manage collection for ${row.stemName || 'invoice'}`}
                             className="h-7 px-2"
@@ -1140,6 +1488,13 @@ export default function BuyerInvoices() {
         onClose={() => setSelectedCollectionRow(null)}
         onSaved={mergeCollectionResult}
         ownerOptions={buyerTraderOptions}
+      />
+      <PaymentReminderModal
+        row={selectedReminderRow}
+        open={!!selectedReminderRow}
+        daysAhead={Math.max(0, Math.min(Number(daysAhead) || 0, 365))}
+        onClose={() => setSelectedReminderRow(null)}
+        onSent={handleReminderSent}
       />
     </div>
   );

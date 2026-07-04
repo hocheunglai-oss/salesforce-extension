@@ -1079,6 +1079,9 @@ const DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS = {
   buyerTraders: [],
   weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
   sendTimes: ['08:00', '14:00'],
+  paymentReminderRecipientFieldPath: '',
+  paymentReminderSubject: 'Payment Reminder - {{buyerName}} - Outstanding Buyer Invoices',
+  paymentReminderBody: 'Dear {{buyerName}},\n\nPlease find below the outstanding buyer invoices for your attention.\n\nThis reminder includes overdue invoices and invoices due within {{daysAhead}} days. Please arrange payment or let us know the expected payment date.\n\nRegards,\nFratelli Cosulich',
 };
 const BUYER_INVOICE_COLLECTION_STATUSES = [
   'Not Started',
@@ -1111,6 +1114,24 @@ function buyerInvoiceFilterUrl(settings, report, buyerTrader) {
   url.searchParams.set('daysAhead', String(settings.daysAhead ?? report.daysAhead ?? DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS.daysAhead));
   if (buyerTrader) url.searchParams.set('buyerTrader', buyerTrader);
   return url.toString();
+}
+
+function isSafeSalesforceFieldPath(value) {
+  const parts = String(value || '').trim().split('.').filter(Boolean);
+  if (!parts.length || parts.length > 4) return false;
+  return parts.every((part) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(part));
+}
+
+function normalizeSalesforceFieldPath(value) {
+  const raw = String(value || '').trim();
+  return isSafeSalesforceFieldPath(raw) ? raw : '';
+}
+
+function getPathValue(record, path) {
+  if (!record || !path) return null;
+  return path.split('.').reduce((current, key) => (
+    current && typeof current === 'object' ? current[key] : null
+  ), record);
 }
 
 function numericValue(value) {
@@ -1380,6 +1401,9 @@ function normalizeBuyerInvoiceEmailSettings(input = {}, defaults = DEFAULT_BUYER
     weekdays: parseStringList(input.weekdays, defaults.weekdays),
     sendTimes: parseStringList(input.sendTimes, defaults.sendTimes),
     appUrl: input.appUrl || defaults.appUrl,
+    paymentReminderRecipientFieldPath: normalizeSalesforceFieldPath(input.paymentReminderRecipientFieldPath ?? defaults.paymentReminderRecipientFieldPath),
+    paymentReminderSubject: String(input.paymentReminderSubject ?? defaults.paymentReminderSubject),
+    paymentReminderBody: String(input.paymentReminderBody ?? defaults.paymentReminderBody),
   };
 }
 
@@ -2466,6 +2490,11 @@ async function salesforceBuyerInvoicesDue(body) {
   const dueThrough = addDays(today, daysAhead);
   const describe = await salesforceObjectFields({ objectName: 'stem__c' });
   const fieldNames = describe.fields.map((f) => f.name);
+  const reminderRecipientFieldPath = normalizeSalesforceFieldPath(body.paymentReminderRecipientFieldPath || '');
+  const accountDescribe = fieldNames.includes('Account__c')
+    ? await salesforceObjectFields({ objectName: 'Account' }).catch(() => ({ fields: [] }))
+    : { fields: [] };
+  const accountFieldNames = (accountDescribe.fields || []).map((field) => field.name);
 
   const dueFields = ['Invoice_Due_Date__c', 'Buyer_Pay_Term_Date__c', 'Due_Date__c'].filter((field) => fieldNames.includes(field));
   if (!dueFields.length) return { rows: [], today, dueThrough, daysAhead };
@@ -2486,8 +2515,11 @@ async function salesforceBuyerInvoicesDue(body) {
   if (fieldNames.includes('PSPRS__c')) fields.push('PSPRS__c');
   if (fieldNames.includes('Account__c')) {
     fields.push('Account__c', 'Account__r.Name');
+    if (accountFieldNames.includes('Group_Name__c')) fields.push('Account__r.Group_Name__c');
+    if (accountFieldNames.includes('ParentId')) fields.push('Account__r.Parent.Name');
   }
   if (fieldNames.includes('Payment_Date__c')) fields.push('Payment_Date__c');
+  if (reminderRecipientFieldPath) fields.push(reminderRecipientFieldPath);
 
   const storedDueCondition = dueFields
     .map((field) => `(${field} != null AND ${field} >= ${MIN_BUYER_INVOICE_DUE_DATE} AND ${field} <= ${dueThrough})`)
@@ -2586,11 +2618,14 @@ async function salesforceBuyerInvoicesDue(body) {
         stemId: stem.Id,
         stemName: formatStemName(stem),
         keyStem: stem.KeyStem__c || null,
+        buyerAccountId: stem.Account__c || null,
+        buyerGroupName: account.Group_Name__c || account.Parent?.Name || null,
         buyerName: stem.Buyer_Name__c || account.Name || stem.Buyer__c || null,
         invoiceAmount: stem.Total_Invoice_Amount__c ?? null,
         receivableBalance: stem.Receivable_Balance__c ?? null,
         buyerInvoiceDueDate: dueDate,
         buyerTraderInCharge: (traderInfo.buyer?.length ? traderInfo.buyer : traderInfo.all || []).join(', ') || null,
+        paymentReminderRecipient: reminderRecipientFieldPath ? getPathValue(stem, reminderRecipientFieldPath) : null,
         prpspStatus: prpspDisplayStatus(rawPsprsStatus, prpspUploadDate),
         prpspUploadDate,
         rawPsprsStatus,
@@ -2936,6 +2971,222 @@ function buildBuyerInvoiceReportEmail(report, settings) {
     ...rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS Status ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`),
   ];
   return { subject, html, text: textLines.join('\n'), totals };
+}
+
+function reminderCandidateKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isPaymentReminderCandidate(row, selected) {
+  if (!row || !selected) return false;
+  if (row.stemId === selected.stemId) return true;
+  const selectedBuyer = reminderCandidateKey(selected.buyerName);
+  const rowBuyer = reminderCandidateKey(row.buyerName);
+  if (selectedBuyer && rowBuyer && selectedBuyer === rowBuyer) return true;
+  const selectedGroup = reminderCandidateKey(selected.buyerGroupName);
+  const rowGroup = reminderCandidateKey(row.buyerGroupName);
+  return Boolean(selectedGroup && rowGroup && selectedGroup === rowGroup);
+}
+
+function paymentReminderRecipients(rows) {
+  return [...new Set((rows || []).flatMap((row) => parseEmailList(String(row.paymentReminderRecipient || ''), [])))];
+}
+
+function paymentReminderTemplateContext(report, rows, selected) {
+  const totalReceivable = (rows || []).reduce((sum, row) => sum + Number(row.receivableBalance || 0), 0);
+  return {
+    buyerName: selected?.buyerName || 'Customer',
+    buyerGroupName: selected?.buyerGroupName || '',
+    daysAhead: String(report.daysAhead ?? DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS.daysAhead),
+    today: prettyDate(report.today),
+    dueThrough: prettyDate(report.dueThrough),
+    invoiceCount: String((rows || []).length),
+    totalReceivable: money(totalReceivable),
+  };
+}
+
+function renderPaymentReminderTemplate(template, context) {
+  const values = context || {};
+  return String(template || '').replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, key) => (
+    Object.prototype.hasOwnProperty.call(values, key) ? values[key] : match
+  ));
+}
+
+function paymentReminderBodyHtml(content) {
+  const blocks = String(content || '').split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  return blocks.map((block) => `<p style="margin:0 0 14px;color:#1f2937">${escapeHtml(block).replaceAll('\n', '<br>')}</p>`).join('');
+}
+
+function buildBuyerInvoicePaymentReminderEmail(report, settings, selected, rows, overrides = {}) {
+  const selectedRows = rows || [];
+  const context = paymentReminderTemplateContext(report, selectedRows, selected);
+  const subject = renderPaymentReminderTemplate(overrides.subject || settings.paymentReminderSubject, context);
+  const body = renderPaymentReminderTemplate(overrides.body || settings.paymentReminderBody, context);
+  const tableRows = selectedRows.map((row) => {
+    const severity = overdueEmailStyles(row.daysUntilDue, row.prpspStatus);
+    const cellStyle = `border-bottom:1px solid ${severity.border};padding:8px 10px`;
+    return `
+    <tr style="${severity.row}">
+      <td style="${cellStyle};font-weight:600;white-space:nowrap">${escapeHtml(row.stemName)}</td>
+      <td style="${cellStyle};min-width:180px">${escapeHtml(row.buyerName || '-')}</td>
+      <td style="${cellStyle};text-align:right;white-space:nowrap">${money(row.invoiceAmount)}</td>
+      <td style="${cellStyle};text-align:right;font-weight:600;white-space:nowrap">${money(row.receivableBalance)}</td>
+      <td style="${cellStyle};white-space:nowrap">${prettyDate(row.buyerInvoiceDueDate)}</td>
+      <td style="${cellStyle};min-width:140px">${escapeHtml(row.buyerTraderInCharge || '-')}</td>
+      <td style="${cellStyle};min-width:160px">${escapeHtml(row.prpspStatus || '-')}</td>
+      <td style="${cellStyle}">
+        <span style="display:inline-block;border:1px solid;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;white-space:nowrap;${severity.pill}">${escapeHtml(row.status)}</span>
+      </td>
+      <td style="${cellStyle};text-align:right;font-weight:600;color:${severity.text};white-space:nowrap">${overdueDisplayValue(row.daysUntilDue)}</td>
+    </tr>`;
+  }).join('');
+  const html = `
+    <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">
+      ${paymentReminderBodyHtml(body)}
+      <div style="max-height:420px;overflow:auto;border:1px solid #d9e2ef;border-radius:10px;margin-top:16px">
+        <table style="border-collapse:collapse;width:100%;min-width:1120px;font-size:13px">
+          <thead>
+            <tr style="background:#f8fafc;color:#667085;text-transform:uppercase;font-size:11px;letter-spacing:.04em">
+              <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">Stem Name</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">Buyer Name</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right">Invoice Amount</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right">Receivable Balance</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">Due Date</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">Buyer Trader</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">PSPRS Status</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left">Status</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right">Overdue</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows || '<tr><td colspan="9" style="padding:18px;text-align:center;color:#667085">No invoices selected.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+  const text = [
+    body,
+    '',
+    ...selectedRows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS Status ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`),
+  ].join('\n');
+  return { subject, body, html, text };
+}
+
+async function loadBuyerInvoicePaymentReminderContext(body = {}) {
+  const stored = await loadStoredBuyerInvoiceEmailSettings();
+  const settings = {
+    ...buyerInvoiceEmailSettings(stored.settings),
+    hasBuyerTraderFilter: (stored.settings.buyerTraders || []).length > 0,
+  };
+  const report = await salesforceBuyerInvoicesDue({
+    daysAhead: body.daysAhead ?? settings.daysAhead,
+    paymentReminderRecipientFieldPath: settings.paymentReminderRecipientFieldPath,
+  });
+  const stemId = String(body.stemId || body.stem_id || '').trim();
+  const selected = report.rows.find((row) => row.stemId === stemId);
+  if (!selected) throw appError('Selected invoice is no longer in the current outstanding invoice window.', 404);
+  const candidates = report.rows
+    .filter((row) => isPaymentReminderCandidate(row, selected))
+    .sort((a, b) => {
+      if (a.buyerInvoiceDueDate !== b.buyerInvoiceDueDate) return a.buyerInvoiceDueDate.localeCompare(b.buyerInvoiceDueDate);
+      return String(a.stemName || '').localeCompare(String(b.stemName || ''));
+    });
+  return { settings, report, selected, candidates };
+}
+
+async function buyerInvoicePaymentReminderPrepare(body, req) {
+  await requireActiveUser(req);
+  const { settings, report, selected, candidates } = await loadBuyerInvoicePaymentReminderContext(body);
+  const recipients = paymentReminderRecipients(candidates);
+  const email = buildBuyerInvoicePaymentReminderEmail(report, settings, selected, candidates);
+  return {
+    selected,
+    candidates,
+    to: recipients,
+    cc: settings.cc,
+    subject: email.subject,
+    body: email.body,
+    preview: { html: email.html, text: email.text },
+    settings: {
+      paymentReminderRecipientFieldPath: settings.paymentReminderRecipientFieldPath,
+      from: settings.from,
+      daysAhead: report.daysAhead,
+    },
+  };
+}
+
+async function buyerInvoicePaymentReminderSend(body, req) {
+  await requireActiveUser(req);
+  const { settings, report, selected, candidates } = await loadBuyerInvoicePaymentReminderContext(body);
+  const selectedStemIds = new Set((Array.isArray(body.invoiceStemIds) ? body.invoiceStemIds : [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean));
+  const rows = candidates.filter((row) => selectedStemIds.has(row.stemId));
+  if (!rows.length) throw appError('Select at least one invoice to include in the payment reminder.', 400);
+
+  const to = parseEmailList(body.to, []);
+  const cc = parseEmailList(body.cc, []);
+  if (!to.length) throw appError('Payment reminder recipient is required.', 400);
+
+  const email = buildBuyerInvoicePaymentReminderEmail(report, settings, selected, rows, {
+    subject: body.subject,
+    body: body.body,
+  });
+  const credentials = body.credentials || {};
+  const useSmtp = credentials.method === 'smtp' || credentials.smtp || (!process.env.RESEND_API_KEY && process.env.SMTP_HOST);
+  const result = useSmtp
+    ? await sendWithSmtp({
+        smtp: credentials.smtp || credentials,
+        from: settings.from,
+        to,
+        cc,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      })
+    : await sendWithResend({
+        from: settings.from,
+        to,
+        cc,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      });
+
+  const collectionResults = [];
+  const note = [
+    `Payment reminder sent to ${to.join(', ')}${cc.length ? ` (cc ${cc.join(', ')})` : ''}.`,
+    `Subject: ${email.subject}`,
+    `Included invoices: ${rows.length}`,
+  ].join('\n');
+  for (const row of rows) {
+    const currentStatus = row.collection?.status || 'Not Started';
+    const nextStatus = currentStatus === 'Not Started' ? 'Reminder Sent' : currentStatus;
+    const ownerName = row.collection?.ownerName || splitBuyerTraderNames(row.buyerTraderInCharge)[0] || '';
+    const collectionResult = await persistBuyerInvoiceCollection({
+      stemId: row.stemId,
+      updates: {
+        status: nextStatus,
+        ownerName,
+        latestNote: note,
+      },
+      event: {
+        eventType: currentStatus === 'Not Started' ? 'status_change' : 'note',
+        status: nextStatus,
+        ownerName,
+        note,
+      },
+    }, req);
+    collectionResults.push(collectionResult);
+  }
+
+  return {
+    sent: true,
+    id: result.id,
+    to,
+    cc,
+    subject: email.subject,
+    rows: rows.length,
+    collectionResults,
+  };
 }
 
 async function sendWithResend({ from, to, cc, subject, html, text }) {
@@ -4018,6 +4269,8 @@ const handlers = {
   buyerInvoiceCollectionEventCreate,
   buyerInvoiceEmailSettingsGet,
   buyerInvoiceEmailSettingsSave,
+  buyerInvoicePaymentReminderPrepare,
+  buyerInvoicePaymentReminderSend,
   outstandingBuyerInvoicesEmailReport,
   outstandingBuyerInvoicesEmailCron,
   salesforceDisputeStems,
