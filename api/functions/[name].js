@@ -453,7 +453,6 @@ async function adminUserTypeDelete(body, req) {
     .maybeSingle();
   if (typeError) throw typeError;
   if (!userType) throw appError('User type not found.', 404);
-  if (userType.is_system) throw appError('System user types cannot be deleted. You can edit their access rights instead.', 400);
 
   const { count, error: assignedError } = await client
     .from('user_profiles')
