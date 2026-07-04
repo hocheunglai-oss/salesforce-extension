@@ -249,8 +249,12 @@ function collectionStatus(row) {
   return row.collection?.status || 'Not Started';
 }
 
+function defaultCollectionOwner(row) {
+  return splitBuyerTraderNames(row?.buyerTraderInCharge)[0] || '';
+}
+
 function collectionOwner(row) {
-  return row.collection?.ownerName || '';
+  return row.collection?.ownerName || defaultCollectionOwner(row);
 }
 
 function isFollowUpDue(row, today) {
