@@ -216,6 +216,11 @@ export default function DashboardSettings() {
       unitOfMeasure: quantityByFamily.get(family)?.unitOfMeasure || 'MT',
     }));
   }, [data?.productFamilyQuantities]);
+  const productVolumeKpi = useMemo(() => ({
+    totalQuantity: productFamilyKpis.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+    unitOfMeasure: productFamilyKpis.find((item) => item.unitOfMeasure)?.unitOfMeasure || 'MT',
+    breakdown: productFamilyKpis,
+  }), [productFamilyKpis]);
 
   const companySuggestions = useMemo(() => {
     const q = companyKeyword.trim().toLowerCase();
@@ -514,16 +519,36 @@ export default function DashboardSettings() {
               icon={AlertCircle}
               color="red"
             />
-            {productFamilyKpis.map((item, index) => (
-              <StatCard
-                key={item.family}
-                label={item.family}
-                value={`${formatQuantity(item.quantity)} ${item.unitOfMeasure || 'MT'}`}
-                sub="Line-item BDN qty or fallback mid-range qty"
-                icon={Package}
-                color={index === 0 ? 'teal' : 'blue'}
-              />
-            ))}
+            <div className="glass-surface bg-card rounded-xl border border-border p-5 flex flex-col gap-3 col-span-2">
+              <div className="flex items-start justify-between">
+                <p className="text-sm font-medium text-muted-foreground">Product Volume</p>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-cyan-50 text-cyan-600">
+                  <Package className="w-4.5 h-4.5" />
+                </div>
+              </div>
+              <div>
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total</span>
+                  <span className="text-2xl font-bold text-foreground font-dm tracking-tight">
+                    {formatQuantity(productVolumeKpi.totalQuantity)} {productVolumeKpi.unitOfMeasure}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">Line-item BDN qty or fallback mid-range qty</p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {productVolumeKpi.breakdown.map((item) => (
+                  <div key={item.family} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                      <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: PRODUCT_VOLUME_COLORS[item.family] }} />
+                      {item.family}
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-foreground">
+                      {formatQuantity(item.quantity)} {item.unitOfMeasure || 'MT'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
           {/* Monthly Gross Profit / Volume Trend */}
