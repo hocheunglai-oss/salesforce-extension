@@ -43,7 +43,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "lock_file": str(DEFAULT_STATE_DIR / "task.lock"),
     "poll_seconds": 5,
     "max_task_seconds": 1800,
-    "reply_length_limit": 1800,
+    "reply_length_limit": 800,
     "allow_push_deploy": True,
     "send_replies": True,
     "initialize_from_latest_message": True,
@@ -103,6 +103,20 @@ def is_allowed_sender(handle: str, allowed_handles: Iterable[str]) -> bool:
     allowed = {normalize_handle(item) for item in allowed_handles if str(item or "").strip()}
     allowed_raw = {str(item or "").strip().lower() for item in allowed_handles if str(item or "").strip()}
     return normalized in allowed or raw in allowed_raw
+
+
+def extract_command(text: str, command_prefix: str) -> Optional[str]:
+    """Return command text after prefix, accepting minor iMessage typing variations."""
+    body = str(text or "")
+    prefix = str(command_prefix or "").strip()
+    if not prefix:
+        return None
+    prefix_words = prefix.rstrip(":").split()
+    if not prefix_words:
+        return None
+    pattern = r"^\s*" + r"\s+".join(re.escape(word) for word in prefix_words) + r"\s*:\s*(.*)$"
+    match = re.match(pattern, body, flags=re.IGNORECASE | re.DOTALL)
+    return match.group(1).strip() if match else None
 
 
 def redact(value: str) -> str:
@@ -192,7 +206,6 @@ def initialize_state_if_needed(state: sqlite3.Connection, config: Dict[str, Any]
 def fetch_new_commands(config: Dict[str, Any], state: sqlite3.Connection) -> List[Dict[str, Any]]:
     messages_db = Path(config["messages_db"]).expanduser()
     last_rowid = int(state_get(state, "last_rowid") or "0")
-    prefix = str(config["command_prefix"])
     uri = f"file:{messages_db}?mode=ro"
     query = """
       select
@@ -209,13 +222,16 @@ def fetch_new_commands(config: Dict[str, Any], state: sqlite3.Connection) -> Lis
         and m.item_type = 0
         and m.service = 'iMessage'
         and m.text is not null
-        and lower(m.text) like lower(?)
       order by m.ROWID asc
-      limit 20
+      limit 200
     """
     with sqlite3.connect(uri, uri=True) as conn:
         conn.row_factory = sqlite3.Row
-        rows = [dict(row) for row in conn.execute(query, (last_rowid, f"{prefix}%")).fetchall()]
+        rows = [
+            dict(row)
+            for row in conn.execute(query, (last_rowid,)).fetchall()
+            if extract_command(str(row["text"] or ""), str(config["command_prefix"])) is not None
+        ]
 
         max_row = conn.execute(
             "select coalesce(max(ROWID), ?) from message where ROWID > ?",
@@ -355,10 +371,7 @@ def run_codex(command: str, sender: str, config: Dict[str, Any]) -> Dict[str, An
             "exec",
             "-C",
             str(workspace),
-            "--sandbox",
-            "danger-full-access",
-            "--ask-for-approval",
-            "never",
+            "--dangerously-bypass-approvals-and-sandbox",
             "--output-last-message",
             str(last_message),
             prompt,
@@ -368,6 +381,7 @@ def run_codex(command: str, sender: str, config: Dict[str, Any]) -> Dict[str, An
             proc = subprocess.run(
                 args,
                 cwd=str(workspace),
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -395,7 +409,7 @@ def process_message(config: Dict[str, Any], state: sqlite3.Connection, message: 
     sender = str(message.get("sender") or "")
     text = str(message.get("text") or "")
     prefix = str(config["command_prefix"])
-    command = text[len(prefix) :].strip()
+    command = extract_command(text, prefix) or ""
     limit = int(config.get("reply_length_limit") or 1800)
 
     if not guid or already_processed(state, guid):
