@@ -475,7 +475,7 @@ function escapeHtml(value) {
 }
 
 function invoiceRecordPlainText(row) {
-  return COPY_ROW_FIELDS.map((getValue) => copyCell(getValue(row))).join(' - ');
+  return COPY_ROW_FIELDS.map((getValue) => copyCell(getValue(row))).join(' - ').toUpperCase();
 }
 
 function invoiceRecordHtml(row) {
