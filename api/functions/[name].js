@@ -1271,6 +1271,20 @@ function litersPerMetricTon(item) {
   return null;
 }
 
+function dashboardProductFamily(item) {
+  const family = String(item['Product__r']?.Family || item['Product2Id__r']?.Family || '').toUpperCase();
+  const productName = String(item['Product__r']?.Name || item['Product2Id__r']?.Name || item.Name || item.Description__c || '').toUpperCase();
+  const text = `${family} ${productName}`;
+  if (text.includes('LSMGO') || text.includes('MGO') || text.includes('DIESEL') || /\bDMA\b/.test(text) || /\bDMB\b/.test(text)) return 'LSMGO';
+  if (text.includes('VLSFO')) return 'VLSFO';
+  if (text.includes('HSFO')) return 'HSFO';
+  if (text.includes('RMG') || text.includes('RME') || text.includes('RMK')) {
+    if (/3\.?5|380CST|180CST|500CST/.test(text) && !/0\.5|0\.50|0\.1|0\.10|0\.05/.test(text)) return 'HSFO';
+    return 'VLSFO';
+  }
+  return family || productName || 'Unspecified';
+}
+
 function deliveredQuantityInMt(item) {
   const delivered = firstNumber(item.Quantity_Delivered_Per_BDN__c);
   if (delivered == null) return null;
@@ -2040,7 +2054,10 @@ async function salesforceDashboardFilteredFull(body) {
         : ''
     : '';
   const normalizedPortCountry = String(portCountry || '').trim();
-  const portCountryCondition = normalizedPortCountry ? `Port__r.Country__c = '${escapeSoql(normalizedPortCountry)}'` : '';
+  const portCountryLike = normalizedPortCountry ? `%${escapeSoql(normalizedPortCountry)}%` : '';
+  const portCountryCondition = normalizedPortCountry
+    ? `(Port__r.Country__c LIKE '${portCountryLike}' OR Port__r.Name LIKE '${portCountryLike}')`
+    : '';
   const normalizedCompanyKeyword = String(companyKeyword || '').trim();
   const companyMode = companyFilterMode === 'supplier' ? 'supplier' : 'buyer';
   const companyLike = normalizedCompanyKeyword ? `%${escapeSoql(normalizedCompanyKeyword)}%` : '';
@@ -2121,6 +2138,12 @@ async function salesforceDashboardFilteredFull(body) {
   ])];
   const stemById = {};
   for (const stem of [...(allStemsRes.records || []), ...(monthlyStemsRes.records || [])]) stemById[stem.Id] = stem;
+  const monthlyMonthByStem = {};
+  for (const stem of monthlyStemsRes.records || []) {
+    const effectiveDate = stem.Delivery_Date__c || stem.Expected_Delivery_Date__c;
+    const month = Number(String(effectiveDate || '').split('-')[1]);
+    if (stem.Id && month >= 1 && month <= 12) monthlyMonthByStem[stem.Id] = month;
+  }
 
   let lineItems = [];
   let buyerBrokers = [];
@@ -2167,6 +2190,11 @@ async function salesforceDashboardFilteredFull(body) {
   const brokerByStem = {};
   const filteredStemIds = new Set((allStemsRes.records || []).map((stem) => stem.Id));
   const productFamilyQuantityByName = {};
+  const monthlyProductVolumeByFamily = {
+    HSFO: Array(12).fill(0),
+    VLSFO: Array(12).fill(0),
+    LSMGO: Array(12).fill(0),
+  };
   const supplierNamesByStem = {};
   const supplierNamesInFilteredStems = new Set();
   const supplierWeightByStem = {};
@@ -2210,8 +2238,13 @@ async function salesforceDashboardFilteredFull(body) {
       }
     }
     if (filteredStemIds.has(id) && supplierMatchesCompanyFilter) {
-      const family = li['Product__r']?.Family || li['Product__r']?.Name || 'Unspecified';
+      const family = dashboardProductFamily(li);
       productFamilyQuantityByName[family] = (productFamilyQuantityByName[family] || 0) + financialQuantity(li, stemHasDelivery);
+    }
+    const monthlyFamily = dashboardProductFamily(li);
+    const monthlyMonth = monthlyMonthByStem[id];
+    if (monthlyMonth && monthlyProductVolumeByFamily[monthlyFamily] && supplierMatchesCompanyFilter) {
+      monthlyProductVolumeByFamily[monthlyFamily][monthlyMonth - 1] += financialQuantity(li, stemHasDelivery);
     }
     lineItemSellByStem[id] = (lineItemSellByStem[id] || 0) + lineSell;
     supplierLineBuyByStem[id] = (supplierLineBuyByStem[id] || 0) + lineBuy;
@@ -2433,6 +2466,13 @@ async function salesforceDashboardFilteredFull(body) {
   const productFamilyQuantities = Object.entries(productFamilyQuantityByName)
     .map(([family, quantity]) => ({ family, quantity, unitOfMeasure: 'MT' }))
     .sort((a, b) => b.quantity - a.quantity);
+  const monthlyProductVolumes = monthlyNetPnl.map((item, idx) => ({
+    month: item.month,
+    label: item.label,
+    HSFO: monthlyProductVolumeByFamily.HSFO[idx] || 0,
+    VLSFO: monthlyProductVolumeByFamily.VLSFO[idx] || 0,
+    LSMGO: monthlyProductVolumeByFamily.LSMGO[idx] || 0,
+  }));
 
   return {
     stemTotal: totalRes.records?.[0]?.total ?? 0,
@@ -2462,6 +2502,7 @@ async function salesforceDashboardFilteredFull(body) {
     monthlySupplierNames,
     monthlyNetPnlYear: currentYear,
     productFamilyQuantities,
+    monthlyProductVolumes,
   };
 }
 

@@ -18,6 +18,11 @@ const STORAGE_KEY = 'dashboard_filters_v2';
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899'];
 const YEARS = getRecentYears();
 const PRODUCT_FAMILY_KPI_ORDER = ['HSFO', 'VLSFO', 'LSMGO'];
+const PRODUCT_VOLUME_COLORS = {
+  HSFO: '#0f766e',
+  VLSFO: '#2563eb',
+  LSMGO: '#f59e0b',
+};
 const COUNTERPARTY_MODES = [
   { value: 'buyer', label: 'Buyer', plural: 'Buyers' },
   { value: 'supplier', label: 'Supplier', plural: 'Suppliers' },
@@ -35,6 +40,7 @@ export default function DashboardSettings() {
   const [disputeOnly, setDisputeOnly] = useState(savedFilters.disputeOnly ?? false);
   const [portCountry, setPortCountry] = useState(savedPortCountry);
   const [counterpartyMode, setCounterpartyMode] = useState(savedFilters.counterpartyMode === 'supplier' ? 'supplier' : 'buyer');
+  const [monthlyTrendMode, setMonthlyTrendMode] = useState('profit');
   const [portCountryOptions, setPortCountryOptions] = useState([]);
   const [portCountrySuggestionsOpen, setPortCountrySuggestionsOpen] = useState(false);
   const [companyKeyword, setCompanyKeyword] = useState(savedFilters.companyKeyword ?? '');
@@ -70,11 +76,14 @@ export default function DashboardSettings() {
     let cancelled = false;
     const loadPortCountries = async () => {
       const res = await appClient.functions.invoke('salesforceQuery', {
-        soql: 'SELECT Country__c c, COUNT(Id) total FROM Port__c WHERE Country__c != null GROUP BY Country__c ORDER BY Country__c'
+        soql: 'SELECT Name, Country__c FROM Port__c WHERE Country__c != null OR Name != null ORDER BY Country__c, Name LIMIT 2000'
       }, { cache: true });
       if (cancelled || res.data?.error) return;
-      const countries = [...new Set((res.data?.records || []).map((row) => row.c).filter(Boolean))];
-      setPortCountryOptions(countries);
+      const options = [...new Set((res.data?.records || []).flatMap((row) => [
+        row.Country__c,
+        row.Name,
+      ]).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+      setPortCountryOptions(options);
     };
     loadPortCountries();
     return () => { cancelled = true; };
@@ -108,9 +117,10 @@ export default function DashboardSettings() {
 
   const buildWhereClause = (yrs = selectedYears, mos = selectedMonths, country = portCountry) => {
     const normalizedCountry = String(country || '').trim();
+    const portLike = normalizedCountry ? `%${escapeSoqlLiteral(normalizedCountry)}%` : '';
     const filters = [
       buildDeliveryWhere(yrs, mos),
-      normalizedCountry ? `Port__r.Country__c = '${escapeSoqlLiteral(normalizedCountry)}'` : '',
+      normalizedCountry ? `(Port__r.Country__c LIKE '${portLike}' OR Port__r.Name LIKE '${portLike}')` : '',
     ].filter(Boolean);
     return filters.map((condition) => `(${condition})`).join(' AND ');
   };
@@ -246,6 +256,16 @@ export default function DashboardSettings() {
   const topCounterpartiesByNetPnl = counterpartyMode === 'supplier'
     ? (data?.topSuppliersByNetPnl || [])
     : (data?.topBuyersByNetPnl || []);
+  const monthlyProductVolumes = data?.monthlyProductVolumes?.length
+    ? data.monthlyProductVolumes
+    : (data?.monthlyNetPnl || []).map((item) => ({
+      month: item.month,
+      label: item.label,
+      HSFO: 0,
+      VLSFO: 0,
+      LSMGO: 0,
+    }));
+  const monthlyTrendIsVolume = monthlyTrendMode === 'volume';
 
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
@@ -371,7 +391,7 @@ export default function DashboardSettings() {
             </div>
             <div className="flex items-center gap-2">
               <Label htmlFor="port-country-filter" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Port Country
+                Port / Country
               </Label>
               <div className="relative z-50">
                 <Input
@@ -390,7 +410,7 @@ export default function DashboardSettings() {
                       selectPortCountrySuggestion(portCountrySuggestions[0]);
                     }
                   }}
-                  placeholder="All countries"
+                  placeholder="All ports/countries"
                   className="h-8 w-44 text-xs"
                   autoComplete="off"
                 />
@@ -506,23 +526,82 @@ export default function DashboardSettings() {
             ))}
           </div>
 
-          {/* Monthly Gross Profit Trend */}
+          {/* Monthly Gross Profit / Volume Trend */}
           {data.monthlyNetPnl?.length > 0 && (
             <div className="bg-card rounded-xl border border-border p-5 mb-8">
-              <h3 className="text-sm font-semibold text-foreground mb-1">Monthly Gross Profit Trend</h3>
-              <p className="text-xs text-muted-foreground mb-4">Total Gross Profit by month for {data.monthlyNetPnlYear || THIS_YEAR}</p>
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground mb-1">
+                    {monthlyTrendIsVolume ? 'Monthly Volume' : 'Monthly Gross Profit Trend'}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {monthlyTrendIsVolume
+                      ? `Combined monthly volume by product family for ${data.monthlyNetPnlYear || THIS_YEAR}`
+                      : `Total Gross Profit by month for ${data.monthlyNetPnlYear || THIS_YEAR}`}
+                  </p>
+                </div>
+                <div className="flex rounded-lg border border-border bg-muted/30 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setMonthlyTrendMode('profit')}
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      !monthlyTrendIsVolume ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Gross Profit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMonthlyTrendMode('volume')}
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      monthlyTrendIsVolume ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Monthly Volume
+                  </button>
+                </div>
+              </div>
               <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={data.monthlyNetPnl} barSize={44}>
+                <BarChart data={monthlyTrendIsVolume ? monthlyProductVolumes : data.monthlyNetPnl} barSize={44}>
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
-                  <Tooltip formatter={(v) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, 'Gross Profit']} />
-                  <Bar dataKey="netPnl" radius={[4, 4, 0, 0]}>
-                    {data.monthlyNetPnl.map((item, idx) => (
-                      <Cell key={idx} fill={item.netPnl >= 0 ? '#10b981' : '#ef4444'} />
-                    ))}
-                  </Bar>
+                  <YAxis
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(v) => monthlyTrendIsVolume ? `${Math.round(v).toLocaleString()} MT` : `$${Math.round(v / 1000)}k`}
+                  />
+                  <Tooltip
+                    formatter={(v, name) => monthlyTrendIsVolume
+                      ? [`${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })} MT`, name]
+                      : [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, 'Gross Profit']}
+                  />
+                  {monthlyTrendIsVolume ? (
+                    PRODUCT_FAMILY_KPI_ORDER.map((family, index) => (
+                      <Bar
+                        key={family}
+                        dataKey={family}
+                        stackId="monthly-volume"
+                        fill={PRODUCT_VOLUME_COLORS[family]}
+                        radius={index === PRODUCT_FAMILY_KPI_ORDER.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                      />
+                    ))
+                  ) : (
+                    <Bar dataKey="netPnl" radius={[4, 4, 0, 0]}>
+                      {data.monthlyNetPnl.map((item, idx) => (
+                        <Cell key={idx} fill={item.netPnl >= 0 ? '#10b981' : '#ef4444'} />
+                      ))}
+                    </Bar>
+                  )}
                 </BarChart>
               </ResponsiveContainer>
+              {monthlyTrendIsVolume && (
+                <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                  {PRODUCT_FAMILY_KPI_ORDER.map((family) => (
+                    <span key={family} className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: PRODUCT_VOLUME_COLORS[family] }} />
+                      {family}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

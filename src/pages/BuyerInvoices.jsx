@@ -490,6 +490,29 @@ function invoiceRecordHtml(row) {
   return `<div style="font-family:Arial,sans-serif;font-size:12px;color:#111827;">${escapeHtml(invoiceRecordPlainText(row))}</div>`;
 }
 
+function invoiceRecordsPlainText(rows) {
+  return rows.map(invoiceRecordPlainText).join('\n');
+}
+
+function invoiceRecordsHtml(rows) {
+  return rows.map(invoiceRecordHtml).join('');
+}
+
+function copyGroupKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isCopyCandidate(row, selected) {
+  if (!row || !selected) return false;
+  if (row.id === selected.id) return true;
+  const selectedBuyer = copyGroupKey(selected.buyerName);
+  const rowBuyer = copyGroupKey(row.buyerName);
+  if (selectedBuyer && rowBuyer && selectedBuyer === rowBuyer) return true;
+  const selectedGroup = copyGroupKey(selected.buyerGroupName);
+  const rowGroup = copyGroupKey(row.buyerGroupName);
+  return Boolean(selectedGroup && rowGroup && selectedGroup === rowGroup);
+}
+
 async function writeClipboardTable({ html, text }) {
   if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
     await navigator.clipboard.write([
@@ -1290,6 +1313,104 @@ function PaymentReminderTemplateModal({
   );
 }
 
+function CopyInvoiceSelectionModal({ row, candidates = [], open, onClose, onCopy }) {
+  const [selectedIds, setSelectedIds] = useState([]);
+
+  useEffect(() => {
+    if (!open) return;
+    setSelectedIds(candidates.map((candidate) => candidate.id));
+  }, [candidates, open]);
+
+  if (!open || !row) return null;
+
+  const selectedRows = candidates.filter((candidate) => selectedIds.includes(candidate.id));
+  const toggleInvoice = (id) => {
+    setSelectedIds((prev) => (
+      prev.includes(id)
+        ? prev.filter((item) => item !== id)
+        : [...prev, id]
+    ));
+  };
+  const allSelected = selectedIds.length === candidates.length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div className="max-h-[88vh] w-full max-w-4xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border p-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Copy invoice details</p>
+            <h2 className="mt-1 text-lg font-semibold text-foreground">{row.buyerName || '-'}</h2>
+            <p className="text-sm text-muted-foreground">
+              Select the same buyer or buyer-group invoices to copy.
+            </p>
+          </div>
+          <Button variant="outline" size="icon" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="space-y-4 overflow-auto p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-muted-foreground">
+              {selectedRows.length.toLocaleString()} selected · {fmtMoney(selectedRows.reduce((sum, item) => sum + Number(item.receivableBalance || 0), 0))}
+            </div>
+            <button
+              type="button"
+              className="text-xs text-primary hover:underline"
+              onClick={() => setSelectedIds(allSelected ? [row.id] : candidates.map((candidate) => candidate.id))}
+            >
+              {allSelected ? 'Keep current only' : 'Select all'}
+            </button>
+          </div>
+
+          <div className="max-h-[48vh] overflow-auto rounded-lg border border-border">
+            <table className="w-full min-w-[900px] text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40">
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Include</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Stem Name</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Group</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Receivable Balance</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Due Date</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {candidates.map((candidate, idx) => (
+                  <tr key={candidate.id} className={`border-b border-border/40 ${rowSeverityClass(candidate, idx)}`}>
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(candidate.id)}
+                        onChange={() => toggleInvoice(candidate.id)}
+                      />
+                    </td>
+                    <td className="px-3 py-2 font-medium text-foreground">{candidate.stemName || '-'}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{candidate.buyerName || '-'}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{candidate.buyerGroupName || '-'}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.receivableBalance)}</td>
+                    <td className="px-3 py-2 text-foreground">{fmtDate(candidate.buyerInvoiceDueDate)}</td>
+                    <td className={`px-3 py-2 text-right font-medium ${dueTextClass(candidate.daysUntilDue)}`}>{overdueDisplayValue(candidate.daysUntilDue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button onClick={() => onCopy(selectedRows)} disabled={!selectedRows.length} className="gap-2">
+              <Copy className="h-4 w-4" />
+              Copy Selected
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BuyerInvoices() {
   const initialFilters = useMemo(() => readInitialFilters(), []);
   const today = useMemo(() => hongKongDateKey(), []);
@@ -1301,6 +1422,7 @@ export default function BuyerInvoices() {
   const [selectedStemId, setSelectedStemId] = useState(null);
   const [selectedCollectionRow, setSelectedCollectionRow] = useState(null);
   const [selectedReminderRow, setSelectedReminderRow] = useState(null);
+  const [copySelection, setCopySelection] = useState(null);
   const [showEmailSchedule, setShowEmailSchedule] = useState(false);
   const [showPaymentReminderTemplate, setShowPaymentReminderTemplate] = useState(false);
   const [savedEmailSettings, setSavedEmailSettings] = useState(readLegacyEmailSettings);
@@ -1316,7 +1438,7 @@ export default function BuyerInvoices() {
   const [severityFilter, setSeverityFilter] = useState('all');
   const [followUpFilter, setFollowUpFilter] = useState('all');
   const [actionOnly, setActionOnly] = useState(false);
-  const [copiedRowId, setCopiedRowId] = useState(null);
+  const [copiedRowIds, setCopiedRowIds] = useState(() => new Set());
   const traderFilterInitialized = useRef(false);
   const initialBuyerTraderFilter = useRef(initialFilters);
 
@@ -1447,17 +1569,35 @@ export default function BuyerInvoices() {
     };
   };
 
-  const copyInvoiceRecord = async (row) => {
+  const copyInvoiceRows = async (selectedRows) => {
     try {
       await writeClipboardTable({
-        html: invoiceRecordHtml(row),
-        text: invoiceRecordPlainText(row),
+        html: invoiceRecordsHtml(selectedRows),
+        text: invoiceRecordsPlainText(selectedRows),
       });
-      setCopiedRowId(row.id);
-      window.setTimeout(() => setCopiedRowId((current) => (current === row.id ? null : current)), 1500);
+      setCopiedRowIds((prev) => {
+        const next = new Set(prev);
+        selectedRows.forEach((item) => next.add(item.id));
+        return next;
+      });
+      setCopySelection(null);
     } catch {
       setError('Unable to copy invoice details to clipboard.');
     }
+  };
+
+  const copyInvoiceRecord = async (row) => {
+    const candidates = filteredRows
+      .filter((candidate) => isCopyCandidate(candidate, row))
+      .sort((a, b) => {
+        if (a.buyerInvoiceDueDate !== b.buyerInvoiceDueDate) return String(a.buyerInvoiceDueDate || '').localeCompare(String(b.buyerInvoiceDueDate || ''));
+        return String(a.stemName || '').localeCompare(String(b.stemName || ''));
+      });
+    if (candidates.length > 1) {
+      setCopySelection({ row, candidates });
+      return;
+    }
+    await copyInvoiceRows([row]);
   };
 
   const updateEmailSetting = (key, value) => {
@@ -1876,6 +2016,7 @@ export default function BuyerInvoices() {
                 <tbody>
                   {filteredRows.map((row, idx) => {
                     const reminderSentToday = wasPaymentReminderSentToday(row);
+                    const rowCopied = copiedRowIds.has(row.id);
                     return (
                       <tr
                         key={row.id}
@@ -1949,13 +2090,16 @@ export default function BuyerInvoices() {
                             variant="outline"
                             title="Copy row details"
                             aria-label={`Copy ${row.stemName || 'invoice'} details`}
-                            className="h-7 px-2"
+                            className={cn(
+                              'h-7 px-2',
+                              rowCopied && 'border-zinc-700 bg-zinc-800 text-white shadow-sm hover:bg-zinc-700 hover:text-white',
+                            )}
                             onClick={(event) => {
                               event.stopPropagation();
                               copyInvoiceRecord(row);
                             }}
                           >
-                            {copiedRowId === row.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                            {rowCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                           </Button>
                         </div>
                       </td>
@@ -1985,6 +2129,13 @@ export default function BuyerInvoices() {
         daysAhead={Math.max(0, Math.min(Number(daysAhead) || 0, 365))}
         onClose={() => setSelectedReminderRow(null)}
         onSent={handleReminderSent}
+      />
+      <CopyInvoiceSelectionModal
+        row={copySelection?.row}
+        candidates={copySelection?.candidates || []}
+        open={!!copySelection}
+        onClose={() => setCopySelection(null)}
+        onCopy={copyInvoiceRows}
       />
       <PaymentReminderTemplateModal
         open={showPaymentReminderTemplate}
