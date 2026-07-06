@@ -98,8 +98,7 @@ const COPY_ROW_FIELDS = [
   (row) => row.stemName || '-',
   (row) => row.buyerName || '-',
   (row) => copiedReceivableBalance(row),
-  () => 'Due Date',
-  (row) => fmtDate(row.buyerInvoiceDueDate),
+  (row) => `Due Date ${fmtDate(row.buyerInvoiceDueDate)}`,
   (row) => overdueCopyStatus(row.daysUntilDue),
 ];
 
