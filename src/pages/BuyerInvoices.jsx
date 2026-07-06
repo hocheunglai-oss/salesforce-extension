@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CalendarClock, Check, Copy, Eye, Loader2, Mail, MessageSquareText, RefreshCw, ReceiptText, Save, Send, X } from 'lucide-react';
+import { AlertCircle, CalendarClock, Check, Copy, Eye, Loader2, Mail, MessageSquareText, RefreshCw, ReceiptText, Save, Search, Send, X } from 'lucide-react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { appClient } from '@/api/appClient';
@@ -511,6 +511,13 @@ function isCopyCandidate(row, selected) {
   const selectedGroup = copyGroupKey(selected.buyerGroupName);
   const rowGroup = copyGroupKey(row.buyerGroupName);
   return Boolean(selectedGroup && rowGroup && selectedGroup === rowGroup);
+}
+
+function matchesInvoiceKeyword(row, keyword) {
+  const terms = String(keyword || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const searchable = `${row?.stemName || ''} ${row?.buyerName || ''}`.toLowerCase();
+  return terms.every((term) => searchable.includes(term));
 }
 
 async function writeClipboardTable({ html, text }) {
@@ -1435,6 +1442,7 @@ export default function BuyerInvoices() {
   const [emailDraftRestoredAt, setEmailDraftRestoredAt] = useState(null);
   const [selectedBuyerTraders, setSelectedBuyerTraders] = useState([]);
   const [selectedCollectionStatuses, setSelectedCollectionStatuses] = useState(COLLECTION_STATUSES);
+  const [invoiceKeyword, setInvoiceKeyword] = useState('');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [followUpFilter, setFollowUpFilter] = useState('all');
   const [actionOnly, setActionOnly] = useState(false);
@@ -1480,6 +1488,9 @@ export default function BuyerInvoices() {
 
   const filteredRows = useMemo(() => {
     let next = rows;
+    if (invoiceKeyword.trim()) {
+      next = next.filter((row) => matchesInvoiceKeyword(row, invoiceKeyword));
+    }
     if (buyerTraderOptions.length && selectedBuyerTraders.length !== buyerTraderOptions.length) {
       const selected = new Set(selectedBuyerTraders);
       next = next.filter((row) => (
@@ -1502,7 +1513,7 @@ export default function BuyerInvoices() {
     if (followUpFilter === 'scheduled') next = next.filter((row) => Boolean(row.collection?.nextFollowUpDate));
     if (actionOnly) next = next.filter((row) => isNeedsAction(row, today));
     return next;
-  }, [actionOnly, buyerTraderOptions, followUpFilter, rows, selectedBuyerTraders, selectedCollectionStatuses, severityFilter, today]);
+  }, [actionOnly, buyerTraderOptions, followUpFilter, invoiceKeyword, rows, selectedBuyerTraders, selectedCollectionStatuses, severityFilter, today]);
 
   const loadRows = async (options = {}) => {
     const nextDays = Math.max(0, Math.min(Number(daysAhead) || 0, 365));
@@ -1756,6 +1767,29 @@ export default function BuyerInvoices() {
               onChange={(event) => setDaysAhead(event.target.value)}
               className="h-9 w-32"
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="invoice-keyword" className="text-xs text-muted-foreground">Search STEM / Buyer</Label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="invoice-keyword"
+                value={invoiceKeyword}
+                onChange={(event) => setInvoiceKeyword(event.target.value)}
+                placeholder="Stem name or buyer name"
+                className="h-9 w-72 pl-8 pr-8"
+              />
+              {invoiceKeyword && (
+                <button
+                  type="button"
+                  onClick={() => setInvoiceKeyword('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label="Clear invoice search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
           <Button onClick={() => loadRows({ force: true })} disabled={loading} className="gap-2">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
