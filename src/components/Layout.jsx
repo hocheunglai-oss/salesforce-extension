@@ -23,6 +23,7 @@ const navItems = [
   { to: '/reports', label: 'Report Builder', icon: FileBarChart2, moduleId: 'reports' },
   { to: '/pnl', label: 'Stem P&L', icon: TrendingUp, moduleId: 'pnl' },
   { to: '/brokers', label: "Broker's Commission", icon: DollarSign, moduleId: 'brokers' },
+  { to: '/report-archive', label: 'Reports Archive', icon: History, moduleId: 'report_archive' },
   { to: '/explorer', label: 'Data Explorer', icon: Database, moduleId: 'explorer' },
   { to: '/settings', label: 'Settings', icon: Settings, moduleId: 'settings' },
   { to: '/admin', label: 'Admin Control', icon: ShieldCheck, moduleId: 'admin' },

@@ -3,6 +3,7 @@ import { Download, Loader2, RefreshCw } from 'lucide-react';
 import { endOfQuarter, format, startOfQuarter, subQuarters } from 'date-fns';
 import { appClient } from '@/api/appClient';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/use-toast';
 import BrokerFilters from '@/components/brokers/BrokerFilters';
 import BrokerRegisterTable from '@/components/brokers/BrokerRegisterTable';
 import StemDetailModal from '@/components/dashboard/StemDetailModal';
@@ -81,6 +82,15 @@ const downloadBlob = (blob, filename) => {
   link.click();
   URL.revokeObjectURL(url);
 };
+const textToBase64 = (value) => {
+  const bytes = new TextEncoder().encode(value);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+};
 const roundCurrency = (value) => {
   const number = numericValue(value);
   return number == null ? null : Math.round((number + Number.EPSILON) * 100) / 100;
@@ -140,6 +150,7 @@ const matchesBrokerType = (row, selectedTypes) => {
 const rowIdValue = (row) => textValue(row?.id, '');
 
 export default function BrokerRegister() {
+  const { toast } = useToast();
   const [initialDateRange] = useState(() => previousQuarterRange());
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -157,6 +168,7 @@ export default function BrokerRegister() {
   const [exchangeRateError, setExchangeRateError] = useState(null);
   const [showCny, setShowCny] = useState(false);
   const [excludedRowIds, setExcludedRowIds] = useState([]);
+  const [archivingExport, setArchivingExport] = useState(false);
 
   const loadRows = async (options = {}) => {
     setLoading(true);
@@ -452,7 +464,8 @@ export default function BrokerRegister() {
         </Borders>
       </Style>` : ''}
     </Styles>`;
-  const exportXls = () => {
+  const exportXls = async () => {
+    if (archivingExport) return;
     const generatedAt = format(new Date(), 'dd MMM yyyy HH:mm');
     const bankBuyRateMethodology = 'Frankfurter USD/CNY API rate is treated as the mid-rate. Bank buy rate is calculated as mid-rate less 0.2%, i.e. mid-rate x 0.998.';
     const targetDateMethodology = 'The default exchange-rate target is the last working day of the quarter based on the selected To Date, otherwise selected From Date, otherwise the latest payment/delivery date in filtered rows, otherwise today. Weekends are moved back to Friday; public holidays are handled by the API fallback to prior available dates.';
@@ -615,6 +628,58 @@ export default function BrokerRegister() {
       </Workbook>`;
     const blob = new Blob([workbookXml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     downloadBlob(blob, exportFileName);
+    setArchivingExport(true);
+    try {
+      const res = await appClient.functions.invoke('reportExportCreate', {
+        reportType: 'broker_commission',
+        reportLabel: "Broker's Commission",
+        fileName: exportFileName,
+        mimeType: 'application/vnd.ms-excel',
+        contentBase64: textToBase64(workbookXml),
+        metadata: {
+          reportTitle: "Broker's Commission",
+          generatedAt,
+          rowCount: includedSortedRows.length,
+          excludedRowCount: visibleExcludedCount,
+          totalCommission: roundCurrency(total),
+          commissionPayableTotal: roundCurrency(commissionPayableTotal),
+          commissionReceivableTotal: roundCurrency(commissionReceivableTotal),
+          cnyEnabled: showCny,
+          exchangeRate: showCny ? {
+            source: exchangeRate?.source || 'Frankfurter API',
+            targetDate: exchangeRateTargetDate,
+            requestedDate: exchangeRate?.requestedDate || exchangeRateTargetDate,
+            appliedDate: exchangeRate?.date || null,
+            midRate: exchangeRate?.rate ?? null,
+            bankBuyRate,
+            summary: exchangeRateSummary,
+          } : null,
+          filters: Object.fromEntries(filterSummaryRows),
+          filterSummaryRows,
+        },
+      });
+      if (res.data?.error) {
+        toast({
+          title: 'XLS downloaded, Drive archive failed',
+          description: res.data.error,
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: 'XLS downloaded and archived',
+          description: `${exportFileName} was saved to Google Drive.`,
+        });
+        appClient.functions.clearCache();
+      }
+    } catch (archiveError) {
+      toast({
+        title: 'XLS downloaded, Drive archive failed',
+        description: archiveError.message || 'Unable to save this report to Google Drive.',
+        variant: 'destructive',
+      });
+    } finally {
+      setArchivingExport(false);
+    }
   };
 
   return (
@@ -629,8 +694,8 @@ export default function BrokerRegister() {
           <Button type="button" size="sm" variant={showCny ? 'default' : 'outline'} onClick={() => setShowCny(value => !value)} className="gap-2 w-fit">
             CNY
           </Button>
-          <Button variant="outline" onClick={exportXls} disabled={loading || !includedSortedRows.length} className="gap-2 w-fit">
-            <Download className="w-4 h-4" /> Export XLS
+          <Button variant="outline" onClick={exportXls} disabled={loading || archivingExport || !includedSortedRows.length} className="gap-2 w-fit">
+            {archivingExport ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Export XLS
           </Button>
           <Button variant="outline" onClick={() => loadRows({ force: true })} disabled={loading} className="gap-2 w-fit">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh

@@ -13,6 +13,7 @@ import DashboardSettings from '@/pages/DashboardSettings';
 import SettingsPage from '@/pages/Settings';
 import StemPnlReport from '@/pages/StemPnlReport';
 import BrokerRegister from '@/pages/BrokerRegister';
+import ReportArchive from '@/pages/ReportArchive';
 import ReviewQueue from '@/pages/ReviewQueue';
 import BuyerInvoices from '@/pages/BuyerInvoices';
 import DisputeManagement from '@/pages/DisputeManagement';
@@ -76,6 +77,7 @@ const AuthenticatedApp = () => {
           <Route path="/disputes" element={<ModuleGate moduleId="disputes"><DisputeManagement /></ModuleGate>} />
           <Route path="/buyer-invoices" element={<ModuleGate moduleId="buyer_invoices"><BuyerInvoices /></ModuleGate>} />
           <Route path="/brokers" element={<ModuleGate moduleId="brokers"><BrokerRegister /></ModuleGate>} />
+          <Route path="/report-archive" element={<ModuleGate moduleId="report_archive"><ReportArchive /></ModuleGate>} />
           <Route path="/admin" element={<ModuleGate moduleId="admin"><AdminControl /></ModuleGate>} />
           <Route path="*" element={<PageNotFound />} />
         </Route>

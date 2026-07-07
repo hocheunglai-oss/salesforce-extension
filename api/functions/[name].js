@@ -1,5 +1,6 @@
 import { chunkIds, cleanRecord, getInstanceUrl, sendJson, sfDownload, sfQuery, sfRequest } from '../_salesforce.js';
 import { createClient } from '@supabase/supabase-js';
+import { createHash } from 'node:crypto';
 
 async function readBody(req) {
   if (req.method === 'GET') return {};
@@ -21,6 +22,7 @@ const ADMIN_APP_MODULES = [
   { id: 'reports', label: 'Report Builder', path: '/reports', sortOrder: 50 },
   { id: 'pnl', label: 'Stem P&L', path: '/pnl', sortOrder: 60 },
   { id: 'brokers', label: "Broker's Commission", path: '/brokers', sortOrder: 70 },
+  { id: 'report_archive', label: 'Reports Archive', path: '/report-archive', sortOrder: 75 },
   { id: 'explorer', label: 'Data Explorer', path: '/explorer', sortOrder: 80 },
   { id: 'settings', label: 'Settings', path: '/settings', sortOrder: 90 },
   { id: 'admin', label: 'Admin Control', path: '/admin', sortOrder: 100 },
@@ -37,10 +39,10 @@ const DEFAULT_USER_TYPES = [
 ];
 const FALLBACK_TYPE_PERMISSIONS = {
   administrator: ADMIN_FULL_ACCESS,
-  manager: { dashboard: true, review: true, disputes: true, buyer_invoices: true, reports: true, pnl: true, brokers: true, explorer: false, settings: true, admin: false },
-  finance: { dashboard: true, review: true, disputes: true, buyer_invoices: true, reports: true, pnl: true, brokers: true, explorer: false, settings: false, admin: false },
-  operations: { dashboard: true, review: true, disputes: true, buyer_invoices: false, reports: true, pnl: true, brokers: false, explorer: false, settings: false, admin: false },
-  viewer: { dashboard: true, review: false, disputes: false, buyer_invoices: false, reports: false, pnl: false, brokers: false, explorer: false, settings: false, admin: false },
+  manager: { dashboard: true, review: true, disputes: true, buyer_invoices: true, reports: true, pnl: true, brokers: true, report_archive: true, explorer: false, settings: true, admin: false },
+  finance: { dashboard: true, review: true, disputes: true, buyer_invoices: true, reports: true, pnl: true, brokers: true, report_archive: true, explorer: false, settings: false, admin: false },
+  operations: { dashboard: true, review: true, disputes: true, buyer_invoices: false, reports: true, pnl: true, brokers: false, report_archive: false, explorer: false, settings: false, admin: false },
+  viewer: { dashboard: true, review: false, disputes: false, buyer_invoices: false, reports: false, pnl: false, brokers: false, report_archive: false, explorer: false, settings: false, admin: false },
 };
 
 function appError(message, status = 500) {
@@ -235,6 +237,11 @@ const HANDLER_MODULE_ACCESS = {
   stemPnl: ['pnl'],
   salesforceBrokerRegister: ['brokers'],
   frankfurterUsdCnyRate: ['brokers'],
+  reportExportCreate: ['brokers', 'report_archive'],
+  reportExportsList: ['report_archive'],
+  reportExportRename: ['report_archive'],
+  reportExportDelete: ['report_archive'],
+  reportExportDownload: ['report_archive'],
   salesforceSchema: ['reports', 'explorer', 'settings'],
   salesforceObjectFields: ['reports', 'explorer', 'settings'],
   salesforceFullSchema: ['reports', 'explorer', 'settings'],
@@ -617,6 +624,381 @@ async function adminBootstrap(body = {}) {
   }, { id: null, email: 'bootstrap' });
 
   return { bootstrapped: true, user: { id: user.id, email: user.email, full_name: user.full_name, user_type: user.user_type } };
+}
+
+const REPORT_EXPORT_MAX_BYTES = 15 * 1024 * 1024;
+const REPORT_EXPORT_MIME_TYPE = 'application/vnd.ms-excel';
+const REPORT_TYPE_LABELS = {
+  broker_commission: "Broker's Commission",
+};
+const REPORT_EXPORT_SELECT = 'id,report_type,report_label,file_name,mime_type,size_bytes,checksum_sha256,drive_file_id,drive_web_view_link,drive_web_content_link,status,exported_by,exported_by_email,deleted_by,deleted_by_email,metadata,error_message,created_at,updated_at,deleted_at';
+
+function reportTypeLabel(reportType) {
+  return REPORT_TYPE_LABELS[reportType] || String(reportType || 'Report').replaceAll('_', ' ');
+}
+
+function safeReportFileName(value) {
+  const cleaned = String(value || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 180);
+  if (!cleaned) throw appError('File name is required.', 400);
+  return cleaned.toLowerCase().endsWith('.xls') ? cleaned : `${cleaned}.xls`;
+}
+
+function decodeBase64File(value) {
+  const raw = String(value || '').replace(/^data:[^;]+;base64,/i, '').replace(/\s/g, '');
+  if (!raw) throw appError('XLS content is required.', 400);
+  const buffer = Buffer.from(raw, 'base64');
+  if (!buffer.length) throw appError('XLS content is empty.', 400);
+  if (buffer.length > REPORT_EXPORT_MAX_BYTES) throw appError('XLS file is too large. Maximum size is 15 MB.', 413);
+  return buffer;
+}
+
+function checksumSha256(buffer) {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
+function serializeReportEvent(row = {}) {
+  return {
+    id: row.id,
+    reportExportId: row.report_export_id,
+    eventType: row.event_type,
+    actorUserId: row.actor_user_id,
+    actorEmail: row.actor_email,
+    previousFileName: row.previous_file_name,
+    newFileName: row.new_file_name,
+    metadata: row.metadata || {},
+    createdAt: row.created_at,
+  };
+}
+
+function serializeReportExport(row = {}, events = []) {
+  return {
+    id: row.id,
+    reportType: row.report_type,
+    reportLabel: row.report_label || reportTypeLabel(row.report_type),
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    sizeBytes: Number(row.size_bytes || 0),
+    checksumSha256: row.checksum_sha256,
+    driveFileId: row.drive_file_id,
+    driveWebViewLink: row.drive_web_view_link,
+    driveWebContentLink: row.drive_web_content_link,
+    status: row.status,
+    exportedBy: row.exported_by,
+    exportedByEmail: row.exported_by_email,
+    deletedBy: row.deleted_by,
+    deletedByEmail: row.deleted_by_email,
+    metadata: row.metadata || {},
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    deletedAt: row.deleted_at,
+    events: events.map(serializeReportEvent),
+  };
+}
+
+async function writeReportExportEvent(client, reportExportId, eventType, actor, payload = {}) {
+  const { error } = await client.from('report_export_events').insert({
+    report_export_id: reportExportId,
+    event_type: eventType,
+    actor_user_id: actor?.id || null,
+    actor_email: actor?.email || null,
+    previous_file_name: payload.previousFileName || null,
+    new_file_name: payload.newFileName || null,
+    metadata: payload.metadata || {},
+  });
+  if (error) console.error('Failed to write report export event', error.message);
+}
+
+function googleDriveConfig() {
+  const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
+  const folderId = process.env.GOOGLE_DRIVE_REPORT_FOLDER_ID;
+  if (!clientId || !clientSecret || !refreshToken || !folderId) {
+    throw appError('Missing Google Drive env vars. Set GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN, and GOOGLE_DRIVE_REPORT_FOLDER_ID in Vercel.', 500);
+  }
+  return { clientId, clientSecret, refreshToken, folderId };
+}
+
+async function googleDriveAccessToken() {
+  const { clientId, clientSecret, refreshToken } = googleDriveConfig();
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw appError(data.error_description || data.error || 'Google Drive token refresh failed.', 502);
+  if (!data.access_token) throw appError('Google Drive token refresh did not return an access token.', 502);
+  return data.access_token;
+}
+
+async function googleDriveFetch(url, options = {}) {
+  const accessToken = await googleDriveAccessToken();
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(options.headers || {}),
+    },
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const message = errorData.error?.message || errorData.error_description || errorData.error || `Google Drive request failed: ${response.status}`;
+    throw appError(message, 502);
+  }
+  return response;
+}
+
+async function googleDriveUploadFile({ fileName, mimeType, buffer }) {
+  const { folderId } = googleDriveConfig();
+  const boundary = `salesforce-extension-${Date.now()}`;
+  const metadata = {
+    name: fileName,
+    mimeType,
+    parents: [folderId],
+  };
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`, 'utf8'),
+    Buffer.from(`--${boundary}\r\ncontent-type: ${mimeType}\r\n\r\n`, 'utf8'),
+    buffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8'),
+  ]);
+  const fields = encodeURIComponent('id,name,mimeType,size,webViewLink,webContentLink,createdTime,modifiedTime');
+  const response = await googleDriveFetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=${fields}`, {
+    method: 'POST',
+    headers: { 'content-type': `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  return response.json();
+}
+
+async function googleDriveRenameFile(fileId, fileName) {
+  const fields = encodeURIComponent('id,name,mimeType,size,webViewLink,webContentLink,modifiedTime');
+  const response = await googleDriveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=${fields}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: fileName }),
+  });
+  return response.json();
+}
+
+async function googleDriveTrashFile(fileId) {
+  const fields = encodeURIComponent('id,name,trashed,modifiedTime');
+  const response = await googleDriveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=${fields}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ trashed: true }),
+  });
+  return response.json();
+}
+
+async function googleDriveDownloadFile(fileId) {
+  const response = await googleDriveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function reportExportCreate(body, req) {
+  const { client, profile } = await requireActiveUser(req);
+  const reportType = String(body.reportType || body.report_type || 'xls_report').trim().toLowerCase();
+  const fileName = safeReportFileName(body.fileName || body.file_name);
+  const mimeType = String(body.mimeType || body.mime_type || REPORT_EXPORT_MIME_TYPE);
+  if (mimeType !== REPORT_EXPORT_MIME_TYPE && !mimeType.includes('excel')) throw appError('Only XLS report files are supported.', 400);
+
+  const buffer = decodeBase64File(body.contentBase64 || body.content_base64);
+  const metadata = body.metadata && typeof body.metadata === 'object' ? body.metadata : {};
+  const nowIso = new Date().toISOString();
+  const checksum = checksumSha256(buffer);
+  const insertPayload = {
+    report_type: reportType,
+    report_label: body.reportLabel || body.report_label || reportTypeLabel(reportType),
+    file_name: fileName,
+    mime_type: REPORT_EXPORT_MIME_TYPE,
+    size_bytes: buffer.length,
+    checksum_sha256: checksum,
+    status: 'uploading',
+    exported_by: profile.id,
+    exported_by_email: profile.email,
+    metadata,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+  const { data: inserted, error: insertError } = await client
+    .from('report_exports')
+    .insert(insertPayload)
+    .select(REPORT_EXPORT_SELECT)
+    .single();
+  if (insertError) throw insertError;
+
+  try {
+    const driveFile = await googleDriveUploadFile({ fileName, mimeType: REPORT_EXPORT_MIME_TYPE, buffer });
+    const updatePayload = {
+      drive_file_id: driveFile.id || null,
+      drive_web_view_link: driveFile.webViewLink || null,
+      drive_web_content_link: driveFile.webContentLink || null,
+      status: 'active',
+      error_message: null,
+      updated_at: new Date().toISOString(),
+    };
+    const { data: updated, error: updateError } = await client
+      .from('report_exports')
+      .update(updatePayload)
+      .eq('id', inserted.id)
+      .select(REPORT_EXPORT_SELECT)
+      .single();
+    if (updateError) throw updateError;
+    await writeReportExportEvent(client, updated.id, 'exported', profile, {
+      newFileName: fileName,
+      metadata: { driveFileId: driveFile.id, rowCount: metadata.rowCount, sizeBytes: buffer.length },
+    });
+    return { report: serializeReportExport(updated, []) };
+  } catch (error) {
+    const message = error.message || 'Google Drive upload failed.';
+    const { data: failed } = await client
+      .from('report_exports')
+      .update({
+        status: 'failed',
+        error_message: message,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', inserted.id)
+      .select(REPORT_EXPORT_SELECT)
+      .maybeSingle();
+    await writeReportExportEvent(client, inserted.id, 'upload_failed', profile, {
+      newFileName: fileName,
+      metadata: { error: message, rowCount: metadata.rowCount, sizeBytes: buffer.length },
+    });
+    const failure = appError(`Google Drive upload failed: ${message}`, error.status || 502);
+    failure.report = failed;
+    throw failure;
+  }
+}
+
+async function reportExportsList(body, req) {
+  const { client } = await requireActiveUser(req);
+  const includeDeleted = body.includeDeleted === true || body.include_deleted === true;
+  const limit = Math.max(10, Math.min(Number(body.limit) || 200, 500));
+  let query = client
+    .from('report_exports')
+    .select(REPORT_EXPORT_SELECT)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (!includeDeleted) query = query.eq('status', 'active');
+  const { data: rows, error } = await query;
+  if (error) throw error;
+
+  const ids = (rows || []).map((row) => row.id);
+  let eventsByReport = {};
+  if (ids.length) {
+    const { data: events, error: eventsError } = await client
+      .from('report_export_events')
+      .select('id,report_export_id,event_type,actor_user_id,actor_email,previous_file_name,new_file_name,metadata,created_at')
+      .in('report_export_id', ids)
+      .order('created_at', { ascending: false });
+    if (eventsError) throw eventsError;
+    eventsByReport = (events || []).reduce((acc, event) => {
+      if (!acc[event.report_export_id]) acc[event.report_export_id] = [];
+      acc[event.report_export_id].push(event);
+      return acc;
+    }, {});
+  }
+
+  return {
+    reports: (rows || []).map((row) => serializeReportExport(row, eventsByReport[row.id] || [])),
+  };
+}
+
+async function loadReportExportForAction(client, id) {
+  const { data, error } = await client
+    .from('report_exports')
+    .select(REPORT_EXPORT_SELECT)
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw appError('Report export not found.', 404);
+  if (data.status !== 'active') throw appError('Only active report exports can be managed.', 400);
+  if (!data.drive_file_id) throw appError('This report has no Google Drive file id.', 400);
+  return data;
+}
+
+async function reportExportRename(body, req) {
+  const { client, profile } = await requireActiveUser(req);
+  const id = String(body.id || '').trim();
+  if (!id) throw appError('Report export id is required.', 400);
+  const fileName = safeReportFileName(body.fileName || body.file_name);
+  const current = await loadReportExportForAction(client, id);
+  const driveFile = await googleDriveRenameFile(current.drive_file_id, fileName);
+  const { data: updated, error } = await client
+    .from('report_exports')
+    .update({
+      file_name: driveFile.name || fileName,
+      drive_web_view_link: driveFile.webViewLink || current.drive_web_view_link,
+      drive_web_content_link: driveFile.webContentLink || current.drive_web_content_link,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select(REPORT_EXPORT_SELECT)
+    .single();
+  if (error) throw error;
+  await writeReportExportEvent(client, id, 'renamed', profile, {
+    previousFileName: current.file_name,
+    newFileName: updated.file_name,
+  });
+  return { report: serializeReportExport(updated, []) };
+}
+
+async function reportExportDelete(body, req) {
+  const { client, profile } = await requireActiveUser(req);
+  const id = String(body.id || '').trim();
+  if (!id) throw appError('Report export id is required.', 400);
+  const current = await loadReportExportForAction(client, id);
+  await googleDriveTrashFile(current.drive_file_id);
+  const nowIso = new Date().toISOString();
+  const { data: updated, error } = await client
+    .from('report_exports')
+    .update({
+      status: 'deleted',
+      deleted_at: nowIso,
+      deleted_by: profile.id,
+      deleted_by_email: profile.email,
+      updated_at: nowIso,
+    })
+    .eq('id', id)
+    .select(REPORT_EXPORT_SELECT)
+    .single();
+  if (error) throw error;
+  await writeReportExportEvent(client, id, 'deleted', profile, {
+    previousFileName: current.file_name,
+    metadata: { driveFileId: current.drive_file_id },
+  });
+  return { report: serializeReportExport(updated, []) };
+}
+
+async function reportExportDownload(body, req) {
+  const { client, profile } = await requireActiveUser(req);
+  const id = String(body.id || '').trim();
+  if (!id) throw appError('Report export id is required.', 400);
+  const current = await loadReportExportForAction(client, id);
+  const buffer = await googleDriveDownloadFile(current.drive_file_id);
+  await writeReportExportEvent(client, id, 'downloaded', profile, {
+    newFileName: current.file_name,
+    metadata: { sizeBytes: buffer.length },
+  });
+  return {
+    id: current.id,
+    fileName: current.file_name,
+    mimeType: current.mime_type || REPORT_EXPORT_MIME_TYPE,
+    contentBase64: buffer.toString('base64'),
+  };
 }
 
 async function buyerInvoiceCollectionList(body, req) {
@@ -5095,6 +5477,11 @@ const handlers = {
   salesforceDisputePartyUpdate,
   stemPnl: stemPnlFull,
   frankfurterUsdCnyRate,
+  reportExportCreate,
+  reportExportsList,
+  reportExportRename,
+  reportExportDelete,
+  reportExportDownload,
   adminUsersList,
   adminAuditLogs,
   adminUserSave,

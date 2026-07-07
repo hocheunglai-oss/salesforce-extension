@@ -14,6 +14,7 @@ export const APP_MODULES = [
   { id: 'reports', label: 'Report Builder', path: '/reports', sortOrder: 50 },
   { id: 'pnl', label: 'Stem P&L', path: '/pnl', sortOrder: 60 },
   { id: 'brokers', label: "Broker's Commission", path: '/brokers', sortOrder: 70 },
+  { id: 'report_archive', label: 'Reports Archive', path: '/report-archive', sortOrder: 75 },
   { id: 'explorer', label: 'Data Explorer', path: '/explorer', sortOrder: 80 },
   { id: 'settings', label: 'Settings', path: '/settings', sortOrder: 90 },
   { id: 'admin', label: 'Admin Control', path: '/admin', sortOrder: 100 },
