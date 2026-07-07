@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FileBarChart2, Database, PanelLeftClose, PanelLeftOpen, Settings, TrendingUp, DollarSign, ClipboardCheck, ReceiptText, AlertTriangle, ListFilter, ShieldCheck, LogOut, History, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, FileBarChart2, Database, PanelLeftClose, PanelLeftOpen, Settings, TrendingUp, DollarSign, ClipboardCheck, ReceiptText, AlertTriangle, ListFilter, ShieldCheck, LogOut, History, RefreshCw, FileCheck2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/AuthContext';
 import { APP_VERSION, APP_VERSION_HISTORY } from '@/lib/appVersion';
@@ -19,6 +19,7 @@ const navItems = [
   },
   { to: '/review', label: 'Exception Review', icon: ClipboardCheck, moduleId: 'review' },
   { to: '/disputes', label: 'Dispute Management', icon: AlertTriangle, moduleId: 'disputes' },
+  { to: '/disputes-beta', label: 'Dispute Beta', icon: FileCheck2, moduleId: 'disputes' },
   { to: '/buyer-invoices', label: 'Outstanding Buyer Invoices', icon: ReceiptText, moduleId: 'buyer_invoices' },
   { to: '/reports', label: 'Report Builder', icon: FileBarChart2, moduleId: 'reports' },
   { to: '/pnl', label: 'Stem P&L', icon: TrendingUp, moduleId: 'pnl' },

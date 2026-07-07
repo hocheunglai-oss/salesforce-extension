@@ -17,6 +17,7 @@ import ReportArchive from '@/pages/ReportArchive';
 import ReviewQueue from '@/pages/ReviewQueue';
 import BuyerInvoices from '@/pages/BuyerInvoices';
 import DisputeManagement from '@/pages/DisputeManagement';
+import DisputeBeta from '@/pages/DisputeBeta';
 import Login from '@/pages/Login';
 import AdminControl from '@/pages/AdminControl';
 
@@ -75,6 +76,7 @@ const AuthenticatedApp = () => {
           <Route path="/pnl" element={<ModuleGate moduleId="pnl"><StemPnlReport /></ModuleGate>} />
           <Route path="/review" element={<ModuleGate moduleId="review"><ReviewQueue /></ModuleGate>} />
           <Route path="/disputes" element={<ModuleGate moduleId="disputes"><DisputeManagement /></ModuleGate>} />
+          <Route path="/disputes-beta" element={<ModuleGate moduleId="disputes"><DisputeBeta /></ModuleGate>} />
           <Route path="/buyer-invoices" element={<ModuleGate moduleId="buyer_invoices"><BuyerInvoices /></ModuleGate>} />
           <Route path="/brokers" element={<ModuleGate moduleId="brokers"><BrokerRegister /></ModuleGate>} />
           <Route path="/report-archive" element={<ModuleGate moduleId="report_archive"><ReportArchive /></ModuleGate>} />

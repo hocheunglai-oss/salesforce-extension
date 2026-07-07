@@ -1,6 +1,16 @@
-export const APP_VERSION = '1.0.0.16';
+export const APP_VERSION = '1.0.0.17';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.0.17',
+    releasedAt: '2026-07-07',
+    title: 'Dispute Beta workflow',
+    changes: [
+      'Added a separate Dispute Beta page while keeping the existing Dispute Management page unchanged.',
+      'Added Supabase-backed trader actions, dispute administrator approval, execution tracking, audit events, and settlement P&L.',
+      'Approved beta actions write back only summary status, description, and deduction amount to existing Salesforce dispute records.',
+    ],
+  },
   {
     version: '1.0.0.16',
     releasedAt: '2026-07-07',
