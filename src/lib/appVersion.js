@@ -1,6 +1,17 @@
-export const APP_VERSION = '1.0.0.18';
+export const APP_VERSION = '1.0.0.19';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.0.19',
+    releasedAt: '2026-07-08',
+    title: 'Dispute Beta queue and P&L labels',
+    changes: [
+      'Renamed Dispute Beta settlement labels to Dispute P&L and added STEM P&L including dispute impact to the manage modal header.',
+      'Removed duplicate receivable display from the Dispute Beta manage modal header.',
+      'Added delivery date, buyer invoice due date, and supplier invoice due/product quantity details to the Dispute Beta queue.',
+      'Capitalized Dispute Beta close reason labels while preserving compatibility with previously saved lowercase values.',
+    ],
+  },
   {
     version: '1.0.0.18',
     releasedAt: '2026-07-08',

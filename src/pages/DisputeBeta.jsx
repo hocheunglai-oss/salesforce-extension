@@ -26,12 +26,12 @@ const ACTION_TYPES = [
   { value: 'close_buyer_dispute', label: 'Close dispute with buyer', partyType: 'buyer' },
 ];
 const SUPPLIER_CLOSE_REASONS = [
-  'full payment received from buyer',
-  'settlement agreement concluded with credit note / written agreement enclosed',
+  'Full payment received from buyer',
+  'Settlement agreement concluded with credit note / written agreement enclosed',
 ];
 const BUYER_CLOSE_REASONS = [
-  'full payment received from buyer',
-  'settlement agreement concluded with written agreement enclosed',
+  'Full payment received from buyer',
+  'Settlement agreement concluded with written agreement enclosed',
 ];
 const BALANCE_PAYMENT_INSTRUCTIONS = ['No Balance Payment', 'Pay Immediately', 'Pay with next supplier invoice'];
 const DEFAULT_ACTION = {
@@ -74,6 +74,17 @@ const numberOrNull = (value) => {
 
 const actionLabel = (type) => ACTION_TYPES.find((item) => item.value === type)?.label || type || 'Action';
 const actionPartyType = (type) => ACTION_TYPES.find((item) => item.value === type)?.partyType || 'supplier';
+
+const stemBasePnl = (stem) => {
+  const direct = numberOrNull(stem?._Stem_Base_Pnl);
+  if (direct != null) return direct;
+  const buyer = numberOrNull(stem?._Buyer_Finance_Row?.buyerInvoiceAmount ?? stem?.Total_Invoice_Amount__c);
+  const supplier = numberOrNull(stem?.Total_Invoiced_Amount_From_Suppliers__c);
+  if (buyer == null || supplier == null) return null;
+  return buyer - supplier;
+};
+
+const supplierDueRows = (row) => Array.isArray(row?._Supplier_Invoice_Due_Rows) ? row._Supplier_Invoice_Due_Rows : [];
 
 function Metric({ label, value, tone = 'default' }) {
   const toneClass = tone === 'red' ? 'text-red-600' : tone === 'green' ? 'text-emerald-600' : tone === 'amber' ? 'text-amber-600' : 'text-foreground';
@@ -457,6 +468,8 @@ function ManageBetaModal({ stem, open, onClose, onSaved, isDisputeAdmin }) {
   const canApprove = isDisputeAdmin && caseRow?.approvalStatus === 'Pending Approval';
   const canExecute = caseRow?.approvalStatus === 'Approved';
   const financials = settlementFinancials(actions);
+  const basePnl = stemBasePnl(stem);
+  const stemPnlIncludingDispute = basePnl == null ? null : basePnl + financials.settlementPnl;
 
   const refreshAfter = async (response) => {
     if (response?.case) setCaseRow(response.case);
@@ -538,8 +551,8 @@ function ManageBetaModal({ stem, open, onClose, onSaved, isDisputeAdmin }) {
           </div>
           <Summary label="Buyer" value={stem._Buyer_Name || '—'} />
           <Summary label="Supplier(s)" value={stem._Supplier_Names || '—'} />
-          <Summary label="Receivable" value={fmtMoney(stem.Receivable_Balance__c)} align="right" />
-          <Summary label="Net Settlement P&L" value={fmtMoney(financials.settlementPnl)} align="right" strong tone={financials.settlementPnl >= 0 ? 'green' : 'red'} />
+          <Summary label="STEM P&L (Including Dispute P&L)" value={fmtMoney(stemPnlIncludingDispute)} align="right" strong tone={(stemPnlIncludingDispute || 0) >= 0 ? 'green' : 'red'} />
+          <Summary label="Dispute P&L" value={fmtMoney(financials.settlementPnl)} align="right" strong tone={financials.settlementPnl >= 0 ? 'green' : 'red'} />
         </div>
 
         <div className="space-y-4 overflow-y-auto px-5 py-4">
@@ -623,15 +636,15 @@ function ManageBetaModal({ stem, open, onClose, onSaved, isDisputeAdmin }) {
             <div className="rounded-xl border border-border bg-muted/10 p-4">
               <StepHeading
                 step="3"
-                title="Settlement Credit Notes & P&L"
-                description="Buyer credit notes reduce P&L. Supplier credit notes and supplier deductions increase P&L."
-              />
+        title="Settlement Credit Notes & Dispute P&L"
+        description="Buyer credit notes reduce P&L. Supplier credit notes and supplier deductions increase P&L."
+      />
               <div className="mt-3 grid grid-cols-[1fr_auto] gap-2 text-sm">
                 <div className="text-muted-foreground">Buyer instruction impact</div><div className="font-semibold tabular-nums">{fmtMoney(financials.buyerImpact)}</div>
                 <div className="text-muted-foreground">Supplier deduction impact</div><div className="font-semibold tabular-nums">{fmtMoney(financials.supplierImpact)}</div>
                 <div className="text-muted-foreground">Buyer credit note impact</div><div className="font-semibold tabular-nums">{fmtMoney(financials.buyerCreditNoteImpact)}</div>
                 <div className="text-muted-foreground">Supplier credit note impact</div><div className="font-semibold tabular-nums">{fmtMoney(financials.supplierCreditNoteImpact)}</div>
-                <div className="border-t border-border pt-2 font-semibold">Net settlement P&L</div><div className="border-t border-border pt-2 font-semibold tabular-nums">{fmtMoney(financials.settlementPnl)}</div>
+                <div className="border-t border-border pt-2 font-semibold">Dispute P&L</div><div className="border-t border-border pt-2 font-semibold tabular-nums">{fmtMoney(financials.settlementPnl)}</div>
               </div>
             </div>
             <div className="rounded-xl border border-border bg-muted/10 p-4">
@@ -732,6 +745,9 @@ export default function DisputeBeta() {
         row._Buyer_Name,
         row._Supplier_Names,
         row._Product_Names,
+        row.Delivery_Date__c,
+        row._Buyer_Invoice_Due_Date,
+        supplierDueRows(row).map((dueRow) => [dueRow.supplierName, dueRow.invoiceName, dueRow.productQuantityLabel, dueRow.dueDate].filter(Boolean).join(' ')).join(' '),
         row.Dispute_Status__c,
         beta.case?.latestNote,
       ].some((value) => textValue(value, '').toLowerCase().includes(q));
@@ -781,7 +797,7 @@ export default function DisputeBeta() {
         <Metric label="Beta Cases" value={totals.count.toLocaleString()} tone="red" />
         <Metric label="Pending Approval" value={totals.pending.toLocaleString()} tone="amber" />
         <Metric label="Approved / Execution" value={totals.approved.toLocaleString()} />
-        <Metric label="Settlement P&L" value={fmtMoney(totals.pnl)} tone={totals.pnl >= 0 ? 'green' : 'red'} />
+        <Metric label="Dispute P&L" value={fmtMoney(totals.pnl)} tone={totals.pnl >= 0 ? 'green' : 'red'} />
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4">
@@ -825,15 +841,18 @@ export default function DisputeBeta() {
           <StateBlock icon={Loader2} title="Loading Dispute Beta..." description="Fetching disputed STEMs and workflow state." />
         ) : filteredRows.length ? (
           <div className="max-h-[68vh] overflow-auto">
-            <table className="w-full min-w-[1180px] text-xs">
+            <table className="w-full min-w-[1680px] text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/40">
                   <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-muted-foreground">Stem</th>
                   <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-muted-foreground">Workflow</th>
                   <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-muted-foreground">Buyer</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-muted-foreground">Delivery Date</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-muted-foreground">Buyer Invoice Due</th>
                   <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-muted-foreground">Supplier(s)</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-muted-foreground">Supplier Invoice Due / Product</th>
                   <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-muted-foreground">Salesforce Status</th>
-                  <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-right font-semibold uppercase tracking-wide text-muted-foreground">Settlement P&L</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-right font-semibold uppercase tracking-wide text-muted-foreground">Dispute P&L</th>
                   <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-muted-foreground">Approval</th>
                   <th className="sticky top-0 z-10 bg-card px-3 py-2.5 text-right font-semibold uppercase tracking-wide text-muted-foreground">Manage</th>
                 </tr>
@@ -853,7 +872,26 @@ export default function DisputeBeta() {
                         <span className={cn('rounded-full border px-2 py-0.5 text-xs font-semibold', stageTone(stage))}>{stage}</span>
                       </td>
                       <td className="max-w-[220px] truncate px-3 py-2.5 text-muted-foreground" title={row._Buyer_Name || ''}>{row._Buyer_Name || '—'}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">{fmtDate(row.Delivery_Date__c)}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">{fmtDate(row._Buyer_Invoice_Due_Date || row.Buyer_Pay_Term_Date__c)}</td>
                       <td className="max-w-[260px] truncate px-3 py-2.5 text-muted-foreground" title={row._Supplier_Names || ''}>{row._Supplier_Names || '—'}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground">
+                        <div className="max-w-[360px] space-y-1">
+                          {supplierDueRows(row).slice(0, 4).map((dueRow, dueIndex) => (
+                            <div key={`${dueRow.supplierInvoiceId || dueRow.supplierName || dueIndex}-${dueIndex}`} className="leading-tight">
+                              <div className="font-medium text-foreground">
+                                {fmtDate(dueRow.dueDate)}
+                                {dueRow.supplierName ? <span className="text-muted-foreground"> · {dueRow.supplierName}</span> : null}
+                              </div>
+                              <div className="truncate text-[11px]" title={dueRow.productQuantityLabel || dueRow.invoiceName || ''}>
+                                {[dueRow.productQuantityLabel, dueRow.invoiceName].filter(Boolean).join(' · ') || '—'}
+                              </div>
+                            </div>
+                          ))}
+                          {supplierDueRows(row).length > 4 && <div className="text-[11px] text-muted-foreground">+{supplierDueRows(row).length - 4} more</div>}
+                          {!supplierDueRows(row).length && <span>—</span>}
+                        </div>
+                      </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">{row.Dispute_Status__c || '—'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums">{fmtMoney(beta.case?.settlementPnl || 0)}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">

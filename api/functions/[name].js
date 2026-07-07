@@ -1743,17 +1743,23 @@ const DISPUTE_BETA_ACTION_LABELS = {
   close_buyer_dispute: 'Close dispute with buyer',
 };
 const DISPUTE_BETA_SUPPLIER_CLOSE_REASONS = [
-  'full payment received from buyer',
-  'settlement agreement concluded with credit note / written agreement enclosed',
+  'Full payment received from buyer',
+  'Settlement agreement concluded with credit note / written agreement enclosed',
 ];
 const DISPUTE_BETA_BUYER_CLOSE_REASONS = [
-  'full payment received from buyer',
-  'settlement agreement concluded with written agreement enclosed',
+  'Full payment received from buyer',
+  'Settlement agreement concluded with written agreement enclosed',
 ];
 const DISPUTE_BETA_BALANCE_PAYMENT_INSTRUCTIONS = ['No Balance Payment', 'Pay Immediately', 'Pay with next supplier invoice'];
 const DISPUTE_BETA_CASE_SELECT = 'id,stem_id,stem_name,buyer_name,supplier_names,current_salesforce_status,workflow_status,approval_status,latest_note,submitted_by,submitted_by_email,submitted_at,approved_by,approved_by_email,approved_at,rejected_by,rejected_by_email,rejected_at,rejection_reason,closed_by,closed_by_email,closed_at,settlement_financials,settlement_pnl,salesforce_writeback_status,salesforce_writeback_error,created_at,updated_at';
 const DISPUTE_BETA_ACTION_SELECT = 'id,case_id,stem_id,party_type,party_name,dispute_ids,action_type,action_label,amount,special_sell_price,special_buy_price,quantity,quantity_unit,close_reason,balance_payment_instruction,description,requires_attachment,execution_status,executed_by,executed_by_email,executed_at,execution_note,created_by,created_by_email,updated_by,updated_by_email,created_at,updated_at';
 const DISPUTE_BETA_EVENT_SELECT = 'id,case_id,action_id,stem_id,event_type,note,metadata,actor_user_id,actor_email,created_at';
+
+function canonicalDisputeBetaCloseReason(value, allowed = []) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  return allowed.find((reason) => reason.toLowerCase() === raw.toLowerCase()) || raw;
+}
 
 function normalizedUrl(value) {
   const raw = String(value || '').trim();
@@ -4729,6 +4735,8 @@ async function salesforceDisputeStems(body) {
     .find((field) => supplierInvoiceFieldNames.includes(field));
   const supplierInvoiceAmountFields = ['Invoice_Amount__c', 'Calculated_Amount__c', 'Amount__c', 'Total_Amount__c']
     .filter((field) => supplierInvoiceFieldNames.includes(field));
+  const supplierInvoiceDueDateFields = ['Invoice_Due_Date__c', 'Due_Date__c', 'Payment_Due_Date__c', 'Pay_Term_Date__c', 'Supplier_Pay_Term_Date__c']
+    .filter((field) => supplierInvoiceFieldNames.includes(field));
   const supplierInvoiceSupplierFields = ['Supplier__c', 'Expected_Supplier__c', 'Substitute_Supplier__c']
     .filter((field) => supplierInvoiceFieldNames.includes(field));
   const supplierInvoiceSupplierNameRelationships = supplierInvoiceSupplierFields
@@ -4747,6 +4755,9 @@ async function salesforceDisputeStems(body) {
     'Delivery_Date__c',
     'Expected_Delivery_Date__c',
     'ETA_Start_Date__c',
+    'Buyer_Pay_Term_Date__c',
+    'Invoice_Due_Date__c',
+    'Due_Date__c',
     'Buyer_Name__c',
     'Buyer__c',
     'Dispute__c',
@@ -4816,8 +4827,10 @@ async function salesforceDisputeStems(body) {
             const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
             const supplierInvoiceSelectFields = [
               'STEM__c',
+              'Id',
               'Name',
               ...supplierInvoiceAmountFields,
+              ...supplierInvoiceDueDateFields,
               supplierInvoicePayableField,
               supplierInvoiceFieldNames.includes('Supplier_Name__c') ? 'Supplier_Name__c' : null,
               ...supplierInvoiceSupplierFields,
@@ -4895,10 +4908,13 @@ async function salesforceDisputeStems(body) {
         const productNames = new Set();
         const supplierProductPairs = [];
         const supplierProductPairKeys = new Set();
+        const supplierInvoiceProductRowsById = new Map();
         const supplierLineBuyBySupplier = new Map();
         const uninvoicedSupplierLineBuyBySupplier = new Map();
+        let lineSellTotal = 0;
         let supplierLineBuy = 0;
         let uninvoicedSupplierLineBuy = 0;
+        let extraSellTotal = 0;
         let extraCostBuy = 0;
         let invoicedExtraCostBuy = 0;
         let sellOnlyExtraSell = 0;
@@ -4909,6 +4925,16 @@ async function salesforceDisputeStems(body) {
           if (item.Supplier_Name__c) supplierNames.add(item.Supplier_Name__c);
           const productName = item['Product__r']?.Name;
           if (productName) productNames.add(productName);
+          const quantityLabel = lineItemQuantityLabel(item, stemHasDelivery);
+          if (item.Supplier_Invoice__c) {
+            const invoiceRows = supplierInvoiceProductRowsById.get(item.Supplier_Invoice__c) || [];
+            invoiceRows.push({
+              productName: productName || item.Name || 'Product',
+              quantityLabel,
+              supplierName: item.Supplier_Name__c || null,
+            });
+            supplierInvoiceProductRowsById.set(item.Supplier_Invoice__c, invoiceRows);
+          }
           if (item.Supplier_Name__c || productName) {
             const pairKey = `${item.Supplier_Name__c || ''}\u0000${productName || ''}`;
             if (!supplierProductPairKeys.has(pairKey)) {
@@ -4919,6 +4945,7 @@ async function salesforceDisputeStems(body) {
               });
             }
           }
+          lineSellTotal += lineSellAmount(item, stemHasDelivery);
           const buy = lineBuyAmount(item, stemHasDelivery);
           supplierLineBuy += buy;
           if (item.Supplier_Name__c) {
@@ -4944,6 +4971,7 @@ async function salesforceDisputeStems(body) {
           if (item.Cancelled__c) continue;
           const buy = extraBuyAmount(item, stemHasDelivery);
           const sell = extraSellAmount(item, stemHasDelivery);
+          extraSellTotal += sell;
           if (item.Supplier_Invoice__c) {
             invoicedExtraCostBuy += buy;
           } else {
@@ -4963,9 +4991,15 @@ async function salesforceDisputeStems(body) {
         const calculatedSupplierInvoice = unmatchedSellOnlyExtra > 0 && supplierOverstatement > 0 && supplierOverstatement <= unmatchedSellOnlyExtra + 0.05
           ? qlikSupplierCost
           : rawSupplier;
+        const calculatedBuyerInvoice = lineSellTotal + extraSellTotal;
+        const buyerInvoiceAmount = !stem.Delivery_Date__c && calculatedBuyerInvoice > 0
+          ? calculatedBuyerInvoice
+          : stem.Total_Invoice_Amount__c;
+        const stemBasePnl = buyerInvoiceAmount == null ? null : Number(buyerInvoiceAmount || 0) - Number(calculatedSupplierInvoice || 0);
         const supplierInvoicePayable = supplierInvoicePayableByStem[stem.Id];
         const payableBalance = stem.Payable_Balance__c ?? (supplierInvoicePayable != null ? supplierInvoicePayable : null);
         const supplierFinanceByKey = new Map();
+        const supplierInvoiceDueRows = [];
         const addSupplierFinance = (supplierName, invoiceAmount = 0, supplierPayableBalance = 0) => {
           const supplierKey = supplierMatchKey(supplierName);
           if (!supplierKey) return;
@@ -4989,6 +5023,32 @@ async function salesforceDisputeStems(body) {
           const invoiceAmount = invoiceAmountField ? Number(invoice[invoiceAmountField] || 0) : 0;
           const supplierPayableBalance = supplierInvoicePayableField ? Number(invoice[supplierInvoicePayableField] || 0) : 0;
           addSupplierFinance(supplierName, invoiceAmount, supplierPayableBalance);
+          const dueDateField = supplierInvoiceDueDateFields.find((field) => invoice[field]);
+          const dueDate = dueDateField ? invoice[dueDateField] : null;
+          const productRows = supplierInvoiceProductRowsById.get(invoice.Id) || [];
+          if (productRows.length) {
+            for (const productRow of productRows) {
+              supplierInvoiceDueRows.push({
+                supplierInvoiceId: invoice.Id || null,
+                invoiceName: invoice.Name || null,
+                supplierName: productRow.supplierName || supplierName,
+                dueDate,
+                productName: productRow.productName,
+                quantityLabel: productRow.quantityLabel,
+                productQuantityLabel: [productRow.productName, productRow.quantityLabel].filter(Boolean).join(' - '),
+              });
+            }
+          } else {
+            supplierInvoiceDueRows.push({
+              supplierInvoiceId: invoice.Id || null,
+              invoiceName: invoice.Name || null,
+              supplierName,
+              dueDate,
+              productName: null,
+              quantityLabel: null,
+              productQuantityLabel: null,
+            });
+          }
         }
         const supplementalLineBuyBySupplier = (hasSupplierInvoice || supplierInvoices.length)
           ? uninvoicedSupplierLineBuyBySupplier
@@ -5070,7 +5130,7 @@ async function salesforceDisputeStems(body) {
           : supplierFinanceOnlyRows;
         const buyerFinanceRow = {
           buyerName: stem.Buyer_Name__c || stem['Account__r']?.Name || stem.Buyer__c || null,
-          buyerInvoiceAmount: stem.Total_Invoice_Amount__c ?? null,
+          buyerInvoiceAmount: buyerInvoiceAmount ?? null,
           receivableBalance: stem.Receivable_Balance__c ?? null,
           disputeRows: groupedBuyerDisputes,
           status: groupedBuyerDisputes.map((dispute) => dispute.status).filter(Boolean).join('\n') || null,
@@ -5079,6 +5139,7 @@ async function salesforceDisputeStems(body) {
 
         return {
           ...stem,
+          Total_Invoice_Amount__c: buyerInvoiceAmount ?? stem.Total_Invoice_Amount__c ?? null,
           Total_Invoiced_Amount_From_Suppliers__c: calculatedSupplierInvoice || stem.Total_Invoiced_Amount_From_Suppliers__c || null,
           _Supplier_Names: [...supplierNames].sort().join(', ') || null,
           _Product_Names: [...productNames].sort().join(', ') || null,
@@ -5089,6 +5150,9 @@ async function salesforceDisputeStems(body) {
           _Supplier_Disputes: supplierDisputes,
           _Supplier_Dispute_Rows: supplierFinanceRows,
           _Supplier_Finance_Rows_All: supplierFinanceRowsAll,
+          _Buyer_Invoice_Due_Date: stem.Invoice_Due_Date__c || stem.Due_Date__c || stem.Buyer_Pay_Term_Date__c || null,
+          _Supplier_Invoice_Due_Rows: supplierInvoiceDueRows,
+          _Stem_Base_Pnl: stemBasePnl,
           _Buyer_Dispute_Label: groupedBuyerDisputes.map((dispute) => [dispute.buyerName, dispute.status, dispute.description].filter(Boolean).join(': ')).join('\n') || null,
           _Supplier_Dispute_Label: supplierFinanceRows.map((dispute) => [
             dispute.supplierName,
@@ -5210,6 +5274,12 @@ function serializeDisputeBetaCase(row) {
 
 function serializeDisputeBetaAction(row) {
   if (!row) return null;
+  const actionType = row.action_type;
+  const closeReason = actionType === 'close_supplier_dispute'
+    ? canonicalDisputeBetaCloseReason(row.close_reason, DISPUTE_BETA_SUPPLIER_CLOSE_REASONS)
+    : actionType === 'close_buyer_dispute'
+      ? canonicalDisputeBetaCloseReason(row.close_reason, DISPUTE_BETA_BUYER_CLOSE_REASONS)
+      : row.close_reason;
   return {
     id: row.id,
     caseId: row.case_id,
@@ -5217,14 +5287,14 @@ function serializeDisputeBetaAction(row) {
     partyType: row.party_type,
     partyName: row.party_name || '',
     disputeIds: Array.isArray(row.dispute_ids) ? row.dispute_ids : [],
-    actionType: row.action_type,
-    actionLabel: row.action_label || DISPUTE_BETA_ACTION_LABELS[row.action_type] || row.action_type,
+    actionType,
+    actionLabel: row.action_label || DISPUTE_BETA_ACTION_LABELS[actionType] || actionType,
     amount: row.amount == null ? null : Number(row.amount),
     specialSellPrice: row.special_sell_price == null ? null : Number(row.special_sell_price),
     specialBuyPrice: row.special_buy_price == null ? null : Number(row.special_buy_price),
     quantity: row.quantity == null ? null : Number(row.quantity),
     quantityUnit: row.quantity_unit || 'MT',
-    closeReason: row.close_reason || null,
+    closeReason: closeReason || null,
     balancePaymentInstruction: row.balance_payment_instruction || null,
     description: row.description || '',
     requiresAttachment: row.requires_attachment === true,
@@ -5271,7 +5341,12 @@ function normalizeDisputeBetaAction(input = {}, caseRow, profile = {}) {
   const amount = decimalOrNull(input.amount);
   if (actionType === 'deduct_specific_amount' && amount == null) throw appError('Deduction amount is required.', 400);
   if (actionType === 'issue_buyer_credit_note' && amount == null) throw appError('Credit note amount is required.', 400);
-  const closeReason = String(input.closeReason || input.close_reason || '').trim() || null;
+  const closeReasonInput = String(input.closeReason || input.close_reason || '').trim();
+  const closeReason = actionType === 'close_supplier_dispute'
+    ? canonicalDisputeBetaCloseReason(closeReasonInput, DISPUTE_BETA_SUPPLIER_CLOSE_REASONS)
+    : actionType === 'close_buyer_dispute'
+      ? canonicalDisputeBetaCloseReason(closeReasonInput, DISPUTE_BETA_BUYER_CLOSE_REASONS)
+      : (closeReasonInput || null);
   if (actionType === 'close_supplier_dispute' && !DISPUTE_BETA_SUPPLIER_CLOSE_REASONS.includes(closeReason)) {
     throw appError('Valid supplier close reason is required.', 400);
   }
