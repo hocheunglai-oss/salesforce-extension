@@ -4318,14 +4318,17 @@ async function buyerInvoicePaymentReminderPrepare(body, req) {
       stemIds: group.rows.map((row) => row.stemId),
     };
   });
+  const firstPreparedGroup = preparedGroups.find((group) => group.key === firstGroup.key)
+    || preparedGroups[0]
+    || { to: firstGroup.to, cc: firstGroup.cc, bcc: firstGroup.bcc };
   return {
     selected,
     candidates,
-    to: firstGroup.to,
+    to: firstPreparedGroup.to,
     allTo: routing.to,
-    cc: renderPaymentReminderEmailList(settings.paymentReminderCc, context),
-    bcc: renderPaymentReminderEmailList(settings.paymentReminderBcc, context),
-    autoBcc: firstGroup.bcc,
+    cc: firstPreparedGroup.cc,
+    bcc: firstPreparedGroup.bcc,
+    autoBcc: firstPreparedGroup.bcc,
     subject: settings.paymentReminderSubject,
     body: settings.paymentReminderBody,
     preview: { html: email.html, text: email.text },

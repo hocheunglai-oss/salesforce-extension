@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.0.15';
+export const APP_VERSION = '1.0.0.16';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.0.16',
+    releasedAt: '2026-07-07',
+    title: 'Payment reminder prepare fix',
+    changes: [
+      'Fixed the payment reminder prepare error caused by an obsolete recipient-template variable.',
+      'Payment reminder previews continue to use editable per-batch To, CC, and BCC fields.',
+    ],
+  },
   {
     version: '1.0.0.15',
     releasedAt: '2026-07-07',
