@@ -4024,7 +4024,7 @@ function paymentReminderRowRouting(row) {
       mode,
       to: brokerEmails,
       cc: [],
-      bcc: brokerEmails,
+      bcc: [],
       primaryRecipientName: brokerNames[0] || row?.buyerBrokerNames || 'Broker',
       warnings: row?.buyerBrokerRoutingWarnings || [],
     };
@@ -4043,7 +4043,7 @@ function paymentReminderRowRouting(row) {
     mode: 'buyer_only',
     to: buyerRecipients,
     cc: [],
-    bcc: [],
+    bcc: brokerEmails,
     primaryRecipientName: row?.buyerName || 'Customer',
     warnings: row?.buyerBrokerRoutingWarnings || [],
   };

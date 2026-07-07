@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.0.11';
+export const APP_VERSION = '1.0.0.12';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.0.12',
+    releasedAt: '2026-07-07',
+    title: 'Buyer-only reminder broker BCC',
+    changes: [
+      'Broker-only outstanding payment reminders no longer automatically BCC the broker email address.',
+      'Buyer-only outstanding payment reminders now automatically BCC broker email addresses when buyer broker routing data is present.',
+    ],
+  },
   {
     version: '1.0.0.11',
     releasedAt: '2026-07-07',
