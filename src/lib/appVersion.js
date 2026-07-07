@@ -1,6 +1,17 @@
-export const APP_VERSION = '1.0.0.22';
+export const APP_VERSION = '1.0.0.23';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.0.23',
+    releasedAt: '2026-07-08',
+    title: 'Incoming Payment table workflow',
+    changes: [
+      'Made Incoming Payment rows open Stem Detail when a linked STEM exists.',
+      'Removed the Payment Details column and reordered payment records around type, dates, delay, sender, group, and STEM.',
+      'Added buyer invoice due date and payment delay for buyer payments.',
+      'Changed the default Incoming Payment filters to today-to-today and all payment types.',
+    ],
+  },
   {
     version: '1.0.0.22',
     releasedAt: '2026-07-08',

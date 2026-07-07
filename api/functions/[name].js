@@ -3909,8 +3909,7 @@ async function incomingPaymentsList(body) {
   const settings = await loadIncomingPaymentSettings();
   const threshold = Number(settings.fullyPaidThreshold ?? DEFAULT_INCOMING_PAYMENT_SETTINGS.fullyPaidThreshold);
   const today = dateOnly(new Date());
-  const currentYear = today ? Number(today.slice(0, 4)) : new Date().getFullYear();
-  const dateFrom = dateOnly(body.dateFrom || body.date_from || `${currentYear}-01-01`);
+  const dateFrom = dateOnly(body.dateFrom || body.date_from || today);
   const dateTo = dateOnly(body.dateTo || body.date_to || today);
   const limit = Math.max(100, Math.min(Number(body.limit) || 5000, 10000));
 
@@ -4019,10 +4018,12 @@ async function incomingPaymentsList(body) {
       'Receivable_Balance__c',
       'Payable_Balance__c',
       'Payment_Date__c',
+      'Payment_Term__c',
       'Invoice_Due_Date__c',
       'Buyer_Pay_Term_Date__c',
       'Due_Date__c',
       'Delivery_Date__c',
+      'Delivery_Date_Or_Expected__c',
       'Expected_Delivery_Date__c',
     ]),
   ];
@@ -4062,6 +4063,17 @@ async function incomingPaymentsList(body) {
     } else if (stem) {
       type = 'Buyer Payment';
     }
+    const paymentDate = dateField ? payment[dateField] || null : payment.CreatedDate || null;
+    const buyerInvoiceDueDate = type === 'Buyer Payment' && stem
+      ? calculatedBuyerPayTermDate(stem)
+        || stem.Invoice_Due_Date__c
+        || stem.Due_Date__c
+        || stem.Buyer_Pay_Term_Date__c
+        || null
+      : null;
+    const delayDays = type === 'Buyer Payment' && buyerInvoiceDueDate && paymentDate
+      ? daysBetween(buyerInvoiceDueDate, dateOnly(paymentDate))
+      : null;
     const status = incomingPaymentStatus({ type, amount, stem, supplierInvoice, threshold });
     const receivable = incomingPaymentNumber(stem?.Receivable_Balance__c);
     const buyerName = incomingPaymentBuyerName(stem);
@@ -4100,7 +4112,9 @@ async function incomingPaymentsList(body) {
       paymentName: incomingPaymentDisplayName({ payment, referenceFields, stem, supplierInvoice, type }),
       paymentDisplayName: incomingPaymentDisplayName({ payment, referenceFields, stem, supplierInvoice, type }),
       salesforcePaymentName: payment.Name || null,
-      paymentDate: dateField ? payment[dateField] || null : payment.CreatedDate || null,
+      paymentDate,
+      invoiceDueDate: buyerInvoiceDueDate,
+      delayDays,
       type,
       isIncoming: type === 'Buyer Payment' || type === 'Supplier Refund',
       amount,

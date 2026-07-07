@@ -6,6 +6,7 @@ import PageHeader from '@/components/common/PageHeader';
 import StateBlock from '@/components/common/StateBlock';
 import TableShell from '@/components/common/TableShell';
 import StatCard from '@/components/dashboard/StatCard';
+import StemDetailModal from '@/components/dashboard/StemDetailModal';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -60,10 +61,6 @@ function todayHongKong() {
   return `${map.year}-${map.month}-${map.day}`;
 }
 
-function startOfCurrentYear() {
-  return `${todayHongKong().slice(0, 4)}-01-01`;
-}
-
 function fmtMoney(value, currency = 'USD') {
   const number = Number(value);
   if (!Number.isFinite(number)) return '-';
@@ -86,17 +83,17 @@ function csvSafe(value) {
 }
 
 function downloadCsv(rows) {
-  const headers = ['Date', 'Type', 'Payment Details', 'Salesforce Payment Name', 'Party', 'STEM', 'Buyer Group', 'Amount', 'Receivable Balance', 'Payable Balance', 'Status', 'Reference'];
+  const headers = ['Type', 'Date', 'Invoice Due Date', 'Delay', 'From', 'Group', 'STEM', 'Amount', 'Receivable Balance', 'Payable Balance', 'Status', 'Reference'];
   const lines = [
     headers.map(csvSafe).join(','),
     ...rows.map((row) => [
-      row.paymentDate || '',
       row.type || '',
-      row.paymentDisplayName || row.paymentName || '',
-      row.salesforcePaymentName || '',
+      row.paymentDate || '',
+      row.invoiceDueDate || (row.type === 'Buyer Payment' ? '' : 'N/A'),
+      row.delayDays == null ? (row.type === 'Buyer Payment' ? '' : 'N/A') : `${row.delayDays} Days`,
       row.partyName || '',
-      row.stemName || '',
       row.buyerGroupName || '',
+      row.stemName || '',
       row.amount ?? '',
       row.receivableBalance ?? '',
       row.payableBalance ?? '',
@@ -124,9 +121,9 @@ function StatusBadge({ row }) {
 export default function IncomingPayments() {
   const { toast } = useToast();
   const { isAdministrator } = useAuth();
-  const [dateFrom, setDateFrom] = useState(startOfCurrentYear);
+  const [dateFrom, setDateFrom] = useState(todayHongKong);
   const [dateTo, setDateTo] = useState(todayHongKong);
-  const [typeFilter, setTypeFilter] = useState('incoming');
+  const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [data, setData] = useState(null);
@@ -138,6 +135,7 @@ export default function IncomingPayments() {
   const [allocationTarget, setAllocationTarget] = useState(null);
   const [allocationDraft, setAllocationDraft] = useState({ targetStem: '', amount: '', note: '' });
   const [allocationLoading, setAllocationLoading] = useState(false);
+  const [selectedStemId, setSelectedStemId] = useState(null);
 
   const load = async (options = {}) => {
     setLoading(true);
@@ -170,9 +168,6 @@ export default function IncomingPayments() {
     const query = search.trim().toLowerCase();
     if (query) {
       result = result.filter((row) => [
-        row.paymentName,
-        row.paymentDisplayName,
-        row.salesforcePaymentName,
         row.partyName,
         row.stemName,
         row.keyStem,
@@ -333,12 +328,13 @@ export default function IncomingPayments() {
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-card">
                   <TableRow>
-                    <TableHead className="whitespace-nowrap">Date</TableHead>
                     <TableHead>Type</TableHead>
-                    <TableHead>Payment Details</TableHead>
-                    <TableHead>Party</TableHead>
+                    <TableHead className="whitespace-nowrap">Date</TableHead>
+                    <TableHead className="whitespace-nowrap">Invoice Due Date</TableHead>
+                    <TableHead className="whitespace-nowrap">Delay</TableHead>
+                    <TableHead>From</TableHead>
+                    <TableHead>Group</TableHead>
                     <TableHead>STEM</TableHead>
-                    <TableHead>Buyer Group</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                     <TableHead className="text-right">Receivable</TableHead>
                     <TableHead className="text-right">Payable</TableHead>
@@ -349,34 +345,34 @@ export default function IncomingPayments() {
                 <TableBody>
                   {loading && (
                     <TableRow>
-                      <TableCell colSpan={11}>
+                      <TableCell colSpan={12}>
                         <StateBlock icon={Loader2} title="Loading payment records" description="Reading Salesforce Payment__c records." />
                       </TableCell>
                     </TableRow>
                   )}
                   {!loading && !visibleRows.length && (
                     <TableRow>
-                      <TableCell colSpan={11}>
+                      <TableCell colSpan={12}>
                         <StateBlock icon={Search} title="No payments found" description="Adjust the filters or refresh the Salesforce data." />
                       </TableCell>
                     </TableRow>
                   )}
                   {!loading && visibleRows.map((row) => (
-                    <TableRow key={row.id} className="hover:bg-muted/40">
-                      <TableCell className="whitespace-nowrap text-sm">{fmtDate(row.paymentDate)}</TableCell>
+                    <TableRow
+                      key={row.id}
+                      className={cn('hover:bg-muted/40', row.stemId && 'cursor-pointer')}
+                      onClick={() => row.stemId && setSelectedStemId(row.stemId)}
+                    >
                       <TableCell className="whitespace-nowrap text-sm font-medium">{row.type}</TableCell>
-                      <TableCell className="max-w-[240px] text-sm">
-                        <div className="truncate font-medium text-foreground">{row.paymentDisplayName || row.paymentName || '-'}</div>
-                        {row.salesforcePaymentName && row.salesforcePaymentName !== (row.paymentDisplayName || row.paymentName) && (
-                          <div className="truncate text-xs text-muted-foreground">SF: {row.salesforcePaymentName}</div>
-                        )}
-                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">{fmtDate(row.paymentDate)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">{row.type === 'Buyer Payment' ? fmtDate(row.invoiceDueDate) : 'N/A'}</TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">{row.type === 'Buyer Payment' ? (row.delayDays == null ? '-' : `${row.delayDays} Days`) : 'N/A'}</TableCell>
                       <TableCell className="max-w-[220px] text-sm">
                         <div className="font-medium text-foreground">{row.partyName || '-'}</div>
                         {row.supplierInvoiceName && <div className="text-xs text-muted-foreground">{row.supplierInvoiceName}</div>}
                       </TableCell>
-                      <TableCell className="min-w-[240px] text-sm">{row.stemName || '-'}</TableCell>
                       <TableCell className="min-w-[160px] text-sm">{row.buyerGroupName || '-'}</TableCell>
+                      <TableCell className="min-w-[240px] text-sm">{row.stemName || '-'}</TableCell>
                       <TableCell className="whitespace-nowrap text-right font-medium">{fmtMoney(row.amount, row.currency)}</TableCell>
                       <TableCell className={cn('whitespace-nowrap text-right', Number(row.receivableBalance) < 0 && 'font-semibold text-violet-700')}>
                         {row.receivableBalance == null ? '-' : fmtMoney(row.receivableBalance, row.currency)}
@@ -526,6 +522,13 @@ export default function IncomingPayments() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <StemDetailModal
+        stemId={selectedStemId}
+        open={!!selectedStemId}
+        onClose={() => setSelectedStemId(null)}
+        onUpdated={() => load({ force: true })}
+      />
     </div>
   );
 }
