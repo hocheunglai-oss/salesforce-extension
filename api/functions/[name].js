@@ -4023,6 +4023,123 @@ function incomingPaymentTypeFromContext(payment, { amount, stem, supplierInvoice
   return 'Unmatched';
 }
 
+function amountNearlyEqual(left, right, tolerance = 0.05) {
+  const a = Number(left);
+  const b = Number(right);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return Math.abs(Math.abs(a) - Math.abs(b)) <= tolerance;
+}
+
+function paymentSearchToken(payment, fields = []) {
+  return normalizedFieldToken(uniqueTextList([...fields, 'Name'])
+    .filter((field) => payment?.[field] != null && payment[field] !== '')
+    .map((field) => payment[field])
+    .join(' '));
+}
+
+function addBrokerCommissionGroup(groupsByStem, group) {
+  if (!group?.stemId || !group.brokerType || !group.amount) return;
+  const key = [
+    group.stemId,
+    group.brokerType,
+    group.brokerId || group.brokerName || 'unknown',
+  ].join('::');
+  if (!groupsByStem[group.stemId]) groupsByStem[group.stemId] = [];
+  const existing = groupsByStem[group.stemId].find((item) => item.key === key);
+  if (existing) {
+    existing.amount += Number(group.amount || 0);
+    return;
+  }
+  groupsByStem[group.stemId].push({
+    key,
+    stemId: group.stemId,
+    brokerId: group.brokerId || null,
+    brokerName: group.brokerName || group.brokerId || group.brokerType,
+    brokerType: group.brokerType,
+    side: group.side,
+    amount: Number(group.amount || 0),
+  });
+}
+
+function buildBrokerCommissionGroups({ stemMap = {}, lineItems = [], buyerBrokers = [], accountMap = {} } = {}) {
+  const groupsByStem = {};
+  const buyerBrokersByStem = {};
+  for (const broker of buyerBrokers) {
+    if (!broker.STEM__c) continue;
+    if (!buyerBrokersByStem[broker.STEM__c]) buyerBrokersByStem[broker.STEM__c] = [];
+    buyerBrokersByStem[broker.STEM__c].push(broker);
+  }
+
+  for (const item of lineItems) {
+    if (!item.STEM__c || item.Cancelled__c) continue;
+    const stem = stemMap[item.STEM__c];
+    if (!stem) continue;
+    const qty = financialQuantity(item, !!stem.Delivery_Date__c);
+    const supplierAmount = brokerAmount(item.Suppliers_Brokers_Commission_Per_Unit__c, qty);
+    if (item.Supplier_Broker__c && supplierAmount !== 0) {
+      addBrokerCommissionGroup(groupsByStem, {
+        stemId: item.STEM__c,
+        brokerId: item.Supplier_Broker__c,
+        brokerName: accountMap[item.Supplier_Broker__c] || accountMap[String(item.Supplier_Broker__c).slice(0, 15)] || item.Supplier_Broker__c,
+        brokerType: 'Supplier Broker',
+        side: 'supplier',
+        amount: supplierAmount,
+      });
+    }
+
+    const buyerBrokerId = item.Buyers_Broker__c || item.Buyer_Broker__c;
+    const hasSupplierBrokerUnit = Number(item.Suppliers_Brokers_Commission_Per_Unit__c || 0) !== 0;
+    const buyerPerUnitAmount = brokerAmount(item.Buyers_Brokers_Commission_Per_Unit__c, qty);
+    const buyerLumpsumAmount = Number(item.Buyers_Brokers_Commission_Lumpsum__c || 0);
+    const buyerAmount = buyerLumpsumAmount || buyerPerUnitAmount;
+    if (buyerBrokerId && buyerAmount !== 0) {
+      addBrokerCommissionGroup(groupsByStem, {
+        stemId: item.STEM__c,
+        brokerId: buyerBrokerId,
+        brokerName: accountMap[buyerBrokerId] || accountMap[String(buyerBrokerId).slice(0, 15)] || buyerBrokerId,
+        brokerType: 'Buyer Broker',
+        side: 'buyer',
+        amount: buyerAmount,
+      });
+    }
+
+    const secondaryAmount = !hasSupplierBrokerUnit && item.Commission_Cost__c != null
+      ? Number(item.Commission_Cost__c || 0) - buyerPerUnitAmount
+      : 0;
+    const secondaryBrokers = (buyerBrokersByStem[item.STEM__c] || []).filter((broker) => {
+      if (!broker.Buyer_Broker__c) return true;
+      if (!buyerBrokerId) return true;
+      return String(broker.Buyer_Broker__c).slice(0, 15) !== String(buyerBrokerId).slice(0, 15);
+    });
+    if (secondaryAmount > 0 && secondaryBrokers.length > 0) {
+      for (const broker of secondaryBrokers) {
+        addBrokerCommissionGroup(groupsByStem, {
+          stemId: item.STEM__c,
+          brokerId: broker.Buyer_Broker__c || null,
+          brokerName: accountMap[broker.Buyer_Broker__c] || accountMap[String(broker.Buyer_Broker__c || '').slice(0, 15)] || broker.Buyer_Broker__c || 'Secondary Buyer Broker',
+          brokerType: 'Secondary Buyer Broker',
+          side: 'buyer',
+          amount: secondaryAmount,
+        });
+      }
+    }
+  }
+  return groupsByStem;
+}
+
+function findBrokerCommissionPaymentMatch(payment, amount, groups = [], textFields = []) {
+  if (!groups.length || amount == null) return null;
+  const amountMatches = groups.filter((group) => amountNearlyEqual(amount, group.amount));
+  if (!amountMatches.length) return null;
+  if (amountMatches.length === 1) return amountMatches[0];
+  const token = paymentSearchToken(payment, textFields);
+  if (token) {
+    const textMatch = amountMatches.find((group) => normalizedFieldToken(group.brokerName) && token.includes(normalizedFieldToken(group.brokerName)));
+    if (textMatch) return textMatch;
+  }
+  return amountMatches[0];
+}
+
 function incomingPaymentReference(payment, referenceFields = []) {
   const value = referenceFields
     .map((field) => payment[field])
@@ -4366,6 +4483,48 @@ async function incomingPaymentsList(body) {
     }));
     for (const stem of stemChunks.flat()) stemMap[stem.Id] = stem;
   }
+  let brokerCommissionGroupsByStem = {};
+  if (stemIds.length) {
+    const [lineItemChunks, buyerBrokerChunks] = await Promise.all([
+      Promise.all(chunkIds(stemIds).map((chunk) => {
+        const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
+        return queryRows(`
+          SELECT Id, STEM__c, Cancelled__c, Quantity__c, Quantity_Delivered_Per_BDN__c,
+                 Quantity_Max__c, Quantity_in_MT__c, Is_Quantity_Range__c,
+                 Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c,
+                 Buyers_Broker__c, Buyer_Broker__c, Buyers_Brokers_Commission_Per_Unit__c,
+                 Buyers_Brokers_Commission_Lumpsum__c, Commission_Cost__c
+          FROM STEM_Line_Item__c
+          WHERE STEM__c IN (${inList})
+          LIMIT 5000
+        `, { limit: 5000, softFail: true });
+      })),
+      Promise.all(chunkIds(stemIds).map((chunk) => {
+        const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
+        return queryRows(`
+          SELECT Id, STEM__c, Buyer_Broker__c
+          FROM STEM_Buyer_Broker__c
+          WHERE STEM__c IN (${inList})
+          LIMIT 5000
+        `, { limit: 5000, softFail: true });
+      })),
+    ]);
+    const brokerLineItems = lineItemChunks.flat();
+    const brokerRows = buyerBrokerChunks.flat();
+    const brokerAccountIds = [...new Set([
+      ...brokerLineItems.map((item) => item.Supplier_Broker__c).filter(Boolean),
+      ...brokerLineItems.map((item) => item.Buyers_Broker__c || item.Buyer_Broker__c).filter(Boolean),
+      ...brokerRows.map((item) => item.Buyer_Broker__c).filter(Boolean),
+    ])];
+    const accountMap = await namesByIds('Account', brokerAccountIds);
+    for (const [id, name] of Object.entries(accountMap)) accountMap[String(id).slice(0, 15)] = name;
+    brokerCommissionGroupsByStem = buildBrokerCommissionGroups({
+      stemMap,
+      lineItems: brokerLineItems,
+      buyerBrokers: brokerRows,
+      accountMap,
+    });
+  }
 
   const availableStemKeys = new Set();
   const availableBalancesByGroup = {};
@@ -4375,7 +4534,12 @@ async function incomingPaymentsList(body) {
     const stemId = payment.STEM__c || supplierInvoice?.STEM__c || null;
     const stem = stemId ? stemMap[stemId] || null : null;
     const amount = amountField ? incomingPaymentNumber(payment[amountField]) : null;
-    const type = incomingPaymentLooksBankCharge(payment, {
+    const brokerCommissionMatch = stem?.Id
+      ? findBrokerCommissionPaymentMatch(payment, amount, brokerCommissionGroupsByStem[stem.Id] || [], [...referenceFields, ...directionFields, ...typeFields, ...statusFields])
+      : null;
+    const type = brokerCommissionMatch
+      ? 'Broker Commission'
+      : incomingPaymentLooksBankCharge(payment, {
       referenceFields,
       directionFields,
       typeFields,
@@ -4474,10 +4638,11 @@ async function incomingPaymentsList(body) {
       statusTone: status.tone,
       paymentObjectAmountField: amountField,
       paymentObjectSupplierInvoiceFields: supplierInvoiceLookupFields,
+      brokerCommissionMatch,
     };
   });
   const rows = allRows
-    .filter((row) => row.type !== 'Supplier Payment' && row.type !== 'Bank Charge')
+    .filter((row) => row.type !== 'Supplier Payment' && row.type !== 'Bank Charge' && row.type !== 'Broker Commission')
     .map((row) => ({ ...row, bankCharges: [] }));
   const ungroupedBankCharges = [];
   for (const charge of allRows.filter((row) => row.type === 'Bank Charge')) {
@@ -6716,18 +6881,40 @@ async function salesforceStemDetailFull(body) {
 
   const [recordRaw, lineItems, extraCosts, buyerBrokers] = await Promise.all([
     sfRequest(`/sobjects/stem__c/${actualStemId}`).then(cleanRecord),
-    queryRows(`SELECT Id, Name, Product__c, Product__r.Name, Product__r.Family, Supplier_Name__c, BDN_Company__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_Max__c, Quantity_in_MT__c, Is_Quantity_Range__c, Price_Per_Unit__c, Cost_Per_Unit__c, Unit_Sell_At__c, Unit_Buy_At__c, Unit_Cost__c, Subtotal_Sell_At__c, Subtotal_Buy_At__c, Total_Price__c, Total_Cost__c, Supplier_Invoice__c, Payment_Term__c, BDN_Number__c, Cancelled__c, Buyers_Brokers_Commission_Per_Unit__c, Commission_Cost__c, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c, Suppliers_Brokers_Commission_Lumpsum__c, Offer_Line_Item__r.UnitPrice, Offer_Line_Item__r.Supplier_Unit_Price__c FROM STEM_Line_Item__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
+    queryRows(`SELECT Id, Name, STEM__c, Product__c, Product__r.Name, Product__r.Family, Supplier_Name__c, BDN_Company__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_Max__c, Quantity_in_MT__c, Is_Quantity_Range__c, Price_Per_Unit__c, Cost_Per_Unit__c, Unit_Sell_At__c, Unit_Buy_At__c, Unit_Cost__c, Subtotal_Sell_At__c, Subtotal_Buy_At__c, Total_Price__c, Total_Cost__c, Supplier_Invoice__c, Payment_Term__c, BDN_Number__c, Cancelled__c, Buyers_Broker__c, Buyer_Broker__c, Buyers_Brokers_Commission_Per_Unit__c, Buyers_Brokers_Commission_Lumpsum__c, Commission_Cost__c, Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c, Suppliers_Brokers_Commission_Lumpsum__c, Offer_Line_Item__r.UnitPrice, Offer_Line_Item__r.Supplier_Unit_Price__c FROM STEM_Line_Item__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
     queryRows(`SELECT Id, Name, Description__c, Product2Id__c, Product2Id__r.Name, Product2Id__r.Family, Supplier_Name__c, Quantity__c, Quantity_Delivered_Per_BDN__c, Quantity_in_MT__c, Quantity_Range_Max__c, Is_Quantity_Range__c, Unit_Price__c, Unit_Cost__c, Line_Total__c, Line_Total_Buy__c, Supplier_Invoice__c, Supplier_Issued__c, Payment_Term__c, Cancelled__c FROM STEM_Extra_Cost__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
-    queryRows(`SELECT Id, Buyer_Broker__c, Refcode_Index__c, Exported__c, Commission_Lumpsum__c, STEM_Line_Item__r.Id FROM STEM_Buyer_Broker__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
+    queryRows(`SELECT Id, STEM__c, Buyer_Broker__c, Refcode_Index__c, Exported__c, Commission_Lumpsum__c, STEM_Line_Item__r.Id FROM STEM_Buyer_Broker__c WHERE STEM__c = '${actualStemId}' ORDER BY CreatedDate ASC`, { softFail: true }),
   ]);
   const supplierInvoiceIds = [...new Set([
     ...lineItems.map((item) => item.Supplier_Invoice__c),
     ...extraCosts.map((item) => item.Supplier_Invoice__c),
   ].filter(isSalesforceId))];
   const supplierInvoiceNameMap = await namesByIds('Supplier_Invoice__c', supplierInvoiceIds);
+  const supplierInvoiceSupplierNameMap = {};
+  for (const item of [...lineItems, ...extraCosts]) {
+    if (item.Supplier_Invoice__c && item.Supplier_Name__c && !supplierInvoiceSupplierNameMap[item.Supplier_Invoice__c]) {
+      supplierInvoiceSupplierNameMap[item.Supplier_Invoice__c] = item.Supplier_Name__c;
+    }
+  }
+
+  const brokerAccountIds = [...new Set([
+    ...lineItems.map((item) => item.Supplier_Broker__c).filter(Boolean),
+    ...lineItems.map((item) => item.Buyers_Broker__c || item.Buyer_Broker__c).filter(Boolean),
+    ...buyerBrokers.map((item) => item.Buyer_Broker__c).filter(Boolean),
+  ])];
+  const brokerAccountMap = await namesByIds('Account', brokerAccountIds);
+  for (const [id, name] of Object.entries(brokerAccountMap)) brokerAccountMap[String(id).slice(0, 15)] = name;
+  const brokerCommissionGroupsByStem = buildBrokerCommissionGroups({
+    stemMap: { [actualStemId]: recordRaw },
+    lineItems,
+    buyerBrokers,
+    accountMap: brokerAccountMap,
+  });
+  const brokerCommissionGroups = brokerCommissionGroupsByStem[actualStemId] || [];
 
   let supplierInvoicePayments = [];
   let buyerInvoicePayments = [];
+  const brokerCommissionPaymentMap = new Map();
   const paymentDescribe = await salesforceObjectFields({ objectName: 'Payment__c' }).catch(() => ({ fields: [] }));
   const paymentFields = paymentDescribe.fields || [];
   const paymentFieldNames = new Set(paymentFields.map((field) => field.name));
@@ -6776,6 +6963,18 @@ async function salesforceStemDetailFull(body) {
       });
     const supplierPaymentMap = new Map();
     const buyerPaymentMap = new Map();
+    const addBrokerCommissionPayment = (payment, brokerMatch) => {
+      if (!payment?.Id || !brokerMatch) return;
+      supplierPaymentMap.delete(payment.Id);
+      buyerPaymentMap.delete(payment.Id);
+      if (!brokerCommissionPaymentMap.has(brokerMatch.key)) {
+        brokerCommissionPaymentMap.set(brokerMatch.key, {
+          ...brokerMatch,
+          payments: [],
+        });
+      }
+      brokerCommissionPaymentMap.get(brokerMatch.key).payments.push(decoratePayment(payment));
+    };
     const addSupplierPayment = (payment, supplierInvoiceId = null) => {
       if (!payment?.Id) return;
       const invoiceId = supplierInvoiceId || incomingPaymentSupplierInvoiceId(payment, supplierInvoiceLookupFields);
@@ -6783,6 +6982,9 @@ async function salesforceStemDetailFull(body) {
         ...decoratePayment(payment, invoiceId),
         _Supplier_Invoice_Name: invoiceId
           ? supplierInvoiceNameMap[invoiceId] || invoiceId
+          : 'Supplier payment',
+        _Supplier_Name: invoiceId
+          ? supplierInvoiceSupplierNameMap[invoiceId] || supplierInvoiceNameMap[invoiceId] || invoiceId
           : 'Supplier payment',
       });
     };
@@ -6816,6 +7018,11 @@ async function salesforceStemDetailFull(body) {
       `, { limit: 2000, softFail: true });
       for (const payment of stemPayments) {
         const amount = paymentAmountField ? incomingPaymentNumber(payment[paymentAmountField]) : null;
+        const brokerCommissionMatch = findBrokerCommissionPaymentMatch(payment, amount, brokerCommissionGroups, [...paymentReferenceFields, ...paymentDirectionFields, ...paymentTypeFields, ...paymentStatusFields]);
+        if (brokerCommissionMatch) {
+          addBrokerCommissionPayment(payment, brokerCommissionMatch);
+          continue;
+        }
         const bankCharge = incomingPaymentLooksBankCharge(payment, {
           referenceFields: paymentReferenceFields,
           directionFields: paymentDirectionFields,
@@ -6852,14 +7059,14 @@ async function salesforceStemDetailFull(body) {
   const buyerBrokersWithNames = await Promise.all(
     buyerBrokers.map(async (bb) => ({
       ...bb,
-      _Buyer_Broker_Name: bb.Buyer_Broker__c ? await resolveViaQuery('Account', bb.Buyer_Broker__c, 'Name') : null,
+      _Buyer_Broker_Name: bb.Buyer_Broker__c ? brokerAccountMap[bb.Buyer_Broker__c] || brokerAccountMap[String(bb.Buyer_Broker__c).slice(0, 15)] || await resolveViaQuery('Account', bb.Buyer_Broker__c, 'Name') : null,
     }))
   );
 
   const supplierBrokerIds = [...new Set(lineItems.map((li) => li.Supplier_Broker__c).filter(Boolean))];
   const supplierBrokerNameMap = {};
   await Promise.all(supplierBrokerIds.map(async (id) => {
-    supplierBrokerNameMap[id] = await resolveViaQuery('Account', id, 'Name');
+    supplierBrokerNameMap[id] = brokerAccountMap[id] || brokerAccountMap[String(id).slice(0, 15)] || await resolveViaQuery('Account', id, 'Name');
   }));
 
   const stemHasDelivery = !!recordRaw.Delivery_Date__c;
@@ -6937,6 +7144,10 @@ async function salesforceStemDetailFull(body) {
     buyerBrokers: buyerBrokersWithNames,
     supplierInvoicePayments,
     buyerInvoicePayments,
+    brokerCommissionPayments: [...brokerCommissionPaymentMap.values()].map((group) => ({
+      ...group,
+      payments: group.payments.sort((a, b) => String(b.Date__c || '').localeCompare(String(a.Date__c || ''))),
+    })),
   };
 }
 

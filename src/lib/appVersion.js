@@ -1,6 +1,17 @@
-export const APP_VERSION = '1.0.5';
+export const APP_VERSION = '1.0.6';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.6',
+    releasedAt: '2026-07-08',
+    title: 'Broker commission payment split',
+    changes: [
+      'Excluded broker commission payments from Receivable Payments.',
+      'Added buyer, secondary buyer, and supplier broker commission paid-date tables in Stem Detail.',
+      'Changed Supplier Invoice Paid Dates to show Supplier instead of Supplier Invoice.',
+      'Renamed Buyer Pay Term Date to Buyer Invoice Due Date in Stem Detail.',
+    ],
+  },
   {
     version: '1.0.5',
     releasedAt: '2026-07-08',

@@ -72,7 +72,7 @@ const SECTIONS = [
       { key: 'Delivery_Date__c', label: 'Delivery Date', fmt: fmtDate },
       { key: 'Expected_Delivery_Date__c', label: 'Expected Delivery', fmt: fmtDate },
       { key: 'Due_Date__c', label: 'Due Date', fmt: fmtDate },
-      { key: '_Buyer_Pay_Term_Date', label: 'Buyer Pay Term Date', fmt: fmtDate },
+      { key: '_Buyer_Pay_Term_Date', label: 'Buyer Invoice Due Date', fmt: fmtDate },
       { key: 'Payment_Date__c', label: 'Payment Date', fmt: fmtDate },
       { key: 'Original_Invoice_Sent_Date__c', label: 'Invoice Sent Date', fmt: fmtDate },
       { key: 'Original_BDN_Sent_Date__c', label: 'BDN Sent Date', fmt: fmtDate },
@@ -525,12 +525,12 @@ function PnlBanner({ record, lineItems, extraCosts, buyerBrokers }) {
   );
 }
 
-function PaymentRowsTable({ rows, type }) {
+function PaymentRowsTable({ rows, type, emptyMessage }) {
   const isSupplier = type === 'supplier';
   if (!rows.length) {
     return (
       <div className="rounded-lg border border-dashed border-border bg-muted/10 px-3 py-4 text-sm text-muted-foreground">
-        {isSupplier ? 'No supplier invoice paid dates found.' : 'No buyer invoice received dates found.'}
+        {emptyMessage || (isSupplier ? 'No supplier invoice paid dates found.' : 'No buyer invoice received dates found.')}
       </div>
     );
   }
@@ -540,7 +540,7 @@ function PaymentRowsTable({ rows, type }) {
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-border bg-muted/40">
-            {isSupplier && <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left font-semibold text-muted-foreground">Supplier Invoice</th>}
+            {isSupplier && <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left font-semibold text-muted-foreground">Supplier</th>}
             <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right font-semibold text-muted-foreground">Amount</th>
             <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left font-semibold text-muted-foreground">
               {isSupplier ? 'Paid Date' : 'Received Date'}
@@ -550,13 +550,37 @@ function PaymentRowsTable({ rows, type }) {
         <tbody>
           {rows.map((payment, index) => (
             <tr key={payment.Id || `${type}-${index}`} className={`border-b border-border/40 ${index % 2 ? 'bg-muted/10' : ''}`}>
-              {isSupplier && <td className="px-3 py-2 font-medium text-foreground">{payment._Supplier_Invoice_Name || payment.Supplier_Invoice__c || '—'}</td>}
+              {isSupplier && <td className="px-3 py-2 font-medium text-foreground">{payment._Supplier_Name || payment._Supplier_Invoice_Name || payment.Supplier_Invoice__c || '—'}</td>}
               <td className="px-3 py-2 text-right font-medium text-foreground">{payment._Payment_Amount != null ? fmtMoney(payment._Payment_Amount) : '—'}</td>
               <td className="px-3 py-2 text-foreground">{fmtDate(payment.Date__c)}</td>
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function BrokerCommissionPaymentTables({ groups, type }) {
+  if (!groups.length) return null;
+  return (
+    <div className="space-y-3">
+      {groups.map((group) => {
+        const title = `${group.brokerType} (${group.brokerName || 'Broker'}) Commission Invoice Paid Dates`;
+        return (
+          <div key={group.key || `${group.brokerType}-${group.brokerName}`}>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h4>
+              <span className="text-xs text-muted-foreground">{group.payments?.length || 0} date{group.payments?.length === 1 ? '' : 's'}</span>
+            </div>
+            <PaymentRowsTable
+              rows={group.payments || []}
+              type={type}
+              emptyMessage="No broker commission paid dates found."
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -575,7 +599,10 @@ function FinancialMetric({ label, value, tone = 'default' }) {
   );
 }
 
-function FinancialSummaryCard({ record, supplierPayments, buyerPayments }) {
+function FinancialSummaryCard({ record, supplierPayments, buyerPayments, brokerCommissionPayments }) {
+  const buyerBrokerGroups = (brokerCommissionPayments || []).filter((group) => group.brokerType === 'Buyer Broker');
+  const secondaryBuyerBrokerGroups = (brokerCommissionPayments || []).filter((group) => group.brokerType === 'Secondary Buyer Broker');
+  const supplierBrokerGroups = (brokerCommissionPayments || []).filter((group) => group.brokerType === 'Supplier Broker');
   return (
     <div className="rounded-xl bg-muted/20 p-4 md:col-span-2 xl:col-span-3">
       <SectionHeader title="Financials" />
@@ -596,10 +623,12 @@ function FinancialSummaryCard({ record, supplierPayments, buyerPayments }) {
             </div>
             <PaymentRowsTable rows={buyerPayments} type="buyer" />
           </div>
+          <BrokerCommissionPaymentTables groups={buyerBrokerGroups} type="buyer" />
+          <BrokerCommissionPaymentTables groups={secondaryBuyerBrokerGroups} type="buyer" />
         </div>
         <div className="space-y-3 rounded-xl border border-amber-100 bg-amber-50/40 p-3">
           <div>
-            <div className="text-sm font-semibold text-foreground">Supplier Side</div>
+            <div className="text-sm font-semibold text-foreground">Seller Side</div>
             <div className="text-xs text-muted-foreground">Supplier invoice value, open payable, and paid dates.</div>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -613,6 +642,7 @@ function FinancialSummaryCard({ record, supplierPayments, buyerPayments }) {
             </div>
             <PaymentRowsTable rows={supplierPayments} type="supplier" />
           </div>
+          <BrokerCommissionPaymentTables groups={supplierBrokerGroups} type="supplier" />
         </div>
       </div>
     </div>
@@ -626,6 +656,7 @@ export default function StemDetailModal({ stemId, open, onClose }) {
   const [buyerBrokers, setBuyerBrokers] = useState([]);
   const [supplierInvoicePayments, setSupplierInvoicePayments] = useState([]);
   const [buyerInvoicePayments, setBuyerInvoicePayments] = useState([]);
+  const [brokerCommissionPayments, setBrokerCommissionPayments] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentsError, setDocumentsError] = useState(null);
@@ -642,6 +673,7 @@ export default function StemDetailModal({ stemId, open, onClose }) {
     setBuyerBrokers([]);
     setSupplierInvoicePayments([]);
     setBuyerInvoicePayments([]);
+    setBrokerCommissionPayments([]);
     setDocuments([]);
     setDocumentsError(null);
     setDocumentsLoading(true);
@@ -658,6 +690,7 @@ export default function StemDetailModal({ stemId, open, onClose }) {
         setBuyerBrokers(res.data.buyerBrokers || []);
         setSupplierInvoicePayments(res.data.supplierInvoicePayments || []);
         setBuyerInvoicePayments(res.data.buyerInvoicePayments || []);
+        setBrokerCommissionPayments(res.data.brokerCommissionPayments || []);
       }
       setLoading(false);
     });
@@ -763,7 +796,7 @@ export default function StemDetailModal({ stemId, open, onClose }) {
               <div className="space-y-7">
                 {/* Info sections in a 3-col grid */}
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  <FinancialSummaryCard record={record} supplierPayments={supplierInvoicePayments} buyerPayments={buyerInvoicePayments} />
+                  <FinancialSummaryCard record={record} supplierPayments={supplierInvoicePayments} buyerPayments={buyerInvoicePayments} brokerCommissionPayments={brokerCommissionPayments} />
                   {SECTIONS.map(section => {
                     const rows = section.fields.filter(f => {
                       const v = record[f.key];
