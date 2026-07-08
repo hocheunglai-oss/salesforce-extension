@@ -978,7 +978,7 @@ export default function IncomingPayments() {
         meta={`${visibleBuyerCiaRows.length.toLocaleString()} visible of ${buyerCiaRows.length.toLocaleString()} unpaid CIA buyer invoice stems`}
         className="mb-4"
       >
-        <div className="max-h-[32vh] overflow-auto">
+        <div className={cn(visibleBuyerCiaRows.length > 5 ? 'max-h-[360px] overflow-auto' : 'overflow-visible')}>
           <ReorderableDataTable
             tableKey="incoming-payment-cia-invoices"
             columns={ciaColumns}

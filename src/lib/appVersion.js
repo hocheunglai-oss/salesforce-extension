@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.23';
+export const APP_VERSION = '1.0.24';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.24',
+    releasedAt: '2026-07-08',
+    title: 'Buyer CIA table height behavior',
+    changes: [
+      'Changed Incoming Payment Buyer CIA Invoices table to auto-fit up to five visible records.',
+      'Enabled scrolling for the Buyer CIA Invoices table only when more than five records are visible.',
+    ],
+  },
   {
     version: '1.0.23',
     releasedAt: '2026-07-08',
