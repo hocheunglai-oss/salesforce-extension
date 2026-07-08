@@ -444,11 +444,9 @@ export default function IncomingPayments() {
       const delivery = incomingPaymentSmtpCredentials(emailSettings.from || DEFAULT_EMAIL_SETTINGS.from);
       if (!delivery.credentials) {
         toast({
-          title: 'Email sender not configured',
-          description: 'Save and enable the Internal SMTP sender in Settings > Email Senders, then try the interest invoice request again.',
-          variant: 'destructive',
+          title: 'Using server email sender',
+          description: 'No Internal SMTP sender is saved in this browser. The request will use the system-wide RESEND_API_KEY or server SMTP setting in Vercel.',
         });
-        return;
       }
       const res = await appClient.functions.invoke('incomingPaymentInterestInvoiceRequest', {
         paymentId,

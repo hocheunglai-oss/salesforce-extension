@@ -827,6 +827,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
   const [templateSaving, setTemplateSaving] = useState(false);
   const [error, setError] = useState(null);
   const [templateMessage, setTemplateMessage] = useState('');
+  const [templateEditing, setTemplateEditing] = useState(false);
   const [data, setData] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const reminderBodyEditorRef = useRef(null);
@@ -845,6 +846,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
       setLoading(true);
       setError(null);
       setTemplateMessage('');
+      setTemplateEditing(false);
       const res = await appClient.functions.invoke('buyerInvoicePaymentReminderPrepare', {
         stemId: row.stemId,
         daysAhead,
@@ -1006,6 +1008,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
     setRestoredAt(null);
   };
   const insertInvoiceTableToken = () => {
+    if (!templateEditing) return;
     const editor = reminderBodyEditorRef.current?.getEditor?.();
     if (!editor) {
       updateForm('body', `${removeInvoiceTableTokenHtml(form.body)}<p>${INVOICE_TABLE_TOKEN}</p>`);
@@ -1092,8 +1095,19 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
       setBaseDraftValue((prev) => prev ? { ...prev, form: { ...prev.form, subject: form.subject, body: form.body } } : prev);
       clearDraft(draftKey);
       setTemplateMessage('Payment reminder template saved.');
+      setTemplateEditing(false);
     }
     setTemplateSaving(false);
+  };
+
+  const cancelPaymentReminderTemplateChanges = () => {
+    setForm((prev) => ({
+      ...prev,
+      subject: baseDraftValue?.form?.subject ?? prev.subject,
+      body: baseDraftValue?.form?.body ?? prev.body,
+    }));
+    setTemplateMessage('');
+    setTemplateEditing(false);
   };
 
   return (
@@ -1255,98 +1269,129 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
               </div>
 
               <div className="space-y-3 rounded-xl border border-border bg-background/40 p-4">
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground">Email</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Review recipients, subject, content, and the inline invoice table before sending.
-                  </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">Email review</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Related invoices stay above. Review final recipients on the left and the email preview on the right.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {!templateEditing ? (
+                      <Button type="button" variant="outline" size="sm" onClick={() => setTemplateEditing(true)} className="gap-2">
+                        <Mail className="h-4 w-4" />
+                        Edit Template
+                      </Button>
+                    ) : (
+                      <>
+                        <Button type="button" variant="outline" size="sm" onClick={cancelPaymentReminderTemplateChanges} disabled={sending || templateSaving} className="gap-2">
+                          <X className="h-4 w-4" />
+                          Cancel Changes
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={savePaymentReminderTemplateFromModal} disabled={sending || templateSaving} className="gap-2">
+                          {templateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                          Save Template
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="space-y-3 md:col-span-3">
+
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,480px)_minmax(0,1fr)]">
+                  <div className="space-y-3">
                     <div>
                       <Label className="text-xs text-muted-foreground">Email batches</Label>
                       <p className="mt-1 text-[11px] text-muted-foreground">
                         Only the addresses shown below will be used. Remove an address here to exclude it from sending.
                       </p>
                     </div>
-                    {selectedRecipientBatches.map((group, index) => (
-                      <div key={group.key} className="rounded-lg border border-border bg-card p-3">
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <div className="text-sm font-semibold text-foreground">
-                              Batch {index + 1}: {group.primaryRecipientName || 'Recipient group'}
+                    <div className="max-h-[26vh] space-y-3 overflow-auto pr-1">
+                      {selectedRecipientBatches.map((group, index) => (
+                        <div key={group.key} className="rounded-lg border border-border bg-card p-3">
+                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="text-sm font-semibold text-foreground">
+                                Batch {index + 1}: {group.primaryRecipientName || 'Recipient group'}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {group.stemIds.length.toLocaleString()} invoice{group.stemIds.length === 1 ? '' : 's'} · {brokerRoutingLabel(group.mode)}
+                              </div>
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              {group.stemIds.length.toLocaleString()} invoice{group.stemIds.length === 1 ? '' : 's'} · {brokerRoutingLabel(group.mode)}
+                          </div>
+                          <div className="grid gap-3">
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-muted-foreground">To</Label>
+                              <Input
+                                value={group.recipients.to}
+                                onChange={(event) => updateBatchRecipient(group.key, 'to', event.target.value)}
+                                placeholder="Enter recipient email"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-muted-foreground">CC</Label>
+                              <Input value={group.recipients.cc} onChange={(event) => updateBatchRecipient(group.key, 'cc', event.target.value)} />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-muted-foreground">BCC</Label>
+                              <Input value={group.recipients.bcc} onChange={(event) => updateBatchRecipient(group.key, 'bcc', event.target.value)} />
                             </div>
                           </div>
                         </div>
-                        <div className="grid gap-3 md:grid-cols-3">
-                          <div className="space-y-1.5 md:col-span-3">
-                            <Label className="text-xs text-muted-foreground">To</Label>
-                            <Input
-                              value={group.recipients.to}
-                              onChange={(event) => updateBatchRecipient(group.key, 'to', event.target.value)}
-                              placeholder="Enter recipient email"
-                            />
-                          </div>
-                          <div className="space-y-1.5 md:col-span-3">
-                            <Label className="text-xs text-muted-foreground">CC</Label>
-                            <Input value={group.recipients.cc} onChange={(event) => updateBatchRecipient(group.key, 'cc', event.target.value)} />
-                          </div>
-                          <div className="space-y-1.5 md:col-span-3">
-                            <Label className="text-xs text-muted-foreground">BCC</Label>
-                            <Input value={group.recipients.bcc} onChange={(event) => updateBatchRecipient(group.key, 'bcc', event.target.value)} />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="space-y-1.5 md:col-span-3">
-                    <Label className="text-xs text-muted-foreground">Subject</Label>
-                    <Input value={form.subject} onChange={(event) => updateForm('subject', event.target.value)} />
-                  </div>
-                  <div className="space-y-1.5 md:col-span-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <Label className="text-xs text-muted-foreground">Email content</Label>
-                      <Button type="button" variant="outline" size="sm" onClick={insertInvoiceTableToken}>
-                        Insert invoice table here
-                      </Button>
+                      ))}
                     </div>
-                    <div className="rounded-md border border-input bg-background [&_.ql-container]:min-h-64 [&_.ql-container]:border-0 [&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-border">
-                      <ReactQuill
-                        ref={reminderBodyEditorRef}
-                        theme="snow"
-                        modules={QUILL_MODULES}
-                        value={form.body}
-                        onChange={(value) => updateForm('body', value)}
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Subject</Label>
+                      <Input value={form.subject} onChange={(event) => updateForm('subject', event.target.value)} disabled={!templateEditing} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Label className="text-xs text-muted-foreground">Email content</Label>
+                        <Button type="button" variant="outline" size="sm" onClick={insertInvoiceTableToken} disabled={!templateEditing}>
+                          Insert invoice table here
+                        </Button>
+                      </div>
+                      <div className={cn(
+                        'rounded-md border border-input bg-background [&_.ql-container]:min-h-64 [&_.ql-container]:border-0 [&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-border',
+                        !templateEditing && 'opacity-80',
+                      )}>
+                        <ReactQuill
+                          ref={reminderBodyEditorRef}
+                          theme="snow"
+                          modules={QUILL_MODULES}
+                          value={form.body}
+                          readOnly={!templateEditing}
+                          onChange={(value) => updateForm('body', value)}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Move the invoice table by placing <span className="font-mono">{INVOICE_TABLE_TOKEN}</span> where the table should appear.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-card">
+                    <div className="border-b border-border px-3 py-2">
+                      <h3 className="text-sm font-semibold text-foreground">Email preview</h3>
+                      <p className="text-xs text-muted-foreground">
+                        The outstanding invoice table is inserted at the marker below when the email is sent.
+                      </p>
+                    </div>
+                    <div className="max-h-[620px] overflow-auto p-4">
+                      {selectedRoutingWarnings.length > 0 && (
+                        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                          <div className="font-semibold">Check broker routing before sending</div>
+                          <ul className="mt-1 list-disc space-y-1 pl-4">
+                            {selectedRoutingWarnings.map((warning) => <li key={`preview-${warning}`}>{warning}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                      <div
+                        className="rounded-lg border border-border bg-background p-4 text-sm leading-6 text-foreground [&_p]:mb-3 [&_p]:mt-0"
+                        dangerouslySetInnerHTML={{ __html: emailBodyPreviewHtml(renderedPreviewBody, selectedRows.length) }}
                       />
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Move the invoice table by moving <span className="font-mono">{INVOICE_TABLE_TOKEN}</span> to the desired position.
-                    </p>
                   </div>
-                </div>
-
-                <div className="rounded-xl border border-border bg-card p-4">
-                  <div className="mb-3">
-                    <h3 className="text-sm font-semibold text-foreground">Email content preview</h3>
-                    <p className="text-xs text-muted-foreground">
-                      The outstanding invoice table is inserted at the marker below when the email is sent.
-                    </p>
-                  </div>
-                  {selectedRoutingWarnings.length > 0 && (
-                    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                      <div className="font-semibold">Check broker routing before sending</div>
-                      <ul className="mt-1 list-disc space-y-1 pl-4">
-                        {selectedRoutingWarnings.map((warning) => <li key={`preview-${warning}`}>{warning}</li>)}
-                      </ul>
-                    </div>
-                  )}
-                  <div
-                    className="max-h-72 overflow-auto rounded-lg border border-border bg-background p-4 text-sm leading-6 text-foreground [&_p]:mb-3 [&_p]:mt-0"
-                    dangerouslySetInnerHTML={{ __html: emailBodyPreviewHtml(renderedPreviewBody, selectedRows.length) }}
-                  />
                 </div>
 
                 {templateMessage && (
@@ -1361,16 +1406,10 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
                       {error}
                     </div>
                   ) : <span />}
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <Button type="button" variant="outline" onClick={savePaymentReminderTemplateFromModal} disabled={sending || templateSaving} className="gap-2">
-                      {templateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                      Save Template
-                    </Button>
-                    <Button type="button" onClick={sendReminder} disabled={sending || !selectedRows.length} className="gap-2">
-                      {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                      Send Reminder
-                    </Button>
-                  </div>
+                  <Button type="button" onClick={sendReminder} disabled={sending || !selectedRows.length} className="gap-2">
+                    {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    Send Reminder
+                  </Button>
                 </div>
               </div>
             </div>

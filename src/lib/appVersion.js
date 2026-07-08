@@ -1,6 +1,17 @@
-export const APP_VERSION = '1.0.16';
+export const APP_VERSION = '1.0.17';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.17',
+    releasedAt: '2026-07-08',
+    title: 'Email reminder workflow refinement',
+    changes: [
+      'Added Payment Collection Handler to the Outstanding Buyer Invoices internal email reminder table and plain-text output.',
+      'Changed late payment interest requests to fall back to the system-wide server email sender when no Internal browser SMTP sender is saved.',
+      'Redesigned the external payment reminder modal so related invoice selection remains on top and email review/preview are split side by side.',
+      'Added explicit edit, save, and cancel template controls inside the external payment reminder modal.',
+    ],
+  },
   {
     version: '1.0.16',
     releasedAt: '2026-07-08',

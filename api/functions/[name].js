@@ -6000,6 +6000,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
       <td style="${cellStyle};text-align:right;font-weight:600;white-space:nowrap">${money(row.receivableBalance)}</td>
       <td style="${cellStyle};white-space:nowrap">${prettyDate(row.buyerInvoiceDueDate)}</td>
       <td style="${cellStyle};min-width:140px">${escapeHtml(row.buyerTraderInCharge || '-')}</td>
+      <td style="${cellStyle};min-width:160px">${escapeHtml(row.paymentHandlerName || row.collection?.ownerName || '-')}</td>
       <td style="${cellStyle};min-width:160px">${escapeHtml(row.prpspStatus || '-')}</td>
       <td style="${cellStyle}">
         <span style="display:inline-block;border:1px solid;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;white-space:nowrap;${severity.pill}">${escapeHtml(row.status)}</span>
@@ -6020,12 +6021,13 @@ function buildBuyerInvoiceReportEmail(report, settings) {
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right;position:sticky;top:0;background:#f8fafc">Receivable Balance</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Due Date</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Buyer Trader</th>
+            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Payment Collection Handler</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">PSPRS</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Status</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right;position:sticky;top:0;background:#f8fafc">Overdue</th>
           </tr>
         </thead>
-        <tbody>${tableRows || '<tr><td colspan="10" style="padding:18px;text-align:center;color:#667085">No outstanding buyer invoices found.</td></tr>'}</tbody>
+        <tbody>${tableRows || '<tr><td colspan="11" style="padding:18px;text-align:center;color:#667085">No outstanding buyer invoices found.</td></tr>'}</tbody>
       </table>
     </div>` : '';
   const contentHtml = emailContentHtml(content);
@@ -6037,7 +6039,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
     <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">
       ${reportBodyHtml}
     </div>`;
-  const tableText = rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Buyer Broker ${row.buyerBrokerNames || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`).join('\n');
+  const tableText = rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Buyer Broker ${row.buyerBrokerNames || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | Buyer Trader ${row.buyerTraderInCharge || '-'} | Payment Collection Handler ${row.paymentHandlerName || row.collection?.ownerName || '-'} | PSPRS ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)}`).join('\n');
   const introText = hasAttentionMarker && tableText
     ? insertAfterAttentionSentence(content, `\n\n${tableText}\n\n`)
     : content;
@@ -6048,7 +6050,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
     `Open all invoices: ${buyerInvoiceFilterUrl(settings, report, null)}`,
     ...((report.buyerTraderOptions || []).map((name) => `Open ${name}: ${buyerInvoiceFilterUrl(settings, report, name)}`)),
     '',
-    ...(hasAttentionMarker ? [] : rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Buyer Broker ${row.buyerBrokerNames || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | PSPRS ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)} | Buyer Trader ${row.buyerTraderInCharge || '-'}`)),
+    ...(hasAttentionMarker ? [] : rows.map((row) => `${row.stemName} | ${row.buyerName || '-'} | Buyer Broker ${row.buyerBrokerNames || '-'} | Receivable Balance ${money(row.receivableBalance)} | Due ${prettyDate(row.buyerInvoiceDueDate)} | Buyer Trader ${row.buyerTraderInCharge || '-'} | Payment Collection Handler ${row.paymentHandlerName || row.collection?.ownerName || '-'} | PSPRS ${row.prpspStatus || '-'} | ${row.status} | Overdue ${overdueDisplayValue(row.daysUntilDue)}`)),
   ];
   return { subject, html, text: textLines.join('\n'), totals };
 }
