@@ -57,6 +57,7 @@ const EMAIL_TABLE_TOKENS = [
   { label: 'Supplier Refunds', token: '{{supplierRefundTotal}}' },
   { label: 'Incoming Records', token: '{{receivablePaymentCount}}' },
   { label: 'Needs Review', token: '{{needsReviewCount}}' },
+  { label: 'Request Late Payment Interest Invoice', token: '{{requestLatePaymentInterestInvoiceLink}}' },
   { label: 'Receivable Payments Table', token: RECEIVABLE_PAYMENTS_TABLE_TOKEN },
   { label: 'Buyer CIA Invoices Table', token: BUYER_CIA_TABLE_TOKEN },
 ];
@@ -136,6 +137,24 @@ function defaultPageState() {
   };
 }
 
+function readUrlFilterPatch() {
+  if (typeof window === 'undefined') return {};
+  const params = new URLSearchParams(window.location.search);
+  const patch = {};
+  if (params.has('dateFrom')) patch.dateFrom = params.get('dateFrom') || todayHongKong();
+  if (params.has('dateTo')) patch.dateTo = params.get('dateTo') || patch.dateFrom || todayHongKong();
+  if (params.has('search')) patch.search = params.get('search') || '';
+  if (params.has('keyword')) patch.search = params.get('keyword') || '';
+  return patch;
+}
+
+function initialPageState() {
+  const cached = readPageState(PAGE_STATE_KEY, defaultPageState);
+  const filterPatch = readUrlFilterPatch();
+  if (!Object.keys(filterPatch).length) return cached;
+  return { ...cached, ...filterPatch, data: null };
+}
+
 function readEmailSettings() {
   try {
     const raw = localStorage.getItem(EMAIL_SETTINGS_KEY);
@@ -181,7 +200,7 @@ function incomingPaymentSmtpCredentials(from) {
 export default function IncomingPayments() {
   const { toast } = useToast();
   const { isAdministrator } = useAuth();
-  const [pageState, setPageState] = useState(() => readPageState(PAGE_STATE_KEY, defaultPageState));
+  const [pageState, setPageState] = useState(initialPageState);
   const { dateFrom, dateTo, search, data, thresholdDraft } = pageState;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -620,7 +639,7 @@ export default function IncomingPayments() {
         dateFrom,
         dateTo,
         search,
-        settings: emailSettings,
+        settings: { ...emailSettings, appUrl: window.location.origin },
         credentials: delivery.credentials,
         preview,
       });

@@ -1,6 +1,16 @@
-export const APP_VERSION = '1.0.13';
+export const APP_VERSION = '1.0.14';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.14',
+    releasedAt: '2026-07-08',
+    title: 'Incoming payment report action link',
+    changes: [
+      'Added a Request Late Payment Interest Invoice email template token for Incoming Payment reports.',
+      'Rendered the token as a captioned hyperlink to the Incoming Payment page with the report date and keyword filters applied.',
+      'Preserved email-link query filters through login before opening Incoming Payment.',
+    ],
+  },
   {
     version: '1.0.13',
     releasedAt: '2026-07-08',

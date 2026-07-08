@@ -1790,6 +1790,22 @@ function buyerInvoiceFilterUrl(settings, report, buyerTrader) {
   return url.toString();
 }
 
+function incomingPaymentAppUrl(settings = {}) {
+  return normalizedUrl(settings.appUrl)
+    || normalizedUrl(process.env.INCOMING_PAYMENT_REPORT_APP_URL)
+    || normalizedUrl(process.env.VERCEL_PROJECT_PRODUCTION_URL)
+    || normalizedUrl(process.env.VERCEL_URL)
+    || 'https://salesforce-extension-murex.vercel.app';
+}
+
+function incomingPaymentFilterUrl(settings, report) {
+  const url = new URL('/incoming-payments', incomingPaymentAppUrl(settings));
+  if (report.dateFrom) url.searchParams.set('dateFrom', String(report.dateFrom));
+  if (report.dateTo) url.searchParams.set('dateTo', String(report.dateTo));
+  if (report.search) url.searchParams.set('search', String(report.search));
+  return url.toString();
+}
+
 function serverEmailDeliveryStatus() {
   const hasResend = Boolean(process.env.RESEND_API_KEY);
   const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD);
@@ -4990,11 +5006,16 @@ async function incomingPaymentInterestInvoiceRequest(body = {}, req = null) {
 
 const INCOMING_PAYMENT_RECEIVABLE_TABLE_TOKEN_PATTERN = /\{\{\s*receivablePaymentsTable\s*\}\}/i;
 const INCOMING_PAYMENT_BUYER_CIA_TABLE_TOKEN_PATTERN = /\{\{\s*buyerCiaInvoicesTable\s*\}\}/i;
+const INCOMING_PAYMENT_LATE_INTEREST_LINK_TOKEN_PATTERNS = [
+  /\{\{\s*requestLatePaymentInterestInvoiceLink\s*\}\}/i,
+  /\{\{\s*latePaymentInterestLink\s*\}\}/i,
+];
 const DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS = {
   from: 'Fratelli Cosulich <info@cosulich.com.hk>',
   to: ['bt@cosulich.com.hk'],
   cc: [],
   bcc: [],
+  appUrl: '',
   subject: 'Incoming Payment Report - {{dateFrom}} to {{dateTo}}',
   intro: 'Incoming Payment Report\n\nPlease find below the receivable payments and Buyer CIA invoices for the selected filters.\n\nPayment created date range: {{dateFrom}} to {{dateTo}}.\nIncoming total: {{incomingTotal}}.\n\n{{receivablePaymentsTable}}\n\n{{buyerCiaInvoicesTable}}',
   includeReceivablePayments: true,
@@ -5016,6 +5037,7 @@ function incomingPaymentEmailSettings(input = {}) {
     to: parseEmailList(input.to, defaults.to),
     cc: parseEmailList(input.cc, defaults.cc),
     bcc: parseEmailList(input.bcc, defaults.bcc),
+    appUrl: String(input.appUrl ?? defaults.appUrl ?? ''),
     subject: String(input.subject ?? defaults.subject),
     intro: String(input.intro ?? defaults.intro),
     includeReceivablePayments: input.includeReceivablePayments ?? defaults.includeReceivablePayments,
@@ -5156,22 +5178,42 @@ function incomingPaymentBuyerCiaTableText(rows = []) {
   ].join('\n');
 }
 
+function replaceIncomingPaymentToken(source, pattern, replacement) {
+  return String(source || '')
+    .replace(new RegExp(`<p\\b[^>]*>\\s*${pattern.source}\\s*<\\/p>`, 'i'), replacement)
+    .replace(pattern, replacement);
+}
+
 function injectIncomingPaymentTables(content, settings, receivableTable, buyerCiaTable) {
   let output = String(content || '');
   const hasReceivableToken = INCOMING_PAYMENT_RECEIVABLE_TABLE_TOKEN_PATTERN.test(output);
   const hasBuyerCiaToken = INCOMING_PAYMENT_BUYER_CIA_TABLE_TOKEN_PATTERN.test(output);
-  const replaceToken = (source, pattern, replacement) => source
-    .replace(new RegExp(`<p\\b[^>]*>\\s*${pattern.source}\\s*<\\/p>`, 'i'), replacement)
-    .replace(pattern, replacement);
-  output = replaceToken(output, INCOMING_PAYMENT_RECEIVABLE_TABLE_TOKEN_PATTERN, settings.includeReceivablePayments ? receivableTable : '');
-  output = replaceToken(output, INCOMING_PAYMENT_BUYER_CIA_TABLE_TOKEN_PATTERN, settings.includeBuyerCiaInvoices ? buyerCiaTable : '');
+  output = replaceIncomingPaymentToken(output, INCOMING_PAYMENT_RECEIVABLE_TABLE_TOKEN_PATTERN, settings.includeReceivablePayments ? receivableTable : '');
+  output = replaceIncomingPaymentToken(output, INCOMING_PAYMENT_BUYER_CIA_TABLE_TOKEN_PATTERN, settings.includeBuyerCiaInvoices ? buyerCiaTable : '');
   if (settings.includeReceivablePayments && !hasReceivableToken) output += receivableTable;
   if (settings.includeBuyerCiaInvoices && !hasBuyerCiaToken) output += buyerCiaTable;
   return output;
 }
 
+function injectIncomingPaymentLateInterestLink(content, replacement) {
+  let output = String(content || '');
+  for (const pattern of INCOMING_PAYMENT_LATE_INTEREST_LINK_TOKEN_PATTERNS) {
+    output = replaceIncomingPaymentToken(output, pattern, replacement);
+  }
+  return output;
+}
+
+function incomingPaymentLateInterestLinkHtml(url) {
+  return `<p style="margin:0 0 14px"><a href="${escapeHtml(url)}" style="display:inline-block;border-radius:8px;background:#1f2937;color:#ffffff;text-decoration:none;font-weight:700;padding:9px 13px">Request Late Payment Interest Invoice</a></p>`;
+}
+
+function incomingPaymentLateInterestLinkText(url) {
+  return `Request Late Payment Interest Invoice: ${url}`;
+}
+
 function buildIncomingPaymentEmail(report, settings) {
   const summary = report.summary || incomingPaymentReportSummary(report.rows || []);
+  const lateInterestUrl = incomingPaymentFilterUrl(settings, report);
   const context = {
     dateFrom: prettyDate(report.dateFrom),
     dateTo: prettyDate(report.dateTo),
@@ -5187,7 +5229,10 @@ function buildIncomingPaymentEmail(report, settings) {
   };
   const subject = renderIncomingPaymentTemplate(settings.subject, context);
   const content = renderIncomingPaymentTemplate(settings.intro, context);
-  const contentHtml = emailContentHtml(content);
+  const contentHtml = injectIncomingPaymentLateInterestLink(
+    emailContentHtml(content),
+    incomingPaymentLateInterestLinkHtml(lateInterestUrl),
+  );
   const html = `
     <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">
       ${injectIncomingPaymentTables(
@@ -5198,7 +5243,7 @@ function buildIncomingPaymentEmail(report, settings) {
       )}
     </div>`;
   const textContent = injectIncomingPaymentTables(
-    content,
+    injectIncomingPaymentLateInterestLink(content, incomingPaymentLateInterestLinkText(lateInterestUrl)),
     settings,
     `\n\n${incomingPaymentReceivableTableText(report.rows || [])}\n\n`,
     `\n\n${incomingPaymentBuyerCiaTableText(report.buyerCiaInvoices || [])}\n\n`,

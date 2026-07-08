@@ -16,7 +16,11 @@ export default function Login() {
   }, []);
 
   if (isAuthenticated) {
-    return <Navigate to={location.state?.from?.pathname || '/'} replace />;
+    const from = location.state?.from;
+    const returnTo = from
+      ? `${from.pathname || '/'}${from.search || ''}${from.hash || ''}`
+      : '/';
+    return <Navigate to={returnTo} replace />;
   }
 
   const submit = async (event) => {
