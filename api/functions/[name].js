@@ -4543,7 +4543,7 @@ async function cashflowSettingsGet(body, req) {
 }
 
 async function cashflowSettingsSave(body, req) {
-  const { client, profile } = await requireAdministrator(req);
+  const { client, profile } = await requireActiveUser(req);
   if (body.overrideAction === 'add') {
     const date = dateOnly(body.date || body.holidayDate);
     if (!date) throw appError('Blocked date is required.', 400);
