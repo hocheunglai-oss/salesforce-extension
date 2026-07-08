@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.30';
+export const APP_VERSION = '1.0.31';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.31',
+    releasedAt: '2026-07-08',
+    title: 'Exclude receivable remittance from payments',
+    changes: [
+      'Excluded Payment__c records with Receivable Remittance record type from Incoming Payment receivable payment rows.',
+      'Applied the same exclusion to Stem Detail buyer payment dates and late-payment interest calculation inputs.',
+    ],
+  },
   {
     version: '1.0.30',
     releasedAt: '2026-07-08',

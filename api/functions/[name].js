@@ -4335,6 +4335,19 @@ function attachBankChargeToPayment(target, charge) {
   target.bankChargeTotal = (target.bankChargeTotal || 0) + Math.abs(Number(charge.amount || 0));
 }
 
+function incomingPaymentRecordTypeToken(payment) {
+  return normalizedFieldToken([
+    payment?.RecordTypeId,
+    payment?.RecordType?.DeveloperName,
+    payment?.RecordType?.Name,
+  ].filter(Boolean).join(' '));
+}
+
+function incomingPaymentIsReceivableRemittance(payment) {
+  const token = incomingPaymentRecordTypeToken(payment);
+  return token.includes('receivableremittance');
+}
+
 function supplierInvoicePartyName(invoice, supplierRelationships = []) {
   return invoice?.Supplier_Name__c
     || invoice?.['Supplier__r']?.Name
@@ -4508,7 +4521,9 @@ async function incomingPaymentsList(body) {
   const directionFields = incomingPaymentDirectionFields(paymentFields);
   const paymentSelectFields = [
     'Id',
-    ...selectedFields(paymentFieldNames, ['Name', 'CreatedDate', 'LastModifiedDate', 'STEM__c', 'CurrencyIsoCode', 'Currency__c']),
+    ...selectedFields(paymentFieldNames, ['Name', 'RecordTypeId', 'CreatedDate', 'LastModifiedDate', 'STEM__c', 'CurrencyIsoCode', 'Currency__c']),
+    paymentFieldNames.has('RecordTypeId') ? 'RecordType.Name' : null,
+    paymentFieldNames.has('RecordTypeId') ? 'RecordType.DeveloperName' : null,
     ...supplierInvoiceLookupFields,
     dateField,
     amountField,
@@ -4537,8 +4552,9 @@ async function incomingPaymentsList(body) {
     LIMIT ${limit}
   `, { limit, softFail: true });
 
-  const directStemIds = payments.map((payment) => payment.STEM__c).filter(Boolean);
-  const supplierInvoiceIds = payments
+  const eligiblePayments = payments.filter((payment) => !incomingPaymentIsReceivableRemittance(payment));
+  const directStemIds = eligiblePayments.map((payment) => payment.STEM__c).filter(Boolean);
+  const supplierInvoiceIds = eligiblePayments
     .map((payment) => incomingPaymentSupplierInvoiceId(payment, supplierInvoiceLookupFields))
     .filter(Boolean);
   const supplierInvoiceDescribe = supplierInvoiceIds.length
@@ -4707,7 +4723,7 @@ async function incomingPaymentsList(body) {
 
   const availableStemKeys = new Set();
   const availableBalancesByGroup = {};
-  const allRows = payments.map((payment) => {
+  const allRows = eligiblePayments.map((payment) => {
     const supplierInvoiceId = incomingPaymentSupplierInvoiceId(payment, supplierInvoiceLookupFields);
     const supplierInvoice = supplierInvoiceId ? supplierInvoiceMap[supplierInvoiceId] || null : null;
     const stemId = payment.STEM__c || supplierInvoice?.STEM__c || null;
@@ -4805,6 +4821,8 @@ async function incomingPaymentsList(body) {
       paymentName: incomingPaymentDisplayName({ payment, referenceFields, stem, supplierInvoice, type }),
       paymentDisplayName: incomingPaymentDisplayName({ payment, referenceFields, stem, supplierInvoice, type }),
       salesforcePaymentName: payment.Name || null,
+      paymentRecordTypeName: payment.RecordType?.Name || null,
+      paymentRecordTypeDeveloperName: payment.RecordType?.DeveloperName || null,
       paymentDate,
       createdDate: payment.CreatedDate || null,
       invoiceDueDate: buyerInvoiceDueDate,
@@ -5162,7 +5180,9 @@ async function incomingPaymentInterestCalculation(body = {}) {
   const supplierInvoiceLookupFields = incomingPaymentSupplierInvoiceFields(paymentFields);
   const paymentSelectFields = [
     'Id',
-    ...selectedFields(paymentFieldNames, ['Name', 'CreatedDate', 'LastModifiedDate', 'STEM__c', 'CurrencyIsoCode', 'Currency__c']),
+    ...selectedFields(paymentFieldNames, ['Name', 'RecordTypeId', 'CreatedDate', 'LastModifiedDate', 'STEM__c', 'CurrencyIsoCode', 'Currency__c']),
+    paymentFieldNames.has('RecordTypeId') ? 'RecordType.Name' : null,
+    paymentFieldNames.has('RecordTypeId') ? 'RecordType.DeveloperName' : null,
     ...supplierInvoiceLookupFields,
     dateField,
     amountField,
@@ -5213,6 +5233,7 @@ async function incomingPaymentInterestCalculation(body = {}) {
   })[stem.Id] || [];
 
   const buyerPayments = payments
+    .filter((payment) => !incomingPaymentIsReceivableRemittance(payment))
     .map((payment) => {
       const amount = incomingPaymentNumber(payment[amountField]);
       const paymentDate = payment[dateField] || payment.CreatedDate || null;
@@ -8072,6 +8093,9 @@ async function salesforceStemDetailFull(body) {
   const paymentSelectFields = [
     'Id',
     paymentFieldNames.has('Name') ? 'Name' : null,
+    paymentFieldNames.has('RecordTypeId') ? 'RecordTypeId' : null,
+    paymentFieldNames.has('RecordTypeId') ? 'RecordType.Name' : null,
+    paymentFieldNames.has('RecordTypeId') ? 'RecordType.DeveloperName' : null,
     paymentFieldNames.has('STEM__c') ? 'STEM__c' : null,
     paymentFieldNames.has('CreatedDate') ? 'CreatedDate' : null,
     paymentDateField,
@@ -8152,6 +8176,7 @@ async function salesforceStemDetailFull(body) {
         LIMIT 2000
       `, { limit: 2000, softFail: true });
       for (const payment of stemPayments) {
+        if (incomingPaymentIsReceivableRemittance(payment)) continue;
         const amount = paymentAmountField ? incomingPaymentNumber(payment[paymentAmountField]) : null;
         const brokerCommissionMatch = findBrokerCommissionPaymentMatch(payment, amount, brokerCommissionGroups, [...paymentReferenceFields, ...paymentDirectionFields, ...paymentTypeFields, ...paymentStatusFields]);
         if (brokerCommissionMatch) {
