@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.35';
+export const APP_VERSION = '1.0.36';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.36',
+    releasedAt: '2026-07-08',
+    title: 'Cashflow forecast',
+    changes: [
+      'Added Cashflow Forecast with buyer receipt prediction, supplier payment outflows, and daily/weekly/monthly buckets.',
+      'Added Nager.Date holiday blocking with cache and manual blocked-date overrides for weekend, Singapore, and US holiday adjustments.',
+    ],
+  },
   {
     version: '1.0.35',
     releasedAt: '2026-07-08',

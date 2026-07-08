@@ -15,6 +15,7 @@ import ReportArchive from '@/pages/ReportArchive';
 import ReviewQueue from '@/pages/ReviewQueue';
 import BuyerInvoices from '@/pages/BuyerInvoices';
 import IncomingPayments from '@/pages/IncomingPayments';
+import CashflowForecast from '@/pages/CashflowForecast';
 import DisputeManagement from '@/pages/DisputeManagement';
 import DisputeBeta from '@/pages/DisputeBeta';
 import Login from '@/pages/Login';
@@ -76,6 +77,7 @@ const AuthenticatedApp = () => {
           <Route path="/disputes-beta" element={<ModuleGate moduleId="disputes"><DisputeBeta /></ModuleGate>} />
           <Route path="/buyer-invoices" element={<ModuleGate moduleId="buyer_invoices"><BuyerInvoices /></ModuleGate>} />
           <Route path="/incoming-payments" element={<ModuleGate moduleId="incoming_payments"><IncomingPayments /></ModuleGate>} />
+          <Route path="/cashflow-forecast" element={<ModuleGate moduleId="cashflow_forecast"><CashflowForecast /></ModuleGate>} />
           <Route path="/brokers" element={<ModuleGate moduleId="brokers"><BrokerRegister /></ModuleGate>} />
           <Route path="/report-archive" element={<ModuleGate moduleId="report_archive"><ReportArchive /></ModuleGate>} />
           <Route path="/admin" element={<ModuleGate moduleId="admin"><AdminControl /></ModuleGate>} />

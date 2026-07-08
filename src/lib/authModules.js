@@ -12,6 +12,7 @@ export const APP_MODULES = [
   { id: 'disputes', label: 'Dispute Management', path: '/disputes', sortOrder: 30 },
   { id: 'buyer_invoices', label: 'Outstanding Buyer Invoices', path: '/buyer-invoices', sortOrder: 40 },
   { id: 'incoming_payments', label: 'Incoming Payment', path: '/incoming-payments', sortOrder: 45 },
+  { id: 'cashflow_forecast', label: 'Cashflow Forecast', path: '/cashflow-forecast', sortOrder: 47 },
   { id: 'pnl', label: 'Dashboard and Qlik Validator Tool', path: '/pnl', sortOrder: 50 },
   { id: 'brokers', label: "Broker's Commission", path: '/brokers', sortOrder: 70 },
   { id: 'report_archive', label: 'Reports Archive', path: '/report-archive', sortOrder: 75 },

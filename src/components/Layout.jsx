@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, PanelLeftClose, PanelLeftOpen, Settings, TrendingUp, DollarSign, ClipboardCheck, ReceiptText, AlertTriangle, ListFilter, ShieldCheck, LogOut, History, RefreshCw, FileCheck2, Banknote } from 'lucide-react';
+import { LayoutDashboard, PanelLeftClose, PanelLeftOpen, Settings, TrendingUp, DollarSign, ClipboardCheck, ReceiptText, AlertTriangle, ListFilter, ShieldCheck, LogOut, History, RefreshCw, FileCheck2, Banknote, WalletCards } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/AuthContext';
 import { APP_VERSION, APP_VERSION_HISTORY } from '@/lib/appVersion';
@@ -22,6 +22,7 @@ const navItems = [
   { to: '/disputes-beta', label: 'Dispute Beta', icon: FileCheck2, moduleId: 'disputes' },
   { to: '/buyer-invoices', label: 'Outstanding Buyer Invoices', icon: ReceiptText, moduleId: 'buyer_invoices' },
   { to: '/incoming-payments', label: 'Incoming Payment', icon: Banknote, moduleId: 'incoming_payments' },
+  { to: '/cashflow-forecast', label: 'Cashflow Forecast', icon: WalletCards, moduleId: 'cashflow_forecast' },
   { to: '/pnl', label: 'Dashboard and Qlik Validator Tool', icon: TrendingUp, moduleId: 'pnl' },
   { to: '/brokers', label: "Broker's Commission", icon: DollarSign, moduleId: 'brokers' },
   { to: '/report-archive', label: 'Reports Archive', icon: History, moduleId: 'report_archive' },

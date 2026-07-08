@@ -20,6 +20,7 @@ const ADMIN_APP_MODULES = [
   { id: 'disputes', label: 'Dispute Management', path: '/disputes', sortOrder: 30 },
   { id: 'buyer_invoices', label: 'Outstanding Buyer Invoices', path: '/buyer-invoices', sortOrder: 40 },
   { id: 'incoming_payments', label: 'Incoming Payment', path: '/incoming-payments', sortOrder: 45 },
+  { id: 'cashflow_forecast', label: 'Cashflow Forecast', path: '/cashflow-forecast', sortOrder: 47 },
   { id: 'pnl', label: 'Dashboard and Qlik Validator Tool', path: '/pnl', sortOrder: 50 },
   { id: 'brokers', label: "Broker's Commission", path: '/brokers', sortOrder: 70 },
   { id: 'report_archive', label: 'Reports Archive', path: '/report-archive', sortOrder: 75 },
@@ -40,10 +41,10 @@ const DEFAULT_USER_TYPES = [
 ];
 const FALLBACK_TYPE_PERMISSIONS = {
   administrator: ADMIN_FULL_ACCESS,
-  manager: { dashboard: true, review: true, disputes: true, buyer_invoices: true, incoming_payments: true, pnl: true, brokers: true, report_archive: true, settings: true, admin: false },
-  finance: { dashboard: true, review: true, disputes: true, buyer_invoices: true, incoming_payments: true, pnl: true, brokers: true, report_archive: true, settings: false, admin: false },
-  operations: { dashboard: true, review: true, disputes: true, buyer_invoices: false, incoming_payments: true, pnl: true, brokers: false, report_archive: false, settings: false, admin: false },
-  viewer: { dashboard: true, review: false, disputes: false, buyer_invoices: false, incoming_payments: true, pnl: false, brokers: false, report_archive: false, settings: false, admin: false },
+  manager: { dashboard: true, review: true, disputes: true, buyer_invoices: true, incoming_payments: true, cashflow_forecast: true, pnl: true, brokers: true, report_archive: true, settings: true, admin: false },
+  finance: { dashboard: true, review: true, disputes: true, buyer_invoices: true, incoming_payments: true, cashflow_forecast: true, pnl: true, brokers: true, report_archive: true, settings: false, admin: false },
+  operations: { dashboard: true, review: true, disputes: true, buyer_invoices: false, incoming_payments: true, cashflow_forecast: false, pnl: true, brokers: false, report_archive: false, settings: false, admin: false },
+  viewer: { dashboard: true, review: false, disputes: false, buyer_invoices: false, incoming_payments: true, cashflow_forecast: false, pnl: false, brokers: false, report_archive: false, settings: false, admin: false },
 };
 
 function reportArchiveAccessLevel(value, canView = undefined) {
@@ -261,8 +262,8 @@ const HANDLER_MODULE_ACCESS = {
   salesforceDashboard: ['dashboard'],
   salesforceDashboardFiltered: ['dashboard', 'review'],
   salesforceTopBuyers: ['dashboard'],
-  salesforceStemDetail: ['dashboard', 'review', 'disputes', 'buyer_invoices', 'pnl', 'brokers'],
-  salesforceStemDocuments: ['dashboard', 'review', 'disputes', 'buyer_invoices', 'pnl', 'brokers'],
+  salesforceStemDetail: ['dashboard', 'review', 'disputes', 'buyer_invoices', 'cashflow_forecast', 'pnl', 'brokers'],
+  salesforceStemDocuments: ['dashboard', 'review', 'disputes', 'buyer_invoices', 'cashflow_forecast', 'pnl', 'brokers'],
   salesforceStemDocumentUpload: ['disputes'],
   salesforceDocumentRename: ['disputes'],
   salesforceDocumentDelete: ['disputes'],
@@ -291,6 +292,11 @@ const HANDLER_MODULE_ACCESS = {
   incomingPaymentSettingsGet: ['incoming_payments'],
   incomingPaymentSettingsSave: ['incoming_payments'],
   incomingPaymentAllocationConfirm: ['incoming_payments'],
+  cashflowForecast: ['cashflow_forecast'],
+  cashflowBuyerPaymentPerformance: ['cashflow_forecast'],
+  cashflowSettingsGet: ['cashflow_forecast'],
+  cashflowSettingsSave: ['cashflow_forecast'],
+  cashflowHolidayCalendar: ['cashflow_forecast'],
   stemPnl: ['pnl'],
   salesforceBrokerRegister: ['brokers'],
   frankfurterUsdCnyRate: ['brokers'],
@@ -3784,6 +3790,820 @@ async function incomingPaymentSettingsSave(body, req) {
     .single();
   if (error) throw error;
   return { settings: serializeIncomingPaymentSettings(data) };
+}
+
+const CASHFLOW_SETTINGS_ID = 'default';
+const CASHFLOW_HOLIDAY_SOURCE = 'nager.date';
+const DEFAULT_CASHFLOW_SETTINGS = {
+  horizonDays: 90,
+  lookbackMonths: 12,
+  minBuyerSamples: 3,
+  minGroupSamples: 5,
+};
+
+function clampInteger(value, fallback, min, max) {
+  const number = Math.trunc(Number(value));
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(number, max));
+}
+
+function serializeCashflowSettings(row = null) {
+  return {
+    horizonDays: clampInteger(row?.horizon_days, DEFAULT_CASHFLOW_SETTINGS.horizonDays, 1, 365),
+    lookbackMonths: clampInteger(row?.lookback_months, DEFAULT_CASHFLOW_SETTINGS.lookbackMonths, 1, 36),
+    minBuyerSamples: clampInteger(row?.min_buyer_samples, DEFAULT_CASHFLOW_SETTINGS.minBuyerSamples, 1, 100),
+    minGroupSamples: clampInteger(row?.min_group_samples, DEFAULT_CASHFLOW_SETTINGS.minGroupSamples, 1, 100),
+    updatedAt: row?.updated_at || null,
+    updatedByEmail: row?.updated_by_email || null,
+  };
+}
+
+async function loadCashflowSettings() {
+  const client = safeSupabaseAdminClient();
+  if (!client) return serializeCashflowSettings(null);
+  const { data, error } = await client
+    .from('cashflow_forecast_settings')
+    .select('id,horizon_days,lookback_months,min_buyer_samples,min_group_samples,updated_by_email,updated_at')
+    .eq('id', CASHFLOW_SETTINGS_ID)
+    .maybeSingle();
+  if (error) return serializeCashflowSettings(null);
+  return serializeCashflowSettings(data);
+}
+
+function serializeCashflowHolidayOverride(row) {
+  return {
+    id: row.id,
+    date: row.holiday_date,
+    countryCode: row.country_code || 'MANUAL',
+    name: row.name || 'Manual blocked date',
+    isBlocked: row.is_blocked !== false,
+    note: row.note || null,
+    updatedAt: row.updated_at || row.created_at || null,
+    updatedByEmail: row.updated_by_email || row.created_by_email || null,
+  };
+}
+
+async function loadCashflowHolidayOverrides(years = []) {
+  const client = safeSupabaseAdminClient();
+  if (!client) return [];
+  let query = client
+    .from('cashflow_holiday_overrides')
+    .select('id,holiday_date,country_code,name,is_blocked,note,created_by_email,created_at,updated_by_email,updated_at')
+    .order('holiday_date', { ascending: true });
+  const normalizedYears = [...new Set(years.map((year) => Number(year)).filter(Number.isFinite))];
+  if (normalizedYears.length) {
+    const from = `${Math.min(...normalizedYears)}-01-01`;
+    const to = `${Math.max(...normalizedYears)}-12-31`;
+    query = query.gte('holiday_date', from).lte('holiday_date', to);
+  }
+  const { data, error } = await query;
+  if (error) return [];
+  return (data || []).map(serializeCashflowHolidayOverride);
+}
+
+function cashflowHolidayIsBlocking(holiday) {
+  const types = holiday?.types || holiday?.holidayTypes || [];
+  if (Array.isArray(types) && types.length) {
+    return types.some((type) => ['public', 'bank'].includes(String(type).toLowerCase()));
+  }
+  return true;
+}
+
+async function fetchNagerHolidays(countryCode, year) {
+  const response = await fetch(`https://date.nager.at/api/v4/Holidays/${encodeURIComponent(countryCode)}/${encodeURIComponent(year)}`, {
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) throw appError(`Holiday API returned ${response.status} for ${countryCode} ${year}.`, 502);
+  const rows = await response.json();
+  return (Array.isArray(rows) ? rows : [])
+    .filter(cashflowHolidayIsBlocking)
+    .map((holiday) => ({
+      date: holiday.date,
+      localName: holiday.localName || holiday.name || 'Holiday',
+      name: holiday.name || holiday.localName || 'Holiday',
+      countryCode,
+      types: holiday.types || holiday.holidayTypes || [],
+      source: CASHFLOW_HOLIDAY_SOURCE,
+    }))
+    .filter((holiday) => holiday.date);
+}
+
+async function cashflowCachedHolidays(countryCode, year, warnings = []) {
+  const client = safeSupabaseAdminClient();
+  const cacheSelect = 'id,country_code,calendar_year,source,holidays,fetched_at,expires_at,error_message';
+  if (client) {
+    const { data: cached } = await client
+      .from('cashflow_holiday_cache')
+      .select(cacheSelect)
+      .eq('country_code', countryCode)
+      .eq('calendar_year', year)
+      .eq('source', CASHFLOW_HOLIDAY_SOURCE)
+      .maybeSingle();
+    const notExpired = cached?.expires_at && new Date(cached.expires_at).getTime() > Date.now();
+    if (cached?.holidays && notExpired) {
+      return { holidays: cached.holidays, fetchedAt: cached.fetched_at, fromCache: true };
+    }
+    try {
+      const holidays = await fetchNagerHolidays(countryCode, year);
+      const expiresAt = new Date();
+      expiresAt.setUTCDate(expiresAt.getUTCDate() + 30);
+      await client
+        .from('cashflow_holiday_cache')
+        .upsert({
+          country_code: countryCode,
+          calendar_year: year,
+          source: CASHFLOW_HOLIDAY_SOURCE,
+          holidays,
+          fetched_at: new Date().toISOString(),
+          expires_at: expiresAt.toISOString(),
+          error_message: null,
+        }, { onConflict: 'country_code,calendar_year,source' });
+      return { holidays, fetchedAt: new Date().toISOString(), fromCache: false };
+    } catch (error) {
+      warnings.push(error.message);
+      if (cached?.holidays) return { holidays: cached.holidays, fetchedAt: cached.fetched_at, fromCache: true, error: error.message };
+      return { holidays: [], fetchedAt: null, fromCache: false, error: error.message };
+    }
+  }
+
+  try {
+    return { holidays: await fetchNagerHolidays(countryCode, year), fetchedAt: new Date().toISOString(), fromCache: false };
+  } catch (error) {
+    warnings.push(error.message);
+    return { holidays: [], fetchedAt: null, fromCache: false, error: error.message };
+  }
+}
+
+function yearsBetween(dateFrom, dateTo) {
+  const fromYear = Number(String(dateFrom).slice(0, 4));
+  const toYear = Number(String(dateTo).slice(0, 4));
+  if (!Number.isFinite(fromYear) || !Number.isFinite(toYear)) return [Number(dateOnly(new Date()).slice(0, 4))];
+  const years = [];
+  for (let year = fromYear; year <= toYear; year += 1) years.push(year);
+  return years;
+}
+
+async function loadCashflowHolidayData(years, warnings = []) {
+  const normalizedYears = [...new Set((years || []).map((year) => Number(year)).filter(Number.isFinite))].sort();
+  const countries = ['SG', 'US'];
+  const holidayRows = [];
+  const statuses = [];
+  for (const year of normalizedYears) {
+    for (const countryCode of countries) {
+      const result = await cashflowCachedHolidays(countryCode, year, warnings);
+      holidayRows.push(...(result.holidays || []));
+      statuses.push({
+        countryCode,
+        year,
+        source: CASHFLOW_HOLIDAY_SOURCE,
+        fetchedAt: result.fetchedAt,
+        fromCache: result.fromCache,
+        error: result.error || null,
+      });
+    }
+  }
+  const overrides = await loadCashflowHolidayOverrides(normalizedYears);
+  const blockedMap = new Map();
+  for (const holiday of holidayRows) {
+    if (!holiday.date) continue;
+    const current = blockedMap.get(holiday.date) || [];
+    current.push({
+      date: holiday.date,
+      countryCode: holiday.countryCode,
+      name: holiday.name || holiday.localName || 'Holiday',
+      source: holiday.source || CASHFLOW_HOLIDAY_SOURCE,
+    });
+    blockedMap.set(holiday.date, current);
+  }
+  for (const override of overrides) {
+    if (!override.date) continue;
+    const current = blockedMap.get(override.date) || [];
+    if (override.isBlocked) {
+      current.push({
+        date: override.date,
+        countryCode: override.countryCode,
+        name: override.name,
+        source: 'manual',
+        overrideId: override.id,
+      });
+      blockedMap.set(override.date, current);
+    } else {
+      blockedMap.delete(override.date);
+    }
+  }
+  return {
+    holidays: [...blockedMap.values()].flat().sort((a, b) => String(a.date).localeCompare(String(b.date))),
+    overrides,
+    statuses,
+    blockedMap,
+  };
+}
+
+function cashflowBusinessDayAdjustment(originalDate, blockedMap) {
+  let current = originalDate;
+  let firstReason = null;
+  for (let guard = 0; guard < 30; guard += 1) {
+    const day = new Date(`${current}T00:00:00.000Z`).getUTCDay();
+    const holidayReasons = blockedMap.get(current) || [];
+    const weekend = day === 0 || day === 6;
+    if (!weekend && !holidayReasons.length) {
+      return {
+        date: current,
+        note: firstReason ? `Moved from ${originalDate} due to ${firstReason}` : null,
+      };
+    }
+    if (!firstReason) {
+      if (holidayReasons.length) {
+        firstReason = holidayReasons.map((item) => `${item.countryCode} ${item.name}`).join(', ');
+      } else {
+        firstReason = 'weekend';
+      }
+    }
+    current = addDays(current, 1);
+  }
+  return { date: originalDate, note: null };
+}
+
+function cashflowWeightedDelay(samples) {
+  const today = dateOnly(new Date());
+  let weightedTotal = 0;
+  let weightTotal = 0;
+  const recent = [];
+  for (const sample of samples) {
+    const age = Math.max(0, daysBetween(sample.paymentDate, today) ?? 0);
+    const weight = Math.pow(0.5, age / 90);
+    weightedTotal += Number(sample.delayDays || 0) * weight;
+    weightTotal += weight;
+    if (age <= 90) recent.push(sample);
+  }
+  if (!weightTotal) return 0;
+  const weighted = weightedTotal / weightTotal;
+  if (recent.length >= Math.min(3, samples.length)) {
+    const recentAverage = recent.reduce((sum, sample) => sum + Number(sample.delayDays || 0), 0) / recent.length;
+    return Math.round((weighted * 0.7) + (recentAverage * 0.3));
+  }
+  return Math.round(weighted);
+}
+
+function cashflowDelayModel(samples, level, minSamples) {
+  const usable = samples.filter((sample) => Number.isFinite(Number(sample.delayDays)));
+  if (!usable.length) return null;
+  const delay = Math.max(-15, Math.min(120, cashflowWeightedDelay(usable)));
+  return {
+    level,
+    predictedDelayDays: delay,
+    sampleCount: usable.length,
+    minSamples,
+    confidence: usable.length >= minSamples * 2 ? 'High' : usable.length >= minSamples ? 'Medium' : 'Low',
+  };
+}
+
+function cashflowBuildDelayModels(samples, settings) {
+  const byBuyer = new Map();
+  const byGroup = new Map();
+  for (const sample of samples) {
+    if (sample.buyerAccountId) {
+      if (!byBuyer.has(sample.buyerAccountId)) byBuyer.set(sample.buyerAccountId, []);
+      byBuyer.get(sample.buyerAccountId).push(sample);
+    }
+    if (sample.buyerGroupName) {
+      if (!byGroup.has(sample.buyerGroupName)) byGroup.set(sample.buyerGroupName, []);
+      byGroup.get(sample.buyerGroupName).push(sample);
+    }
+  }
+  const buyerModels = {};
+  for (const [id, rows] of byBuyer.entries()) {
+    const model = cashflowDelayModel(rows, 'Buyer', settings.minBuyerSamples);
+    if (model) buyerModels[id] = model;
+  }
+  const groupModels = {};
+  for (const [name, rows] of byGroup.entries()) {
+    const model = cashflowDelayModel(rows, 'Buyer Group', settings.minGroupSamples);
+    if (model) groupModels[name] = model;
+  }
+  const globalModel = cashflowDelayModel(samples, 'Global', 1) || {
+    level: 'Default',
+    predictedDelayDays: 0,
+    sampleCount: 0,
+    minSamples: 1,
+    confidence: 'Low',
+  };
+  return { buyerModels, groupModels, globalModel };
+}
+
+function cashflowSelectDelayModel(row, models, settings) {
+  const buyerModel = row.buyerAccountId ? models.buyerModels[row.buyerAccountId] : null;
+  if (buyerModel && buyerModel.sampleCount >= settings.minBuyerSamples) return buyerModel;
+  const groupModel = row.buyerGroupName ? models.groupModels[row.buyerGroupName] : null;
+  if (groupModel && groupModel.sampleCount >= settings.minGroupSamples) return groupModel;
+  return models.globalModel;
+}
+
+function cashflowPaymentText(payment, fields = []) {
+  return fields
+    .map((field) => payment?.[field])
+    .concat([payment?.Name, payment?.RecordType?.Name, payment?.RecordType?.DeveloperName])
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+async function cashflowBuyerPaymentSamples({ lookbackMonths }) {
+  const today = dateOnly(new Date());
+  const lookbackStart = addDays(today, -Math.max(1, Number(lookbackMonths || 12)) * 31);
+  const paymentDescribe = await salesforceObjectFields({ objectName: 'Payment__c' }).catch(() => ({ fields: [] }));
+  const paymentFields = paymentDescribe.fields || [];
+  const paymentFieldNames = new Set(paymentFields.map((field) => field.name));
+  const paymentFieldByName = Object.fromEntries(paymentFields.map((field) => [field.name, field]));
+  if (!paymentFieldNames.size) return { samples: [], warnings: ['Payment__c is not queryable.'] };
+  const dateField = firstAvailableField(paymentFieldNames, ['Date__c', 'Payment_Date__c', 'Received_Date__c', 'Paid_Date__c', 'CreatedDate']);
+  const amountField = firstAvailableField(paymentFieldNames, [
+    'Amount__c',
+    'Payment_Amount__c',
+    'Paid_Amount__c',
+    'Received_Amount__c',
+    'Total_Amount__c',
+    'Amount_Paid__c',
+    'Payment_Value__c',
+    'Actual_Amount__c',
+  ]);
+  if (!dateField || !amountField) return { samples: [], warnings: ['Payment__c date or amount field was not found.'] };
+  const supplierInvoiceLookupFields = incomingPaymentSupplierInvoiceFields(paymentFields);
+  const referenceFields = incomingPaymentReferenceFields(paymentFields);
+  const statusFields = selectedFields(paymentFieldNames, ['Status__c', 'Payment_Status__c']);
+  const typeFields = selectedFields(paymentFieldNames, ['Type__c', 'Payment_Type__c']);
+  const directionFields = incomingPaymentDirectionFields(paymentFields);
+  const dateType = paymentFieldByName[dateField]?.type || null;
+  const payments = await queryRows(`
+    SELECT ${[...new Set([
+      'Id',
+      ...selectedFields(paymentFieldNames, ['Name', 'CreatedDate', 'STEM__c', 'CurrencyIsoCode', 'Currency__c', 'RecordTypeId']),
+      paymentFieldNames.has('RecordTypeId') ? 'RecordType.Name' : null,
+      paymentFieldNames.has('RecordTypeId') ? 'RecordType.DeveloperName' : null,
+      dateField,
+      amountField,
+      ...supplierInvoiceLookupFields,
+      ...referenceFields,
+      ...statusFields,
+      ...typeFields,
+      ...directionFields,
+    ].filter(Boolean))].join(', ')}
+    FROM Payment__c
+    WHERE ${dateField} >= ${soqlDateValue(dateField, dateType, lookbackStart, false)}
+    ORDER BY ${dateField} DESC NULLS LAST
+    LIMIT 10000
+  `, { limit: 10000, softFail: true });
+  const eligiblePayments = payments
+    .filter((payment) => payment.STEM__c)
+    .filter((payment) => !incomingPaymentIsReceivableRemittance(payment))
+    .filter((payment) => !incomingPaymentSupplierInvoiceId(payment, supplierInvoiceLookupFields));
+  const stemIds = [...new Set(eligiblePayments.map((payment) => payment.STEM__c).filter(Boolean))];
+  if (!stemIds.length) return { samples: [], warnings: [] };
+
+  const stemDescribe = await salesforceObjectFields({ objectName: 'stem__c' }).catch(() => ({ fields: [] }));
+  const stemFieldNames = new Set((stemDescribe.fields || []).map((field) => field.name));
+  const accountDescribe = stemFieldNames.has('Account__c')
+    ? await salesforceObjectFields({ objectName: 'Account' }).catch(() => ({ fields: [] }))
+    : { fields: [] };
+  const accountFieldNames = new Set((accountDescribe.fields || []).map((field) => field.name));
+  const stemSelectFields = [
+    'Id',
+    'Name',
+    ...selectedFields(stemFieldNames, [
+      'KeyStem__c',
+      'Buyer_Name__c',
+      'Buyer__c',
+      'Account__c',
+      'Payment_Term__c',
+      'Invoice_Due_Date__c',
+      'Buyer_Pay_Term_Date__c',
+      'Due_Date__c',
+      'Delivery_Date__c',
+      'Delivery_Date_Or_Expected__c',
+      'Expected_Delivery_Date__c',
+    ]),
+  ];
+  if (stemFieldNames.has('Account__c')) {
+    stemSelectFields.push('Account__r.Name');
+    if (accountFieldNames.has('Group_Name__c')) stemSelectFields.push('Account__r.Group_Name__c');
+    if (accountFieldNames.has('ParentId')) stemSelectFields.push('Account__r.Parent.Name');
+  }
+  const stemMap = {};
+  for (const chunk of chunkIds(stemIds)) {
+    const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
+    const rows = await queryRows(`
+      SELECT ${[...new Set(stemSelectFields)].join(', ')}
+      FROM stem__c
+      WHERE Id IN (${inList})
+      LIMIT 5000
+    `, { limit: 5000, softFail: true });
+    for (const stem of rows) stemMap[stem.Id] = stem;
+  }
+
+  const textFields = [...referenceFields, ...directionFields, ...typeFields, ...statusFields];
+  const samples = [];
+  for (const payment of eligiblePayments) {
+    const stem = stemMap[payment.STEM__c];
+    if (!stem) continue;
+    const amount = incomingPaymentNumber(payment[amountField]);
+    if (amount == null || amount <= 0) continue;
+    const text = cashflowPaymentText(payment, textFields);
+    if (/(bank\s*charge|broker|commission|payable|supplier)/i.test(text)) continue;
+    if (incomingPaymentLooksBankCharge(payment, { referenceFields, directionFields, typeFields, statusFields })) continue;
+    const type = incomingPaymentTypeFromContext(payment, {
+      amount,
+      stem,
+      supplierInvoice: null,
+      supplierInvoiceFields: supplierInvoiceLookupFields,
+      directionFields,
+      typeFields,
+      statusFields,
+    });
+    if (type !== 'Buyer Payment') continue;
+    const dueDate = calculatedBuyerPayTermDate(stem)
+      || stem.Invoice_Due_Date__c
+      || stem.Due_Date__c
+      || stem.Buyer_Pay_Term_Date__c
+      || null;
+    const paymentDate = dateOnly(payment[dateField] || payment.CreatedDate);
+    if (!dueDate || !paymentDate) continue;
+    const account = stem['Account__r'] || {};
+    samples.push({
+      paymentId: payment.Id,
+      stemId: stem.Id,
+      stemName: formatStemName(stem),
+      buyerAccountId: stem.Account__c || null,
+      buyerName: incomingPaymentBuyerName(stem),
+      buyerGroupName: account.Group_Name__c || account.Parent?.Name || incomingPaymentBuyerName(stem),
+      dueDate,
+      paymentDate,
+      delayDays: daysBetween(dueDate, paymentDate),
+      amount,
+    });
+  }
+  return { samples, warnings: [] };
+}
+
+function cashflowBucketKey(date, bucket = 'daily') {
+  if (bucket === 'monthly') return String(date || '').slice(0, 7);
+  if (bucket === 'weekly') {
+    const value = new Date(`${date}T00:00:00.000Z`);
+    const day = value.getUTCDay() || 7;
+    value.setUTCDate(value.getUTCDate() - day + 1);
+    return dateOnly(value);
+  }
+  return date;
+}
+
+function cashflowBucketLabel(key, bucket = 'daily') {
+  if (!key) return '—';
+  if (bucket === 'monthly') return key;
+  if (bucket === 'weekly') return `Week of ${key}`;
+  return key;
+}
+
+function cashflowSummarizeRows(rows, bucket = 'daily') {
+  const totals = {
+    buyerReceipts: 0,
+    supplierPayments: 0,
+    netCashflow: 0,
+    overdueRiskReceipts: 0,
+    rowCount: rows.length,
+  };
+  const buckets = new Map();
+  const today = dateOnly(new Date());
+  for (const row of rows) {
+    const amount = Number(row.amount || 0);
+    if (row.direction === 'inflow') {
+      totals.buyerReceipts += amount;
+      if (row.sourceDueDate && row.sourceDueDate < today) totals.overdueRiskReceipts += amount;
+    } else {
+      totals.supplierPayments += amount;
+    }
+    const key = cashflowBucketKey(row.forecastDate, bucket);
+    if (!buckets.has(key)) buckets.set(key, { bucket: key, label: cashflowBucketLabel(key, bucket), inflow: 0, outflow: 0, net: 0 });
+    const current = buckets.get(key);
+    if (row.direction === 'inflow') current.inflow += amount;
+    if (row.direction === 'outflow') current.outflow += amount;
+    current.net = current.inflow - current.outflow;
+  }
+  totals.netCashflow = totals.buyerReceipts - totals.supplierPayments;
+  return {
+    totals,
+    buckets: [...buckets.values()].sort((a, b) => String(a.bucket).localeCompare(String(b.bucket))),
+  };
+}
+
+async function cashflowSupplierInvoiceRows({ dateTo, blockedMap }) {
+  const warnings = [];
+  const today = dateOnly(new Date());
+  const describe = await salesforceObjectFields({ objectName: 'Supplier_Invoice__c' }).catch(() => ({ fields: [] }));
+  const fields = describe.fields || [];
+  const fieldNames = new Set(fields.map((field) => field.name));
+  if (!fieldNames.size) return { rows: [], warnings: ['Supplier_Invoice__c is not queryable.'] };
+  const fieldByName = Object.fromEntries(fields.map((field) => [field.name, field]));
+  const stemField = firstAvailableField(fieldNames, ['STEM__c', 'Stem__c']);
+  const dueDateField = firstAvailableField(fieldNames, ['Invoice_Due_Date__c', 'Due_Date__c', 'Payment_Due_Date__c', 'Pay_Term_Date__c', 'Supplier_Pay_Term_Date__c']);
+  const payableField = firstAvailableField(fieldNames, ['Payable_Balance__c', 'Balance__c', 'Actual_Balance__c', 'Outstanding_Balance__c']);
+  const amountField = firstAvailableField(fieldNames, ['Invoice_Amount__c', 'Calculated_Amount__c', 'Amount__c', 'Total_Amount__c']);
+  const paidDateField = firstAvailableField(fieldNames, ['Payment_Date__c', 'Paid_Date__c', 'Date_Paid__c']);
+  const supplierFields = selectedFields(fieldNames, ['Supplier__c', 'Expected_Supplier__c', 'Substitute_Supplier__c']);
+  const supplierRelationships = supplierFields.map((field) => fieldByName[field]?.relationshipName).filter(Boolean);
+  if (!stemField || !dueDateField || (!payableField && !amountField)) {
+    return { rows: [], warnings: ['Supplier invoice STEM, due date, or amount fields were not found.'] };
+  }
+  const selectFields = [
+    'Id',
+    'Name',
+    stemField,
+    dueDateField,
+    payableField,
+    amountField,
+    paidDateField,
+    ...selectedFields(fieldNames, ['Supplier_Name__c', 'CurrencyIsoCode', 'Currency__c']),
+    ...supplierFields,
+    ...supplierRelationships.map((relationship) => `${relationship}.Name`),
+  ].filter(Boolean);
+  const whereParts = [
+    `${dueDateField} != null`,
+    `${dueDateField} <= ${dateTo}`,
+  ];
+  if (paidDateField) whereParts.push(`${paidDateField} = null`);
+  const invoices = await queryRows(`
+    SELECT ${[...new Set(selectFields)].join(', ')}
+    FROM Supplier_Invoice__c
+    WHERE ${whereParts.join(' AND ')}
+    ORDER BY ${dueDateField} ASC NULLS LAST
+    LIMIT 10000
+  `, { limit: 10000, softFail: true });
+  const stemIds = [...new Set(invoices.map((invoice) => invoice[stemField]).filter(Boolean))];
+  const stemMap = {};
+  if (stemIds.length) {
+    const stemDescribe = await salesforceObjectFields({ objectName: 'stem__c' }).catch(() => ({ fields: [] }));
+    const stemFieldNames = new Set((stemDescribe.fields || []).map((field) => field.name));
+    const stemSelectFields = [
+      'Id',
+      'Name',
+      ...selectedFields(stemFieldNames, ['KeyStem__c']),
+    ];
+    if (stemFieldNames.has('Vessel__c')) stemSelectFields.push('Vessel__r.Name');
+    if (stemFieldNames.has('Port__c')) stemSelectFields.push('Port__r.Name');
+    for (const chunk of chunkIds(stemIds)) {
+      const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
+      const stems = await queryRows(`
+        SELECT ${[...new Set(stemSelectFields)].join(', ')}
+        FROM stem__c
+        WHERE Id IN (${inList})
+        LIMIT 5000
+      `, { limit: 5000, softFail: true });
+      for (const stem of stems) stemMap[stem.Id] = stem;
+    }
+  }
+  const rows = [];
+  for (const invoice of invoices) {
+    const amount = Number(payableField ? invoice[payableField] : invoice[amountField]);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const sourceDueDate = invoice[dueDateField];
+    if (!sourceDueDate) continue;
+    const originalDate = sourceDueDate < today ? today : sourceDueDate;
+    const adjusted = cashflowBusinessDayAdjustment(originalDate, blockedMap);
+    const stem = stemMap[invoice[stemField]] || null;
+    const counterparty = supplierRelationships.map((relationship) => invoice[relationship]?.Name).find(Boolean)
+      || invoice.Supplier_Name__c
+      || supplierFields.map((field) => invoice[field]).find(Boolean)
+      || invoice.Name
+      || 'Supplier';
+    rows.push({
+      id: `supplier-${invoice.Id}`,
+      forecastDate: adjusted.date,
+      originalDate,
+      direction: 'outflow',
+      type: 'Supplier Payment',
+      stemId: invoice[stemField] || null,
+      stemName: stem ? formatStemName(stem) : invoice[stemField] || null,
+      counterparty,
+      buyerGroup: null,
+      amount,
+      currency: invoice.CurrencyIsoCode || invoice.Currency__c || 'USD',
+      sourceDueDate,
+      predictedDelayDays: 0,
+      modelLevel: 'Contractual due date',
+      sampleCount: null,
+      confidence: 'Certain',
+      holidayAdjustment: adjusted.note,
+      sourceRecordId: invoice.Id,
+      sourceRecordName: invoice.Name || null,
+    });
+  }
+  return { rows, warnings };
+}
+
+async function cashflowBuyerReceiptRows({ dateTo, settings, models, blockedMap }) {
+  const today = dateOnly(new Date());
+  const daysAhead = Math.max(0, Math.min(daysBetween(today, dateTo) ?? settings.horizonDays, 365));
+  const invoiceData = await salesforceBuyerInvoicesDue({ daysAhead });
+  const rows = [];
+  for (const invoice of invoiceData.rows || []) {
+    const amount = Number(invoice.receivableBalance || 0);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const dueDate = invoice.buyerInvoiceDueDate;
+    if (!dueDate) continue;
+    const model = cashflowSelectDelayModel(invoice, models, settings);
+    const predictedDate = addDays(dueDate, model.predictedDelayDays || 0);
+    const originalDate = predictedDate < today ? today : predictedDate;
+    const adjusted = cashflowBusinessDayAdjustment(originalDate, blockedMap);
+    rows.push({
+      id: `buyer-${invoice.stemId}`,
+      forecastDate: adjusted.date,
+      originalDate,
+      direction: 'inflow',
+      type: 'Buyer Receipt',
+      stemId: invoice.stemId,
+      stemName: invoice.stemName,
+      counterparty: invoice.buyerName || 'Buyer',
+      buyerGroup: invoice.buyerGroupName || invoice.buyerName || null,
+      amount,
+      currency: 'USD',
+      sourceDueDate: dueDate,
+      predictedDelayDays: model.predictedDelayDays,
+      modelLevel: model.level,
+      sampleCount: model.sampleCount,
+      confidence: model.confidence,
+      holidayAdjustment: adjusted.note,
+      buyerAccountId: invoice.buyerAccountId || null,
+      status: invoice.status || null,
+    });
+  }
+  return rows;
+}
+
+function cashflowPerformanceRows(samples, models) {
+  const buyerRows = Object.entries(models.buyerModels || {}).map(([buyerAccountId, model]) => {
+    const sample = samples.find((row) => row.buyerAccountId === buyerAccountId) || {};
+    return {
+      id: `buyer-${buyerAccountId}`,
+      level: 'Buyer',
+      name: sample.buyerName || buyerAccountId,
+      buyerGroup: sample.buyerGroupName || null,
+      predictedDelayDays: model.predictedDelayDays,
+      sampleCount: model.sampleCount,
+      confidence: model.confidence,
+    };
+  });
+  const groupRows = Object.entries(models.groupModels || {}).map(([groupName, model]) => ({
+    id: `group-${groupName}`,
+    level: 'Buyer Group',
+    name: groupName,
+    buyerGroup: groupName,
+    predictedDelayDays: model.predictedDelayDays,
+    sampleCount: model.sampleCount,
+    confidence: model.confidence,
+  }));
+  return [...buyerRows, ...groupRows]
+    .sort((a, b) => {
+      if (b.sampleCount !== a.sampleCount) return b.sampleCount - a.sampleCount;
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    })
+    .slice(0, 50);
+}
+
+async function cashflowForecast(body) {
+  const warnings = [];
+  const settings = await loadCashflowSettings();
+  const today = dateOnly(new Date());
+  const dateFrom = dateOnly(body.dateFrom || body.date_from || today);
+  const dateTo = dateOnly(body.dateTo || body.date_to || addDays(today, settings.horizonDays));
+  const bucket = ['daily', 'weekly', 'monthly'].includes(String(body.bucket || '').toLowerCase())
+    ? String(body.bucket).toLowerCase()
+    : 'daily';
+  const holidayData = await loadCashflowHolidayData(yearsBetween(dateFrom, addDays(dateTo, 14)), warnings);
+  const incomingSettings = await loadIncomingPaymentSettings();
+  const buyerSamplesData = await cashflowBuyerPaymentSamples({ lookbackMonths: settings.lookbackMonths });
+  warnings.push(...(buyerSamplesData.warnings || []));
+  const models = cashflowBuildDelayModels(buyerSamplesData.samples || [], settings);
+  const [buyerRows, supplierData] = await Promise.all([
+    cashflowBuyerReceiptRows({ dateTo, settings, models, blockedMap: holidayData.blockedMap }),
+    cashflowSupplierInvoiceRows({ dateTo, blockedMap: holidayData.blockedMap }),
+  ]);
+  warnings.push(...(supplierData.warnings || []));
+  const rows = [...buyerRows, ...(supplierData.rows || [])]
+    .filter((row) => row.forecastDate >= dateFrom && row.forecastDate <= dateTo)
+    .sort((a, b) => {
+      if (a.forecastDate !== b.forecastDate) return a.forecastDate.localeCompare(b.forecastDate);
+      if (a.direction !== b.direction) return a.direction.localeCompare(b.direction);
+      return String(a.counterparty || '').localeCompare(String(b.counterparty || ''));
+    });
+  const summary = cashflowSummarizeRows(rows, bucket);
+  return {
+    dateFrom,
+    dateTo,
+    bucket,
+    rows,
+    buckets: summary.buckets,
+    totals: summary.totals,
+    performance: cashflowPerformanceRows(buyerSamplesData.samples || [], models),
+    settings,
+    incomingPaymentSettings: incomingSettings,
+    holidays: holidayData.holidays,
+    holidayOverrides: holidayData.overrides,
+    holidaySourceStatus: holidayData.statuses,
+    warnings: [...new Set(warnings.filter(Boolean))],
+  };
+}
+
+async function cashflowBuyerPaymentPerformance(body) {
+  const baseSettings = await loadCashflowSettings();
+  const settings = {
+    ...baseSettings,
+    lookbackMonths: clampInteger(body.lookbackMonths, baseSettings.lookbackMonths, 1, 36),
+  };
+  const data = await cashflowBuyerPaymentSamples({ lookbackMonths: settings.lookbackMonths });
+  const models = cashflowBuildDelayModels(data.samples || [], settings);
+  return {
+    settings,
+    samples: data.samples || [],
+    performance: cashflowPerformanceRows(data.samples || [], models),
+    warnings: data.warnings || [],
+  };
+}
+
+async function cashflowSettingsGet(body, req) {
+  await requireActiveUser(req);
+  const today = dateOnly(new Date());
+  const settings = await loadCashflowSettings();
+  const years = Array.isArray(body.years) && body.years.length
+    ? body.years
+    : yearsBetween(today, addDays(today, settings.horizonDays + 14));
+  const holidayData = await loadCashflowHolidayData(years, []);
+  return {
+    settings,
+    holidayOverrides: holidayData.overrides,
+    holidaySourceStatus: holidayData.statuses,
+  };
+}
+
+async function cashflowSettingsSave(body, req) {
+  const { client, profile } = await requireAdministrator(req);
+  if (body.overrideAction === 'add') {
+    const date = dateOnly(body.date || body.holidayDate);
+    if (!date) throw appError('Blocked date is required.', 400);
+    const countryCode = String(body.countryCode || 'MANUAL').trim().toUpperCase().slice(0, 12) || 'MANUAL';
+    const payload = {
+      holiday_date: date,
+      country_code: countryCode,
+      name: String(body.name || 'Manual blocked date').trim() || 'Manual blocked date',
+      is_blocked: body.isBlocked !== false,
+      note: body.note ? String(body.note).trim() : null,
+      updated_by: profile.id,
+      updated_by_email: profile.email,
+      updated_at: new Date().toISOString(),
+      created_by: profile.id,
+      created_by_email: profile.email,
+    };
+    const { error } = await client
+      .from('cashflow_holiday_overrides')
+      .upsert(payload, { onConflict: 'holiday_date,country_code' });
+    if (error) throw error;
+    return cashflowSettingsGet({}, req);
+  }
+  if (body.overrideAction === 'delete') {
+    const id = body.id || body.overrideId;
+    if (!id) throw appError('Override id is required.', 400);
+    const { error } = await client.from('cashflow_holiday_overrides').delete().eq('id', id);
+    if (error) throw error;
+    return cashflowSettingsGet({}, req);
+  }
+  const payload = {
+    id: CASHFLOW_SETTINGS_ID,
+    horizon_days: clampInteger(body.horizonDays ?? body.horizon_days, DEFAULT_CASHFLOW_SETTINGS.horizonDays, 1, 365),
+    lookback_months: clampInteger(body.lookbackMonths ?? body.lookback_months, DEFAULT_CASHFLOW_SETTINGS.lookbackMonths, 1, 36),
+    min_buyer_samples: clampInteger(body.minBuyerSamples ?? body.min_buyer_samples, DEFAULT_CASHFLOW_SETTINGS.minBuyerSamples, 1, 100),
+    min_group_samples: clampInteger(body.minGroupSamples ?? body.min_group_samples, DEFAULT_CASHFLOW_SETTINGS.minGroupSamples, 1, 100),
+    updated_by: profile.id,
+    updated_by_email: profile.email,
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await client
+    .from('cashflow_forecast_settings')
+    .upsert(payload, { onConflict: 'id' })
+    .select('id,horizon_days,lookback_months,min_buyer_samples,min_group_samples,updated_by_email,updated_at')
+    .single();
+  if (error) throw error;
+  return { settings: serializeCashflowSettings(data), holidayOverrides: await loadCashflowHolidayOverrides() };
+}
+
+async function cashflowHolidayCalendar(body, req) {
+  await requireActiveUser(req);
+  const today = dateOnly(new Date());
+  const years = Array.isArray(body.years) && body.years.length ? body.years : [Number(today.slice(0, 4))];
+  const warnings = [];
+  const data = await loadCashflowHolidayData(years, warnings);
+  return {
+    holidays: data.holidays,
+    holidayOverrides: data.overrides,
+    holidaySourceStatus: data.statuses,
+    warnings,
+  };
 }
 
 function incomingPaymentNumber(value) {
@@ -8685,6 +9505,11 @@ const handlers = {
   incomingPaymentSettingsGet,
   incomingPaymentSettingsSave,
   incomingPaymentAllocationConfirm,
+  cashflowForecast,
+  cashflowBuyerPaymentPerformance,
+  cashflowSettingsGet,
+  cashflowSettingsSave,
+  cashflowHolidayCalendar,
   salesforceDisputeStems,
   salesforceDisputePartyUpdate,
   disputeBetaList,
