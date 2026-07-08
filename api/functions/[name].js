@@ -3446,6 +3446,7 @@ async function stemPnlFull(body) {
 
 async function salesforceBuyerInvoicesDue(body) {
   const daysAhead = Math.max(0, Math.min(Number(body.daysAhead) || 7, 365));
+  const receivableThreshold = Math.max(0, Number(body.receivableThreshold ?? body.receivable_threshold ?? 50) || 0);
   const rowLimit = 10000;
   const today = dateOnly(new Date());
   const dueThrough = addDays(today, daysAhead);
@@ -3497,7 +3498,7 @@ async function salesforceBuyerInvoicesDue(body) {
   const dueCondition = [storedDueCondition, calculatedDueCondition].filter(Boolean).join(' OR ');
   const outstandingConditions = [];
   if (fieldNames.includes('Payment_Date__c')) outstandingConditions.push('Payment_Date__c = null');
-  if (fieldNames.includes('Receivable_Balance__c')) outstandingConditions.push('Receivable_Balance__c >= 50');
+  if (fieldNames.includes('Receivable_Balance__c')) outstandingConditions.push(`Receivable_Balance__c >= ${receivableThreshold}`);
   const whereParts = [`(${dueCondition})`, ...outstandingConditions];
 
   const stems = await queryRows(`
@@ -3660,7 +3661,7 @@ async function salesforceBuyerInvoicesDue(body) {
       if (!dueDate || dueDate > dueThrough) return null;
       if (dueDate < MIN_BUYER_INVOICE_DUE_DATE) return null;
       if (stem.KeyStem__c && stem.KeyStem__c.startsWith('T')) return null;
-      if (stem.Receivable_Balance__c != null && Number(stem.Receivable_Balance__c) < 50) return null;
+      if (stem.Receivable_Balance__c != null && Number(stem.Receivable_Balance__c) < receivableThreshold) return null;
       const daysUntilDue = daysBetween(today, dueDate);
       const account = stem['Account__r'] || {};
       const traderInfo = traderByStem[stem.Id] || {};
@@ -3737,7 +3738,7 @@ async function salesforceBuyerInvoicesDue(body) {
     ? rowsWithCollection.filter((row) => splitBuyerTraderNames(row.buyerTraderInCharge).some((name) => activeBuyerTraderSet.has(name)))
     : rowsWithCollection;
 
-  return { rows, today, dueThrough, daysAhead, buyerTraderOptions, selectedBuyerTraders: activeBuyerTraders, hasBuyerTraderFilter };
+  return { rows, today, dueThrough, daysAhead, receivableThreshold, buyerTraderOptions, selectedBuyerTraders: activeBuyerTraders, hasBuyerTraderFilter };
 }
 
 const INCOMING_PAYMENT_SETTINGS_ID = 'default';
@@ -4398,10 +4399,10 @@ async function cashflowSupplierInvoiceRows({ dateTo, blockedMap }) {
   return { rows, warnings };
 }
 
-async function cashflowBuyerReceiptRows({ dateTo, settings, models, blockedMap }) {
+async function cashflowBuyerReceiptRows({ dateTo, settings, models, blockedMap, receivableThreshold }) {
   const today = dateOnly(new Date());
   const daysAhead = Math.max(0, Math.min(daysBetween(today, dateTo) ?? settings.horizonDays, 365));
-  const invoiceData = await salesforceBuyerInvoicesDue({ daysAhead });
+  const invoiceData = await salesforceBuyerInvoicesDue({ daysAhead, receivableThreshold });
   const rows = [];
   for (const invoice of invoiceData.rows || []) {
     const amount = Number(invoice.receivableBalance || 0);
@@ -4478,11 +4479,12 @@ async function cashflowForecast(body) {
     : 'daily';
   const holidayData = await loadCashflowHolidayData(yearsBetween(dateFrom, addDays(dateTo, 14)), warnings);
   const incomingSettings = await loadIncomingPaymentSettings();
+  const receivableThreshold = Number(incomingSettings.fullyPaidThreshold ?? DEFAULT_INCOMING_PAYMENT_SETTINGS.fullyPaidThreshold);
   const buyerSamplesData = await cashflowBuyerPaymentSamples({ lookbackMonths: settings.lookbackMonths });
   warnings.push(...(buyerSamplesData.warnings || []));
   const models = cashflowBuildDelayModels(buyerSamplesData.samples || [], settings);
   const [buyerRows, supplierData] = await Promise.all([
-    cashflowBuyerReceiptRows({ dateTo, settings, models, blockedMap: holidayData.blockedMap }),
+    cashflowBuyerReceiptRows({ dateTo, settings, models, blockedMap: holidayData.blockedMap, receivableThreshold }),
     cashflowSupplierInvoiceRows({ dateTo, blockedMap: holidayData.blockedMap }),
   ]);
   warnings.push(...(supplierData.warnings || []));
