@@ -1617,6 +1617,10 @@ function daysBetween(fromDate, toDate) {
   return Math.round((to - from) / 86400000);
 }
 
+function isBeforeCashflowForecastStart(dateString) {
+  return Boolean(dateString && String(dateString).slice(0, 10) < CASHFLOW_FORECAST_START_DATE);
+}
+
 const FRANKFURTER_PROVIDER_DETAILS = {
   blended: {
     key: 'blended',
@@ -1705,6 +1709,7 @@ function traderEmailLookupKey(value) {
 }
 
 const MIN_BUYER_INVOICE_DUE_DATE = '2026-01-01';
+const CASHFLOW_FORECAST_START_DATE = '2026-01-01';
 const INVOICE_TABLE_TOKEN_PATTERN = /\{\{\s*invoiceTable\s*\}\}/i;
 const DEFAULT_BUYER_INVOICE_EMAIL_SETTINGS = {
   enabled: true,
@@ -3681,6 +3686,7 @@ async function salesforceBuyerInvoicesDue(body) {
         invoiceAmount: stem.Total_Invoice_Amount__c ?? null,
         receivableBalance: stem.Receivable_Balance__c ?? null,
         buyerInvoiceDueDate: dueDate,
+        deliveryDate: stem.Delivery_Date__c || null,
         buyerTraderInCharge: (traderInfo.buyer?.length ? traderInfo.buyer : traderInfo.all || []).join(', ') || null,
         buyerAccountsEmail: account.Accounts_Email__c || null,
         buyerTraderEmail: buyerTraderEmails.join(', ') || null,
@@ -4111,7 +4117,7 @@ function cashflowPaymentText(payment, fields = []) {
 
 async function cashflowBuyerPaymentSamples({ lookbackMonths }) {
   const today = dateOnly(new Date());
-  const lookbackStart = addDays(today, -Math.max(1, Number(lookbackMonths || 12)) * 31);
+  const lookbackStart = [addDays(today, -Math.max(1, Number(lookbackMonths || 12)) * 31), CASHFLOW_FORECAST_START_DATE].sort().at(-1);
   const paymentDescribe = await salesforceObjectFields({ objectName: 'Payment__c' }).catch(() => ({ fields: [] }));
   const paymentFields = paymentDescribe.fields || [];
   const paymentFieldNames = new Set(paymentFields.map((field) => field.name));
@@ -4206,6 +4212,7 @@ async function cashflowBuyerPaymentSamples({ lookbackMonths }) {
   for (const payment of eligiblePayments) {
     const stem = stemMap[payment.STEM__c];
     if (!stem) continue;
+    if (isBeforeCashflowForecastStart(stem.Delivery_Date__c)) continue;
     const amount = incomingPaymentNumber(payment[amountField]);
     if (amount == null || amount <= 0) continue;
     const text = cashflowPaymentText(payment, textFields);
@@ -4228,6 +4235,7 @@ async function cashflowBuyerPaymentSamples({ lookbackMonths }) {
       || null;
     const paymentDate = dateOnly(payment[dateField] || payment.CreatedDate);
     if (!dueDate || !paymentDate) continue;
+    if (isBeforeCashflowForecastStart(paymentDate)) continue;
     const account = stem['Account__r'] || {};
     samples.push({
       paymentId: payment.Id,
@@ -4345,7 +4353,7 @@ async function cashflowSupplierInvoiceRows({ dateTo, blockedMap }) {
     const stemSelectFields = [
       'Id',
       'Name',
-      ...selectedFields(stemFieldNames, ['KeyStem__c']),
+      ...selectedFields(stemFieldNames, ['KeyStem__c', 'Delivery_Date__c']),
     ];
     if (stemFieldNames.has('Vessel__c')) stemSelectFields.push('Vessel__r.Name');
     if (stemFieldNames.has('Port__c')) stemSelectFields.push('Port__r.Name');
@@ -4369,6 +4377,7 @@ async function cashflowSupplierInvoiceRows({ dateTo, blockedMap }) {
     const originalDate = sourceDueDate < today ? today : sourceDueDate;
     const adjusted = cashflowBusinessDayAdjustment(originalDate, blockedMap);
     const stem = stemMap[invoice[stemField]] || null;
+    if (isBeforeCashflowForecastStart(stem?.Delivery_Date__c)) continue;
     const counterparty = supplierRelationships.map((relationship) => invoice[relationship]?.Name).find(Boolean)
       || invoice.Supplier_Name__c
       || supplierFields.map((field) => invoice[field]).find(Boolean)
@@ -4405,6 +4414,7 @@ async function cashflowBuyerReceiptRows({ dateTo, settings, models, blockedMap, 
   const invoiceData = await salesforceBuyerInvoicesDue({ daysAhead, receivableThreshold });
   const rows = [];
   for (const invoice of invoiceData.rows || []) {
+    if (isBeforeCashflowForecastStart(invoice.deliveryDate)) continue;
     const amount = Number(invoice.receivableBalance || 0);
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const dueDate = invoice.buyerInvoiceDueDate;

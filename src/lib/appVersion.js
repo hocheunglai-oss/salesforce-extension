@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.37';
+export const APP_VERSION = '1.0.38';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.38',
+    releasedAt: '2026-07-08',
+    title: 'Cashflow forecast date floor',
+    changes: [
+      'Excluded buyer payment performance before 1 Jan 2026 from Cashflow Forecast modelling.',
+      'Excluded receivable and payable forecast rows for STEMs delivered before 1 Jan 2026.',
+    ],
+  },
   {
     version: '1.0.37',
     releasedAt: '2026-07-08',
