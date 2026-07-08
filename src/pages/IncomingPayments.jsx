@@ -52,6 +52,11 @@ ${BUYER_CIA_TABLE_TOKEN}`,
 };
 
 const EMAIL_TABLE_TOKENS = [
+  { label: 'Incoming Total', token: '{{incomingTotal}}' },
+  { label: 'Buyer Payments', token: '{{buyerPaymentTotal}}' },
+  { label: 'Supplier Refunds', token: '{{supplierRefundTotal}}' },
+  { label: 'Incoming Records', token: '{{receivablePaymentCount}}' },
+  { label: 'Needs Review', token: '{{needsReviewCount}}' },
   { label: 'Receivable Payments Table', token: RECEIVABLE_PAYMENTS_TABLE_TOKEN },
   { label: 'Buyer CIA Invoices Table', token: BUYER_CIA_TABLE_TOKEN },
 ];
@@ -195,6 +200,7 @@ export default function IncomingPayments() {
   const [emailPreview, setEmailPreview] = useState(null);
   const [emailError, setEmailError] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
+  const [interestRequestLoading, setInterestRequestLoading] = useState({});
   const emailContentRef = useRef(null);
 
   const updatePageState = (patch) => {
@@ -267,6 +273,73 @@ export default function IncomingPayments() {
   const threshold = data?.settings?.fullyPaidThreshold ?? 50;
   const lastMeta = data?.dateFrom && data?.dateTo ? `${fmtDate(data.dateFrom)} to ${fmtDate(data.dateTo)}` : null;
 
+  const markInterestInvoiceRequested = (paymentId, notification) => {
+    updatePageState((prev) => ({
+      data: prev.data ? {
+        ...prev.data,
+        rows: (prev.data.rows || []).map((row) => (
+          (row.paymentId || row.id) === paymentId
+            ? {
+                ...row,
+                interestInvoiceNotificationSent: true,
+                interestInvoiceNotification: notification || row.interestInvoiceNotification || null,
+              }
+            : row
+        )),
+      } : prev.data,
+    }));
+  };
+
+  const sendInterestInvoiceRequest = async (row) => {
+    const paymentId = row.paymentId || row.id;
+    if (!paymentId) return;
+    setInterestRequestLoading((prev) => ({ ...prev, [paymentId]: true }));
+    try {
+      const delivery = incomingPaymentSmtpCredentials(emailSettings.from || DEFAULT_EMAIL_SETTINGS.from);
+      const res = await appClient.functions.invoke('incomingPaymentInterestInvoiceRequest', {
+        paymentId,
+        paymentName: row.paymentName || row.paymentDisplayName || row.salesforcePaymentName,
+        stemId: row.stemId,
+        stemName: row.stemName,
+        buyerName: row.buyerName || row.partyName,
+        partyName: row.partyName,
+        buyerGroupName: row.buyerGroupName,
+        paymentDate: row.paymentDate,
+        createdDate: row.createdDate,
+        delayDays: row.delayDays,
+        amount: row.amount,
+        currency: row.currency,
+        receivableBalance: row.receivableBalance,
+        from: emailSettings.from || DEFAULT_EMAIL_SETTINGS.from,
+        credentials: delivery.credentials,
+      });
+      if (res.data?.error) {
+        toast({ title: 'Interest invoice request failed', description: res.data.error, variant: 'destructive' });
+        return;
+      }
+      markInterestInvoiceRequested(paymentId, res.data?.notification || null);
+      const senderNote = delivery.label ? ` using ${delivery.label}` : '';
+      toast({
+        title: res.data?.alreadySent ? 'Interest invoice already requested' : 'Interest invoice request sent',
+        description: res.data?.alreadySent
+          ? 'This payment already has a recorded request.'
+          : `Louisa has been notified${senderNote}.`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Interest invoice request failed',
+        description: error?.message || 'Unexpected error while sending the notification.',
+        variant: 'destructive',
+      });
+    } finally {
+      setInterestRequestLoading((prev) => {
+        const next = { ...prev };
+        delete next[paymentId];
+        return next;
+      });
+    }
+  };
+
   const receivableColumns = useMemo(() => [
     { id: 'status', header: 'Status', cell: (row) => <PaymentStatusBadge row={row} /> },
     {
@@ -279,7 +352,7 @@ export default function IncomingPayments() {
         return (
           <div>
             <div>{fmtDate(row.paymentDate)}</div>
-            {inserted && <div className="text-xs text-muted-foreground">{inserted}</div>}
+            {inserted && <div className="text-xs font-semibold text-amber-700">{inserted}</div>}
           </div>
         );
       },
@@ -333,7 +406,37 @@ export default function IncomingPayments() {
         </span>
       ),
     },
-  ], []);
+    {
+      id: 'interestInvoice',
+      header: 'Interest Invoice',
+      headerClassName: 'text-right whitespace-nowrap',
+      cellClassName: 'text-right whitespace-nowrap',
+      cell: (row) => {
+        const paymentId = row.paymentId || row.id;
+        const eligible = row.type === 'Buyer Payment' && Number(row.delayDays) > 3;
+        if (!eligible) return <span className="text-muted-foreground">N/A</span>;
+        const sent = Boolean(row.interestInvoiceNotificationSent);
+        const loadingRequest = Boolean(interestRequestLoading[paymentId]);
+        const sentLabel = row.interestInvoiceNotification?.sentAt ? `Requested ${fmtDate(row.interestInvoiceNotification.sentAt)}` : 'Requested';
+        return (
+          <Button
+            variant={sent ? 'secondary' : 'outline'}
+            size="sm"
+            disabled={sent || loadingRequest}
+            title={sentLabel}
+            className={cn(sent && 'bg-slate-700 text-white hover:bg-slate-700 disabled:opacity-100')}
+            onClick={(event) => {
+              event.stopPropagation();
+              sendInterestInvoiceRequest(row);
+            }}
+          >
+            {loadingRequest ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}
+            {sent ? 'Requested' : 'Request'}
+          </Button>
+        );
+      },
+    },
+  ], [interestRequestLoading, sendInterestInvoiceRequest]);
 
   const ciaColumns = useMemo(() => [
     { id: 'buyer', header: 'Buyer', cellClassName: 'min-w-[220px] text-sm font-medium', cell: (row) => row.buyerName || '-' },

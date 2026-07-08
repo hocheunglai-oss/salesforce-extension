@@ -1,6 +1,17 @@
-export const APP_VERSION = '1.0.10';
+export const APP_VERSION = '1.0.11';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.11',
+    releasedAt: '2026-07-08',
+    title: 'Incoming payment interest request workflow',
+    changes: [
+      'Matched Inserted On payment date styling with the bank charge amber treatment on screen and in email tables.',
+      'Added Incoming Payment KPI variables as draggable email template tokens.',
+      'Added a late payment interest invoice request button for buyer payments delayed more than 3 days.',
+      'Recorded each interest invoice request in Supabase so requested buttons stay disabled after refresh.',
+    ],
+  },
   {
     version: '1.0.10',
     releasedAt: '2026-07-08',

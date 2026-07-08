@@ -289,6 +289,7 @@ const HANDLER_MODULE_ACCESS = {
   outstandingBuyerInvoicesEmailReport: ['buyer_invoices'],
   incomingPaymentsList: ['incoming_payments'],
   incomingPaymentEmailReport: ['incoming_payments'],
+  incomingPaymentInterestInvoiceRequest: ['incoming_payments'],
   incomingPaymentSettingsGet: ['incoming_payments'],
   incomingPaymentSettingsSave: ['incoming_payments'],
   incomingPaymentAllocationConfirm: ['incoming_payments'],
@@ -4687,7 +4688,17 @@ async function incomingPaymentsList(body) {
   }
   rows.push(...ungroupedBankCharges);
 
-  const includedIncomingRows = rows.filter((row) => row.isIncoming);
+  const interestNotificationMap = await loadIncomingPaymentInterestNotificationMap(rows.map((row) => row.paymentId || row.id));
+  const rowsWithInterestNotifications = rows.map((row) => {
+    const notification = interestNotificationMap[row.paymentId || row.id] || null;
+    return {
+      ...row,
+      interestInvoiceNotification: notification,
+      interestInvoiceNotificationSent: Boolean(notification),
+    };
+  });
+
+  const includedIncomingRows = rowsWithInterestNotifications.filter((row) => row.isIncoming);
   const buyerCiaInvoices = await incomingBuyerCiaInvoices({ threshold });
   const availableBalances = Object.values(availableBalancesByGroup)
     .map((group) => ({
@@ -4699,7 +4710,7 @@ async function incomingPaymentsList(body) {
     .sort((a, b) => b.totalAvailableBalance - a.totalAvailableBalance);
 
   return {
-    rows,
+    rows: rowsWithInterestNotifications,
     buyerCiaInvoices,
     availableBalances,
     settings,
@@ -4720,13 +4731,13 @@ async function incomingPaymentsList(body) {
       'Supplier-invoice-linked negative payments are classified as supplier refunds. Confirm if Salesforce uses the opposite sign.',
     ].filter(Boolean),
     summary: {
-      totalRows: rows.length,
+      totalRows: rowsWithInterestNotifications.length,
       incomingRows: includedIncomingRows.length,
       totalIncomingAmount: includedIncomingRows.reduce((sum, row) => sum + Math.abs(Number(row.incomingAmount || 0)), 0),
-      buyerPaymentTotal: rows.filter((row) => row.type === 'Buyer Payment').reduce((sum, row) => sum + Math.abs(Number(row.incomingAmount || 0)), 0),
-      supplierRefundTotal: rows.filter((row) => row.type === 'Supplier Refund').reduce((sum, row) => sum + Math.abs(Number(row.incomingAmount || 0)), 0),
-      unmatchedCount: rows.filter((row) => row.type === 'Unmatched' || row.status === 'Needs review').length,
-      fullyPaidCount: rows.filter((row) => row.status === 'Fully paid').length,
+      buyerPaymentTotal: rowsWithInterestNotifications.filter((row) => row.type === 'Buyer Payment').reduce((sum, row) => sum + Math.abs(Number(row.incomingAmount || 0)), 0),
+      supplierRefundTotal: rowsWithInterestNotifications.filter((row) => row.type === 'Supplier Refund').reduce((sum, row) => sum + Math.abs(Number(row.incomingAmount || 0)), 0),
+      unmatchedCount: rowsWithInterestNotifications.filter((row) => row.type === 'Unmatched' || row.status === 'Needs review').length,
+      fullyPaidCount: rowsWithInterestNotifications.filter((row) => row.status === 'Fully paid').length,
       availableBalanceTotal: availableBalances.reduce((sum, group) => sum + Number(group.totalAvailableBalance || 0), 0),
       availableBalanceCount: availableBalances.reduce((sum, group) => sum + (group.stems?.length || 0), 0),
     },
@@ -4738,6 +4749,237 @@ async function incomingPaymentAllocationConfirm(body, req) {
   const buyerGroupName = String(body.buyerGroupName || body.buyer_group_name || '').trim();
   if (!buyerGroupName) throw appError('Buyer group is required.', 400);
   throw appError('Salesforce payment allocation write-back is not enabled yet. Confirm the Salesforce object and fields for applying available buyer balances to another STEM.', 501);
+}
+
+const INCOMING_PAYMENT_INTEREST_RECIPIENT = 'louisa@cosulich.com.hk';
+const INCOMING_PAYMENT_INTEREST_NOTIFICATION_FIELDS = [
+  'id',
+  'payment_id',
+  'payment_name',
+  'stem_id',
+  'stem_name',
+  'buyer_name',
+  'buyer_group_name',
+  'received_date',
+  'payment_created_date',
+  'delay_days',
+  'amount',
+  'currency',
+  'receivable_balance',
+  'recipient_email',
+  'email_subject',
+  'email_message_id',
+  'email_provider',
+  'actor_user_id',
+  'actor_email',
+  'actor_name',
+  'sent_at',
+  'created_at',
+].join(',');
+
+function incomingPaymentDbNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Number(number.toFixed(2)) : null;
+}
+
+function incomingPaymentDbDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function serializeIncomingPaymentInterestNotification(row = null) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    paymentId: row.payment_id,
+    paymentName: row.payment_name,
+    stemId: row.stem_id,
+    stemName: row.stem_name,
+    buyerName: row.buyer_name,
+    buyerGroupName: row.buyer_group_name,
+    receivedDate: row.received_date,
+    paymentCreatedDate: row.payment_created_date,
+    delayDays: row.delay_days,
+    amount: incomingPaymentNumber(row.amount),
+    currency: row.currency,
+    receivableBalance: incomingPaymentNumber(row.receivable_balance),
+    recipientEmail: row.recipient_email,
+    emailSubject: row.email_subject,
+    emailMessageId: row.email_message_id,
+    emailProvider: row.email_provider,
+    actorUserId: row.actor_user_id,
+    actorEmail: row.actor_email,
+    actorName: row.actor_name,
+    sentAt: row.sent_at,
+    createdAt: row.created_at,
+  };
+}
+
+function incomingPaymentInterestTableUnavailable(error) {
+  return error?.code === '42P01' || /incoming_payment_interest_notifications/i.test(error?.message || '');
+}
+
+async function loadIncomingPaymentInterestNotificationMap(paymentIds = []) {
+  const client = safeSupabaseAdminClient();
+  if (!client) return {};
+  const ids = [...new Set(paymentIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) return {};
+  const notifications = {};
+  for (const chunk of chunkIds(ids, 500)) {
+    const { data, error } = await client
+      .from('incoming_payment_interest_notifications')
+      .select(INCOMING_PAYMENT_INTEREST_NOTIFICATION_FIELDS)
+      .in('payment_id', chunk);
+    if (error) {
+      if (!incomingPaymentInterestTableUnavailable(error)) {
+        console.error('Failed to load incoming payment interest notifications', error.message);
+      }
+      return {};
+    }
+    for (const row of data || []) notifications[row.payment_id] = serializeIncomingPaymentInterestNotification(row);
+  }
+  return notifications;
+}
+
+async function fetchIncomingPaymentInterestNotification(client, paymentId) {
+  const { data, error } = await client
+    .from('incoming_payment_interest_notifications')
+    .select(INCOMING_PAYMENT_INTEREST_NOTIFICATION_FIELDS)
+    .eq('payment_id', paymentId)
+    .maybeSingle();
+  if (error) {
+    if (incomingPaymentInterestTableUnavailable(error)) {
+      throw appError('Missing Supabase table incoming_payment_interest_notifications. Run the latest Supabase migration before requesting late payment interest invoices.', 500);
+    }
+    throw error;
+  }
+  return serializeIncomingPaymentInterestNotification(data);
+}
+
+function buildIncomingPaymentInterestEmail(body, profile) {
+  const requestedBy = profile?.full_name || profile?.email || 'Logged-in user';
+  const paymentName = String(body.paymentName || body.paymentDisplayName || body.salesforcePaymentName || body.paymentId || '').trim();
+  const stemName = String(body.stemName || '').trim();
+  const buyerName = String(body.buyerName || body.partyName || '').trim();
+  const buyerGroupName = String(body.buyerGroupName || '').trim();
+  const subject = `Late Payment Interest Invoice Request - ${stemName || paymentName || body.paymentId}`;
+  const receivedDate = prettyDate(body.paymentDate || body.receivedDate);
+  const insertedDate = body.createdDate && dateOnly(body.createdDate) !== dateOnly(body.paymentDate || body.receivedDate)
+    ? prettyDate(body.createdDate)
+    : null;
+  const delayLabel = body.delayDays == null ? '-' : `${Number(body.delayDays).toLocaleString()} Days`;
+  const rows = [
+    ['Requested by', `${requestedBy}${profile?.email && profile.email !== requestedBy ? ` (${profile.email})` : ''}`],
+    ['Buyer', buyerName || '-'],
+    ['Group', buyerGroupName || '-'],
+    ['STEM', stemName || '-'],
+    ['Payment', paymentName || body.paymentId || '-'],
+    ['Received date', receivedDate],
+    ...(insertedDate ? [['Inserted on', insertedDate]] : []),
+    ['Payment terms delay', delayLabel],
+    ['Payment amount', money(body.amount)],
+    ['Receivable balance', money(body.receivableBalance)],
+  ];
+  const tableRows = rows.map(([label, value]) => `
+    <tr>
+      <th style="border-bottom:1px solid #e5e7eb;padding:8px;text-align:left;color:#667085;width:180px">${escapeHtml(label)}</th>
+      <td style="border-bottom:1px solid #e5e7eb;padding:8px;color:#1f2937">${escapeHtml(value)}</td>
+    </tr>`).join('');
+  const html = `
+    <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">
+      <h2 style="margin:0 0 10px;font-size:18px">Late Payment Interest Invoice Request</h2>
+      <p style="margin:0 0 12px;color:#667085">${escapeHtml(requestedBy)} is requesting Louisa to issue a late payment interest invoice for the following delayed buyer payment.</p>
+      <table style="border-collapse:collapse;width:100%;max-width:760px;font-size:13px">${tableRows}</table>
+    </div>`;
+  const text = [
+    'Late Payment Interest Invoice Request',
+    '',
+    `${requestedBy} is requesting Louisa to issue a late payment interest invoice for the following delayed buyer payment.`,
+    '',
+    ...rows.map(([label, value]) => `${label}: ${value}`),
+  ].join('\n');
+  return { subject, html, text };
+}
+
+async function incomingPaymentInterestInvoiceRequest(body = {}, req = null) {
+  const { client, profile } = await requireActiveUser(req);
+  const paymentId = String(body.paymentId || body.payment_id || '').trim();
+  if (!paymentId) throw appError('paymentId is required.', 400);
+
+  const delayDays = Number(body.delayDays ?? body.delay_days);
+  if (!Number.isFinite(delayDays) || delayDays <= 3) {
+    throw appError('Late payment interest invoice request is only available for buyer payments delayed more than 3 days.', 400);
+  }
+
+  const existing = await fetchIncomingPaymentInterestNotification(client, paymentId);
+  if (existing) return { sent: false, alreadySent: true, notification: existing };
+
+  const email = buildIncomingPaymentInterestEmail({ ...body, delayDays, paymentId }, profile);
+  const credentials = body.credentials || {};
+  const from = String(body.from || DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS.from);
+  const useSmtp = credentials.method === 'smtp' || credentials.smtp || (!process.env.RESEND_API_KEY && process.env.SMTP_HOST);
+  const smtpFrom = credentials.smtp?.from || credentials.from || from;
+  const result = useSmtp
+    ? await sendWithSmtp({
+        smtp: credentials.smtp || credentials,
+        from: smtpFrom,
+        to: [INCOMING_PAYMENT_INTEREST_RECIPIENT],
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      })
+    : await sendWithResend({
+        from,
+        to: [INCOMING_PAYMENT_INTEREST_RECIPIENT],
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      });
+
+  const payload = {
+    payment_id: paymentId,
+    payment_name: String(body.paymentName || body.paymentDisplayName || body.salesforcePaymentName || '').trim() || null,
+    stem_id: String(body.stemId || '').trim() || null,
+    stem_name: String(body.stemName || '').trim() || null,
+    buyer_name: String(body.buyerName || body.partyName || '').trim() || null,
+    buyer_group_name: String(body.buyerGroupName || '').trim() || null,
+    received_date: incomingPaymentDbDate(body.paymentDate || body.receivedDate),
+    payment_created_date: incomingPaymentDbDate(body.createdDate),
+    delay_days: Math.trunc(delayDays),
+    amount: incomingPaymentDbNumber(body.amount),
+    currency: String(body.currency || 'USD').trim() || 'USD',
+    receivable_balance: incomingPaymentDbNumber(body.receivableBalance),
+    recipient_email: INCOMING_PAYMENT_INTEREST_RECIPIENT,
+    email_subject: email.subject,
+    email_message_id: result.id || null,
+    email_provider: useSmtp ? 'smtp' : 'resend',
+    actor_user_id: profile.id,
+    actor_email: profile.email,
+    actor_name: profile.full_name || profile.email || null,
+    metadata: {
+      source: 'incoming_payment',
+      delayThresholdDays: 3,
+      requestedAtTimezone: 'Asia/Hong_Kong',
+    },
+  };
+
+  const { data, error } = await client
+    .from('incoming_payment_interest_notifications')
+    .insert(payload)
+    .select(INCOMING_PAYMENT_INTEREST_NOTIFICATION_FIELDS)
+    .single();
+  if (error?.code === '23505') {
+    const existingAfterSend = await fetchIncomingPaymentInterestNotification(client, paymentId);
+    return { sent: true, alreadySent: true, notification: existingAfterSend };
+  }
+  if (error) throw error;
+  return {
+    sent: true,
+    alreadySent: false,
+    to: [INCOMING_PAYMENT_INTEREST_RECIPIENT],
+    notification: serializeIncomingPaymentInterestNotification(data),
+  };
 }
 
 const INCOMING_PAYMENT_RECEIVABLE_TABLE_TOKEN_PATTERN = /\{\{\s*receivablePaymentsTable\s*\}\}/i;
@@ -4822,7 +5064,7 @@ function incomingPaymentReceivableTableHtml(rows = []) {
     return `
       <tr>
         <td style="${cell};white-space:nowrap"><span style="display:inline-block;border:1px solid;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;${incomingPaymentStatusPill(row.type)}">${escapeHtml(row.type || '-')}</span></td>
-        <td style="${cell};white-space:nowrap">${prettyDate(row.paymentDate)}${incomingPaymentInsertedNote(row) ? `<span style="display:block;color:#667085;font-size:11px">Inserted on ${prettyDate(row.createdDate)}</span>` : ''}</td>
+        <td style="${cell};white-space:nowrap">${prettyDate(row.paymentDate)}${incomingPaymentInsertedNote(row) ? `<span style="display:block;color:#92400e;font-size:11px;font-weight:600">Inserted on ${prettyDate(row.createdDate)}</span>` : ''}</td>
         <td style="${cell};white-space:nowrap">${escapeHtml(row.type === 'Buyer Payment' ? row.paymentTerms || '-' : 'N/A')}</td>
         <td style="${cell};white-space:nowrap;text-align:right">${row.type === 'Buyer Payment' ? (row.delayDays == null ? '-' : `${Number(row.delayDays).toLocaleString()} Days`) : 'N/A'}</td>
         <td style="${cell};min-width:160px">${escapeHtml(row.partyName || '-')}</td>
@@ -7810,6 +8052,7 @@ const handlers = {
   outstandingBuyerInvoicesEmailCron,
   incomingPaymentsList,
   incomingPaymentEmailReport,
+  incomingPaymentInterestInvoiceRequest,
   incomingPaymentSettingsGet,
   incomingPaymentSettingsSave,
   incomingPaymentAllocationConfirm,
