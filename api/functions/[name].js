@@ -4297,6 +4297,44 @@ function incomingPaymentStatus({ type, amount, stem, supplierInvoice, threshold 
   return { label: 'Partially paid', tone: 'blue' };
 }
 
+function incomingPaymentBankChargeTarget(charge, rows = []) {
+  if (!charge?.stemId || charge.type !== 'Buyer Payment') return null;
+  const chargeAmount = Math.abs(Number(charge.amount || 0));
+  if (!Number.isFinite(chargeAmount) || chargeAmount <= 0 || chargeAmount > 1000) return null;
+  const chargeDate = dateOnly(charge.paymentDate);
+  const chargeCreatedDate = dateOnly(charge.createdDate);
+  const candidates = rows
+    .filter((row) => {
+      if (!row || row.id === charge.id || row.paymentId === charge.paymentId) return false;
+      if (row.type !== 'Buyer Payment' || row.stemId !== charge.stemId) return false;
+      if (charge.currency && row.currency && charge.currency !== row.currency) return false;
+      const targetAmount = Math.abs(Number(row.amount || 0));
+      if (!Number.isFinite(targetAmount) || targetAmount <= chargeAmount) return false;
+      if (targetAmount < chargeAmount * 10) return false;
+      const targetDate = dateOnly(row.paymentDate);
+      const targetCreatedDate = dateOnly(row.createdDate);
+      return (chargeDate && targetDate && chargeDate === targetDate)
+        || (chargeCreatedDate && targetCreatedDate && chargeCreatedDate === targetCreatedDate);
+    })
+    .sort((a, b) => Math.abs(Number(b.amount || 0)) - Math.abs(Number(a.amount || 0)));
+  return candidates[0] || null;
+}
+
+function attachBankChargeToPayment(target, charge) {
+  if (!target || !charge) return;
+  if (!Array.isArray(target.bankCharges)) target.bankCharges = [];
+  target.bankCharges.push({
+    id: charge.id,
+    paymentId: charge.paymentId,
+    paymentDate: charge.paymentDate,
+    amount: Math.abs(Number(charge.amount || 0)),
+    currency: charge.currency,
+    reference: charge.reference,
+    paymentName: charge.paymentDisplayName || charge.paymentName || charge.salesforcePaymentName || charge.paymentId,
+  });
+  target.bankChargeTotal = (target.bankChargeTotal || 0) + Math.abs(Number(charge.amount || 0));
+}
+
 function supplierInvoicePartyName(invoice, supplierRelationships = []) {
   return invoice?.Supplier_Name__c
     || invoice?.['Supplier__r']?.Name
@@ -4817,24 +4855,23 @@ async function incomingPaymentsList(body) {
       });
     const target = candidates[0] || null;
     if (target) {
-      target.bankCharges.push({
-        id: charge.id,
-        paymentId: charge.paymentId,
-        paymentDate: charge.paymentDate,
-        amount: Math.abs(Number(charge.amount || 0)),
-        currency: charge.currency,
-        reference: charge.reference,
-        paymentName: charge.paymentDisplayName || charge.paymentName || charge.salesforcePaymentName || charge.paymentId,
-      });
-      target.bankChargeTotal = (target.bankChargeTotal || 0) + Math.abs(Number(charge.amount || 0));
+      attachBankChargeToPayment(target, charge);
     } else {
       ungroupedBankCharges.push(charge);
     }
   }
-  rows.push(...ungroupedBankCharges);
+  const implicitBankChargeIds = new Set();
+  for (const charge of rows) {
+    const target = incomingPaymentBankChargeTarget(charge, rows);
+    if (!target) continue;
+    attachBankChargeToPayment(target, charge);
+    implicitBankChargeIds.add(charge.id || charge.paymentId);
+  }
+  const displayRows = rows.filter((row) => !implicitBankChargeIds.has(row.id || row.paymentId));
+  displayRows.push(...ungroupedBankCharges);
 
-  const interestNotificationMap = await loadIncomingPaymentInterestNotificationMap(rows.map((row) => row.paymentId || row.id));
-  const rowsWithInterestNotifications = rows.map((row) => {
+  const interestNotificationMap = await loadIncomingPaymentInterestNotificationMap(displayRows.map((row) => row.paymentId || row.id));
+  const rowsWithInterestNotifications = displayRows.map((row) => {
     const notification = interestNotificationMap[row.paymentId || row.id] || null;
     return {
       ...row,

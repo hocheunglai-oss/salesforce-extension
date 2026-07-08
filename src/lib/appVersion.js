@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.29';
+export const APP_VERSION = '1.0.30';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.30',
+    releasedAt: '2026-07-08',
+    title: 'Incoming payment bank charge grouping',
+    changes: [
+      'Restored bank-charge grouping for small same-STEM payments that are not explicitly labelled as bank charges in Salesforce.',
+      'Attached inferred bank charges underneath the related larger buyer payment amount instead of showing them as separate receivable payment rows.',
+    ],
+  },
   {
     version: '1.0.29',
     releasedAt: '2026-07-08',
