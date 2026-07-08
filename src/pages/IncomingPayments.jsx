@@ -24,13 +24,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/lib/AuthContext';
 import { readPageState, writePageState } from '@/lib/pageStateCache';
-import { hasUsableSmtpSettings, readPaymentReminderSmtpSettings, readSmtpSettings, smtpFromAddress } from '@/lib/smtpSettings';
+import { hasUsableSmtpSettings, readSmtpSettings, smtpFromAddress } from '@/lib/smtpSettings';
 import { cn } from '@/lib/utils';
 
 const PAGE_STATE_KEY = 'incoming-payments:v1';
 const EMAIL_SETTINGS_KEY = 'salesforce_extension:incoming_payment_email_settings';
+const INTEREST_EMAIL_SETTINGS_KEY = 'salesforce_extension:incoming_payment_interest_email_settings';
 const RECEIVABLE_PAYMENTS_TABLE_TOKEN = '{{receivablePaymentsTable}}';
 const BUYER_CIA_TABLE_TOKEN = '{{buyerCiaInvoicesTable}}';
+const INTEREST_CALCULATION_TABLE_TOKEN = '{{interestCalculationTable}}';
 const DEFAULT_EMAIL_SETTINGS = {
   from: 'Fratelli Cosulich <info@cosulich.com.hk>',
   to: 'bt@cosulich.com.hk',
@@ -51,6 +53,25 @@ ${BUYER_CIA_TABLE_TOKEN}`,
   includeBuyerCiaInvoices: true,
 };
 
+const DEFAULT_INTEREST_EMAIL_SETTINGS = {
+  subject: 'Late Payment Interest Invoice Request - {{stemName}}',
+  body: `Late Payment Interest Invoice Request
+
+{{requestedBy}} is requesting Louisa to issue a late payment interest invoice for the following delayed buyer payment.
+
+Buyer: {{buyerName}}
+Group: {{buyerGroupName}}
+STEM: {{stemName}}
+Payment: {{paymentName}}
+Received date: {{receivedDate}}
+Payment terms delay: {{delayDays}}
+Payment amount: {{paymentAmount}}
+Receivable balance: {{receivableBalance}}
+Calculated interest total: {{interestTotal}}
+
+${INTEREST_CALCULATION_TABLE_TOKEN}`,
+};
+
 const EMAIL_TABLE_TOKENS = [
   { label: 'Incoming Total', token: '{{incomingTotal}}' },
   { label: 'Buyer Payments', token: '{{buyerPaymentTotal}}' },
@@ -60,6 +81,22 @@ const EMAIL_TABLE_TOKENS = [
   { label: 'Request Late Payment Interest Invoice', token: '{{requestLatePaymentInterestInvoiceLink}}' },
   { label: 'Receivable Payments Table', token: RECEIVABLE_PAYMENTS_TABLE_TOKEN },
   { label: 'Buyer CIA Invoices Table', token: BUYER_CIA_TABLE_TOKEN },
+];
+
+const INTEREST_EMAIL_TOKENS = [
+  { label: 'Requested By', token: '{{requestedBy}}' },
+  { label: 'Buyer', token: '{{buyerName}}' },
+  { label: 'Group', token: '{{buyerGroupName}}' },
+  { label: 'STEM', token: '{{stemName}}' },
+  { label: 'Payment', token: '{{paymentName}}' },
+  { label: 'Received Date', token: '{{receivedDate}}' },
+  { label: 'Inserted Date', token: '{{insertedDate}}' },
+  { label: 'Delay Days', token: '{{delayDays}}' },
+  { label: 'Payment Amount', token: '{{paymentAmount}}' },
+  { label: 'Receivable Balance', token: '{{receivableBalance}}' },
+  { label: 'Interest Rate', token: '{{interestRate}}' },
+  { label: 'Interest Total', token: '{{interestTotal}}' },
+  { label: 'Calculation Table', token: INTEREST_CALCULATION_TABLE_TOKEN },
 ];
 
 const paymentStatusClass = {
@@ -173,28 +210,111 @@ function saveEmailSettings(settings) {
   localStorage.setItem(EMAIL_SETTINGS_KEY, JSON.stringify({ ...DEFAULT_EMAIL_SETTINGS, ...settings }));
 }
 
+function readInterestEmailSettings() {
+  try {
+    const raw = localStorage.getItem(INTEREST_EMAIL_SETTINGS_KEY);
+    return raw ? { ...DEFAULT_INTEREST_EMAIL_SETTINGS, ...JSON.parse(raw) } : DEFAULT_INTEREST_EMAIL_SETTINGS;
+  } catch {
+    return DEFAULT_INTEREST_EMAIL_SETTINGS;
+  }
+}
+
+function saveInterestEmailSettings(settings) {
+  localStorage.setItem(INTEREST_EMAIL_SETTINGS_KEY, JSON.stringify({ ...DEFAULT_INTEREST_EMAIL_SETTINGS, ...settings }));
+}
+
 function incomingPaymentSmtpCredentials(from) {
   const internalSettings = readSmtpSettings();
   if (hasUsableSmtpSettings(internalSettings)) {
     return {
-      label: 'Internal Email Reminder Sender',
+      label: 'Internal',
       credentials: {
         method: 'smtp',
         smtp: { ...internalSettings, port: Number(internalSettings.port || 587), from: smtpFromAddress(internalSettings, from) },
       },
     };
   }
-  const paymentReminderSettings = readPaymentReminderSmtpSettings();
-  if (hasUsableSmtpSettings(paymentReminderSettings)) {
-    return {
-      label: 'Payment Reminder Sender',
-      credentials: {
-        method: 'smtp',
-        smtp: { ...paymentReminderSettings, port: Number(paymentReminderSettings.port || 587), from: smtpFromAddress(paymentReminderSettings, from) },
-      },
-    };
-  }
   return { label: '', credentials: undefined };
+}
+
+function escapeInterestHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function renderInterestTemplate(value, context) {
+  return String(value || '').replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, key) => (
+    Object.prototype.hasOwnProperty.call(context, key) ? context[key] : match
+  ));
+}
+
+function interestContentHtml(content) {
+  const blocks = String(content || '').split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  return blocks.map((block, index) => {
+    const html = escapeInterestHtml(block).replaceAll('\n', '<br>');
+    if (index === 0) return `<h2 style="margin:0 0 8px;font-size:18px;color:#111827">${html}</h2>`;
+    return `<p style="margin:0 0 14px;color:#4b5563">${html}</p>`;
+  }).join('');
+}
+
+function sampleInterestCalculationHtml() {
+  return `
+    <div style="margin-top:16px">
+      <h3 style="margin:0 0 8px;font-size:15px;color:#111827">Late Payment Interest Calculation</h3>
+      <p style="margin:0 0 8px;color:#667085">Formula: Outstanding Balance x Monthly Interest Rate x Overdue Days / 30.</p>
+      <table style="border-collapse:collapse;width:100%;max-width:860px;font-size:12px;margin-bottom:12px">
+        <tbody>
+          <tr><th style="text-align:left;color:#667085;padding:5px 8px;width:210px">Buyer invoice amount</th><td style="padding:5px 8px;font-weight:700">$51,101.00</td></tr>
+          <tr><th style="text-align:left;color:#667085;padding:5px 8px">Buyer invoice due date</th><td style="padding:5px 8px">07 Feb 2026</td></tr>
+          <tr><th style="text-align:left;color:#667085;padding:5px 8px">Account interest rate</th><td style="padding:5px 8px">2.00% per month</td></tr>
+          <tr><th style="text-align:left;color:#667085;padding:5px 8px">Calculated interest total</th><td style="padding:5px 8px;font-size:15px;font-weight:800;color:#1f2937">$374.74</td></tr>
+        </tbody>
+      </table>
+      <table style="border-collapse:collapse;width:100%;max-width:960px;font-size:12px">
+        <thead><tr style="background:#f8fafc;color:#667085;text-transform:uppercase;font-size:11px"><th style="text-align:left;padding:7px 8px">Period</th><th style="text-align:right;padding:7px 8px">Balance</th><th style="text-align:right;padding:7px 8px">Days</th><th style="text-align:left;padding:7px 8px">Formula</th><th style="text-align:right;padding:7px 8px">Interest</th></tr></thead>
+        <tbody>
+          <tr>
+            <td style="border-bottom:1px solid #e5e7eb;padding:7px 8px;white-space:nowrap">07 Feb 2026 to 18 Feb 2026</td>
+            <td style="border-bottom:1px solid #e5e7eb;padding:7px 8px;text-align:right;white-space:nowrap">$51,101.00</td>
+            <td style="border-bottom:1px solid #e5e7eb;padding:7px 8px;text-align:right;white-space:nowrap">11</td>
+            <td style="border-bottom:1px solid #e5e7eb;padding:7px 8px">$51,101.00 x 2.00% per month x 11 / 30</td>
+            <td style="border-bottom:1px solid #e5e7eb;padding:7px 8px;text-align:right;font-weight:700;white-space:nowrap">$374.74</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function buildInterestPreview(settings) {
+  const context = {
+    requestedBy: 'Vincent Lee',
+    requesterEmail: 'vincent@cosulich.com.hk',
+    buyerName: 'KAIYUAN CO LTD',
+    buyerGroupName: 'KAIYUAN CO LTD',
+    stemName: 'HK2524501T - UDE NOAH - YOSU',
+    paymentName: 'Buyer payment - HK2524501T',
+    receivedDate: '18 Feb 2026',
+    insertedDate: '18 Feb 2026',
+    delayDays: '11 Days',
+    paymentAmount: '$51,101.00',
+    receivableBalance: '$8,714.39',
+    interestRate: '2.00% per month',
+    interestRateField: 'Late Payment Interest Rate',
+    interestTotal: '$374.74',
+  };
+  const subject = renderInterestTemplate(settings.subject || DEFAULT_INTEREST_EMAIL_SETTINGS.subject, context);
+  const body = renderInterestTemplate(settings.body || DEFAULT_INTEREST_EMAIL_SETTINGS.body, context);
+  const tokenPattern = /\{\{\s*interestCalculationTable\s*\}\}/i;
+  const tokenParagraphPattern = /<p\b[^>]*>\s*\{\{\s*interestCalculationTable\s*\}\}\s*<\/p>/i;
+  const htmlContent = interestContentHtml(body)
+    .replace(tokenParagraphPattern, sampleInterestCalculationHtml())
+    .replace(tokenPattern, sampleInterestCalculationHtml());
+  const html = `<div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">${htmlContent}</div>`;
+  return { subject, html };
 }
 
 export default function IncomingPayments() {
@@ -219,8 +339,15 @@ export default function IncomingPayments() {
   const [emailPreview, setEmailPreview] = useState(null);
   const [emailError, setEmailError] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
+  const [interestTemplateOpen, setInterestTemplateOpen] = useState(false);
+  const [savedInterestEmailSettings, setSavedInterestEmailSettings] = useState(readInterestEmailSettings);
+  const [interestEmailSettings, setInterestEmailSettings] = useState(() => savedInterestEmailSettings);
+  const [interestTemplateEditing, setInterestTemplateEditing] = useState(false);
+  const [interestPreview, setInterestPreview] = useState(null);
+  const [interestTemplateMessage, setInterestTemplateMessage] = useState('');
   const [interestRequestLoading, setInterestRequestLoading] = useState({});
   const emailContentRef = useRef(null);
+  const interestContentRef = useRef(null);
 
   const updatePageState = (patch) => {
     setPageState((prev) => ({
@@ -318,7 +445,7 @@ export default function IncomingPayments() {
       if (!delivery.credentials) {
         toast({
           title: 'Email sender not configured',
-          description: 'Save and enable an SMTP sender in Settings > Email Senders, then try the interest invoice request again.',
+          description: 'Save and enable the Internal SMTP sender in Settings > Email Senders, then try the interest invoice request again.',
           variant: 'destructive',
         });
         return;
@@ -339,6 +466,7 @@ export default function IncomingPayments() {
         currency: row.currency,
         receivableBalance: row.receivableBalance,
         from: emailSettings.from || DEFAULT_EMAIL_SETTINGS.from,
+        template: readInterestEmailSettings(),
         credentials: delivery.credentials,
       });
       if (res.data?.error) {
@@ -614,6 +742,73 @@ export default function IncomingPayments() {
     setEmailMessage('');
   };
 
+  const updateInterestEmailSetting = (field, value) => {
+    setInterestEmailSettings((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const openInterestTemplate = () => {
+    const saved = readInterestEmailSettings();
+    setSavedInterestEmailSettings(saved);
+    setInterestEmailSettings(saved);
+    setInterestTemplateEditing(false);
+    setInterestPreview(buildInterestPreview(saved));
+    setInterestTemplateMessage('');
+    setInterestTemplateOpen(true);
+  };
+
+  const closeInterestTemplate = () => {
+    if (interestTemplateEditing && JSON.stringify(interestEmailSettings) !== JSON.stringify(savedInterestEmailSettings)) {
+      const discard = window.confirm('Discard unsaved late payment interest email template changes?');
+      if (!discard) return;
+      setInterestEmailSettings(savedInterestEmailSettings);
+      setInterestTemplateEditing(false);
+    }
+    setInterestTemplateOpen(false);
+  };
+
+  const startInterestTemplateEdit = () => {
+    setSavedInterestEmailSettings(interestEmailSettings);
+    setInterestTemplateEditing(true);
+    setInterestTemplateMessage('');
+  };
+
+  const saveInterestTemplate = () => {
+    saveInterestEmailSettings(interestEmailSettings);
+    setSavedInterestEmailSettings(interestEmailSettings);
+    setInterestTemplateEditing(false);
+    setInterestTemplateMessage('Late payment interest request template saved.');
+    toast({ title: 'Late payment interest template saved' });
+  };
+
+  const cancelInterestTemplateChanges = () => {
+    setInterestEmailSettings(savedInterestEmailSettings);
+    setInterestTemplateEditing(false);
+    setInterestTemplateMessage('');
+    setInterestPreview(buildInterestPreview(savedInterestEmailSettings));
+  };
+
+  const insertInterestToken = (token) => {
+    if (!interestTemplateEditing) return;
+    const target = interestContentRef.current;
+    const current = interestEmailSettings.body || '';
+    const start = target?.selectionStart ?? current.length;
+    const end = target?.selectionEnd ?? start;
+    const separatorBefore = start > 0 && !/\s$/.test(current.slice(0, start)) ? '\n\n' : '';
+    const separatorAfter = end < current.length && !/^\s/.test(current.slice(end)) ? '\n\n' : '';
+    const next = `${current.slice(0, start)}${separatorBefore}${token}${separatorAfter}${current.slice(end)}`;
+    updateInterestEmailSetting('body', next);
+    window.requestAnimationFrame(() => {
+      target?.focus();
+      const cursor = start + separatorBefore.length + token.length + separatorAfter.length;
+      target?.setSelectionRange(cursor, cursor);
+    });
+  };
+
+  const previewInterestTemplate = () => {
+    setInterestPreview(buildInterestPreview(interestEmailSettings));
+    setInterestTemplateMessage('Preview generated with a sample buyer payment record.');
+  };
+
   const closeEmailReport = () => {
     if (emailTemplateEditing && JSON.stringify(emailSettings) !== JSON.stringify(savedEmailSettings)) {
       const discard = window.confirm('Discard unsaved Incoming Payment email template changes?');
@@ -709,6 +904,10 @@ export default function IncomingPayments() {
             <Button variant="outline" onClick={openEmailReport}>
               <Mail className="mr-2 h-4 w-4" />
               Email Report
+            </Button>
+            <Button variant="outline" onClick={openInterestTemplate}>
+              <Pencil className="mr-2 h-4 w-4" />
+              Interest Request Template
             </Button>
             <Button onClick={() => load({ force: true })} disabled={loading}>
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
@@ -1044,6 +1243,122 @@ export default function IncomingPayments() {
               {emailAction === 'send' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               {emailAction === 'send' ? 'Sending' : 'Send Email'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={interestTemplateOpen} onOpenChange={(open) => (open ? setInterestTemplateOpen(true) : closeInterestTemplate())}>
+        <DialogContent className="max-h-[92vh] w-[96vw] max-w-[1400px] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Late Payment Interest Request Email</DialogTitle>
+            <DialogDescription>
+              Template used by the row-level Request button. Delivery uses the Internal sender in Settings.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid max-h-[70vh] gap-4 overflow-hidden pr-1 lg:grid-cols-[430px_minmax(0,1fr)]">
+            <div className="space-y-3 overflow-auto pr-1">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Subject</Label>
+                <Input
+                  value={interestEmailSettings.subject}
+                  onChange={(event) => updateInterestEmailSetting('subject', event.target.value)}
+                  disabled={!interestTemplateEditing}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap gap-2">
+                  {INTEREST_EMAIL_TOKENS.map((item) => (
+                    <button
+                      key={item.token}
+                      type="button"
+                      draggable={interestTemplateEditing}
+                      disabled={!interestTemplateEditing}
+                      onClick={() => insertInterestToken(item.token)}
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData('text/plain', item.token);
+                        event.dataTransfer.effectAllowed = 'copy';
+                      }}
+                      className={cn(
+                        'rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-foreground transition-colors',
+                        interestTemplateEditing ? 'cursor-grab hover:bg-muted/70' : 'cursor-not-allowed opacity-50',
+                      )}
+                      title={interestTemplateEditing ? 'Drag into the template or click to insert' : 'Click Edit Template to modify'}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <Textarea
+                  ref={interestContentRef}
+                  value={interestEmailSettings.body}
+                  onChange={(event) => updateInterestEmailSetting('body', event.target.value)}
+                  disabled={!interestTemplateEditing}
+                  className="min-h-80 font-mono text-xs"
+                  onDragOver={(event) => interestTemplateEditing && event.preventDefault()}
+                  onDrop={(event) => {
+                    if (!interestTemplateEditing) return;
+                    event.preventDefault();
+                    const token = event.dataTransfer.getData('text/plain');
+                    if (token) insertInterestToken(token);
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Place <span className="font-mono">{INTEREST_CALCULATION_TABLE_TOKEN}</span> where the calculation table should appear.
+                </p>
+              </div>
+              {interestTemplateMessage && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                  {interestTemplateMessage}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border bg-background">
+              <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">Preview</div>
+                  <div className="text-xs text-muted-foreground">
+                    {interestPreview?.subject ? `Subject: ${interestPreview.subject}` : 'Generate a preview with the sample payment record.'}
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={previewInterestTemplate}>
+                  <Eye className="mr-2 h-4 w-4" />
+                  Preview
+                </Button>
+              </div>
+              <div className="h-[520px] overflow-auto p-4">
+                {interestPreview?.html ? (
+                  <div
+                    className="prose prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{ __html: interestPreview.html }}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    No preview generated yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeInterestTemplate}>Close</Button>
+            {!interestTemplateEditing ? (
+              <Button variant="outline" onClick={startInterestTemplateEdit}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit Template
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={cancelInterestTemplateChanges}>
+                  <X className="mr-2 h-4 w-4" />
+                  Cancel Changes
+                </Button>
+                <Button variant="outline" onClick={saveInterestTemplate} disabled={JSON.stringify(interestEmailSettings) === JSON.stringify(savedInterestEmailSettings)}>
+                  <Save className="mr-2 h-4 w-4" />
+                  Save Template
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

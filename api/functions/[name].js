@@ -5221,53 +5221,82 @@ function incomingPaymentInterestCalculationText(calculation) {
   ].filter((line) => line !== '').join('\n');
 }
 
+const INCOMING_PAYMENT_INTEREST_CALCULATION_TABLE_PATTERN = /\{\{\s*interestCalculationTable\s*\}\}/i;
+const DEFAULT_INCOMING_PAYMENT_INTEREST_TEMPLATE = {
+  subject: 'Late Payment Interest Invoice Request - {{stemName}}',
+  body: `Late Payment Interest Invoice Request
+
+{{requestedBy}} is requesting Louisa to issue a late payment interest invoice for the following delayed buyer payment.
+
+Buyer: {{buyerName}}
+Group: {{buyerGroupName}}
+STEM: {{stemName}}
+Payment: {{paymentName}}
+Received date: {{receivedDate}}
+Payment terms delay: {{delayDays}}
+Payment amount: {{paymentAmount}}
+Receivable balance: {{receivableBalance}}
+Calculated interest total: {{interestTotal}}
+
+{{interestCalculationTable}}`,
+};
+
+function incomingPaymentInterestTemplate(input = {}) {
+  return {
+    subject: String(input.subject || DEFAULT_INCOMING_PAYMENT_INTEREST_TEMPLATE.subject),
+    body: String(input.body || input.intro || DEFAULT_INCOMING_PAYMENT_INTEREST_TEMPLATE.body),
+  };
+}
+
+function renderIncomingPaymentInterestTemplate(value, context) {
+  return String(value || '').replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, key) => (
+    Object.prototype.hasOwnProperty.call(context, key) ? context[key] : match
+  ));
+}
+
 function buildIncomingPaymentInterestEmail(body, profile, calculation) {
   const requestedBy = profile?.full_name || profile?.email || 'Logged-in user';
   const paymentName = String(body.paymentName || body.paymentDisplayName || body.salesforcePaymentName || body.paymentId || '').trim();
   const stemName = calculation?.stemName || String(body.stemName || '').trim();
   const buyerName = calculation?.buyerName || String(body.buyerName || body.partyName || '').trim();
   const buyerGroupName = calculation?.buyerGroupName || String(body.buyerGroupName || '').trim();
-  const subject = `Late Payment Interest Invoice Request - ${stemName || paymentName || body.paymentId}`;
   const receivedDate = prettyDate(body.paymentDate || body.receivedDate);
   const insertedDate = body.createdDate && dateOnly(body.createdDate) !== dateOnly(body.paymentDate || body.receivedDate)
     ? prettyDate(body.createdDate)
-    : null;
+    : '';
   const delayLabel = body.delayDays == null ? '-' : `${Number(body.delayDays).toLocaleString()} Days`;
-  const rows = [
-    ['Requested by', `${requestedBy}${profile?.email && profile.email !== requestedBy ? ` (${profile.email})` : ''}`],
-    ['Buyer', buyerName || '-'],
-    ['Group', buyerGroupName || '-'],
-    ['STEM', stemName || '-'],
-    ['Payment', paymentName || body.paymentId || '-'],
-    ['Received date', receivedDate],
-    ...(insertedDate ? [['Inserted on', insertedDate]] : []),
-    ['Payment terms delay', delayLabel],
-    ['Payment amount', money(body.amount)],
-    ['Receivable balance', money(calculation?.receivableBalance ?? body.receivableBalance)],
-    ['Calculated interest total', money(calculation?.totalInterest)],
-  ];
-  const tableRows = rows.map(([label, value]) => `
-    <tr>
-      <th style="border-bottom:1px solid #e5e7eb;padding:8px;text-align:left;color:#667085;width:180px">${escapeHtml(label)}</th>
-      <td style="border-bottom:1px solid #e5e7eb;padding:8px;color:#1f2937">${escapeHtml(value)}</td>
-    </tr>`).join('');
+  const context = {
+    requestedBy,
+    requesterEmail: profile?.email || '',
+    buyerName: buyerName || '-',
+    buyerGroupName: buyerGroupName || '-',
+    stemName: stemName || '-',
+    paymentName: paymentName || body.paymentId || '-',
+    receivedDate,
+    insertedDate,
+    delayDays: delayLabel,
+    paymentAmount: money(body.amount),
+    receivableBalance: money(calculation?.receivableBalance ?? body.receivableBalance),
+    invoiceAmount: money(calculation?.invoiceAmount ?? body.invoiceAmount),
+    invoiceDueDate: calculation?.dueDate ? prettyDate(calculation.dueDate) : '-',
+    interestRate: incomingPaymentInterestRateLabel(calculation?.monthlyRate),
+    interestRateField: calculation?.interestRateField?.label || calculation?.interestRateField?.name || '',
+    interestTotal: money(calculation?.totalInterest),
+  };
+  const template = incomingPaymentInterestTemplate(body.template || body.interestTemplate || {});
+  const subject = renderIncomingPaymentInterestTemplate(template.subject, context);
+  const bodyContent = renderIncomingPaymentInterestTemplate(template.body, context);
+  const calculationHtml = calculation ? incomingPaymentInterestCalculationHtml(calculation) : '';
+  const calculationText = calculation ? incomingPaymentInterestCalculationText(calculation) : '';
+  const htmlBody = emailContentHtml(bodyContent)
+    .replace(/<p\b[^>]*>\s*\{\{\s*interestCalculationTable\s*\}\}\s*<\/p>/i, calculationHtml)
+    .replace(INCOMING_PAYMENT_INTEREST_CALCULATION_TABLE_PATTERN, calculationHtml);
+  const textBody = bodyContent.replace(INCOMING_PAYMENT_INTEREST_CALCULATION_TABLE_PATTERN, calculationText);
   const html = `
     <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">
-      <h2 style="margin:0 0 10px;font-size:18px">Late Payment Interest Invoice Request</h2>
-      <p style="margin:0 0 12px;color:#667085">${escapeHtml(requestedBy)} is requesting Louisa to issue a late payment interest invoice for the following delayed buyer payment.</p>
-      <table style="border-collapse:collapse;width:100%;max-width:760px;font-size:13px">${tableRows}</table>
-      ${calculation ? incomingPaymentInterestCalculationHtml(calculation) : ''}
+      ${htmlBody}
     </div>`;
-  const text = [
-    'Late Payment Interest Invoice Request',
-    '',
-    `${requestedBy} is requesting Louisa to issue a late payment interest invoice for the following delayed buyer payment.`,
-    '',
-    ...rows.map(([label, value]) => `${label}: ${value}`),
-    '',
-    calculation ? incomingPaymentInterestCalculationText(calculation) : '',
-  ].join('\n');
-  return { subject, html, text };
+  return { subject, html, text: textBody };
 }
 
 async function incomingPaymentInterestInvoiceRequest(body = {}, req = null) {
@@ -5291,7 +5320,7 @@ async function incomingPaymentInterestInvoiceRequest(body = {}, req = null) {
   const hasServerSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD);
   const hasResend = Boolean(process.env.RESEND_API_KEY);
   if (!hasBrowserSmtp && !hasServerSmtp && !hasResend) {
-    throw appError('Interest invoice request sender is not configured. Save and enable an SMTP sender in Settings > Email Senders, then try again.', 400);
+    throw appError('Interest invoice request sender is not configured. Save and enable the Internal SMTP sender in Settings > Email Senders, then try again.', 400);
   }
   const useSmtp = hasBrowserSmtp || hasServerSmtp;
   const smtpFrom = credentials.smtp?.from || credentials.from || from;

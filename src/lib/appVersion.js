@@ -1,6 +1,18 @@
-export const APP_VERSION = '1.0.15';
+export const APP_VERSION = '1.0.16';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.16',
+    releasedAt: '2026-07-08',
+    title: 'Email template preview alignment',
+    changes: [
+      'Renamed Email Sender settings to Internal and External Payment Reminder.',
+      'Added an editable Late Payment Interest Request email template with sample preview in Incoming Payment.',
+      'Changed late payment interest requests to use the saved Internal sender only.',
+      'Reworked the Outstanding Buyer Invoices internal reminder into a modal with editable settings, generated preview, save/cancel, and send controls.',
+      'Added Save Template inside manual payment reminder preview so edited reminder content can be reused.',
+    ],
+  },
   {
     version: '1.0.15',
     releasedAt: '2026-07-08',

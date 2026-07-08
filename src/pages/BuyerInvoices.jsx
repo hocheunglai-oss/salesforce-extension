@@ -824,7 +824,9 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
   const draftKey = row?.stemId ? `buyer-invoices:payment-reminder:${row.stemId}:${daysAhead}` : null;
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [templateMessage, setTemplateMessage] = useState('');
   const [data, setData] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const reminderBodyEditorRef = useRef(null);
@@ -842,6 +844,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
     const load = async () => {
       setLoading(true);
       setError(null);
+      setTemplateMessage('');
       const res = await appClient.functions.invoke('buyerInvoicePaymentReminderPrepare', {
         stemId: row.stemId,
         daysAhead,
@@ -1046,7 +1049,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
     const hasLocalSmtp = hasUsableSmtpSettings(smtpSettings);
     const hasServerEmailProvider = Boolean(data?.settings?.emailDelivery?.hasServerProvider);
     if (!hasLocalSmtp && !hasServerEmailProvider) {
-      setError('Payment reminder email sending is not configured. Save Payment Reminder Sender credentials in Settings, or add RESEND_API_KEY / SMTP credentials in Vercel.');
+      setError('Payment reminder email sending is not configured. Save External Payment Reminder credentials in Settings, or add RESEND_API_KEY / SMTP credentials in Vercel.');
       setSending(false);
       return;
     }
@@ -1071,6 +1074,26 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
       onClose();
     }
     setSending(false);
+  };
+
+  const savePaymentReminderTemplateFromModal = async () => {
+    setTemplateSaving(true);
+    setError(null);
+    const res = await appClient.functions.invoke('buyerInvoiceEmailSettingsSave', {
+      settings: {
+        ...(data?.settings || {}),
+        paymentReminderSubject: form.subject,
+        paymentReminderBody: form.body,
+      },
+    });
+    if (res.data?.error) {
+      setError(res.data.error);
+    } else {
+      setBaseDraftValue((prev) => prev ? { ...prev, form: { ...prev.form, subject: form.subject, body: form.body } } : prev);
+      clearDraft(draftKey);
+      setTemplateMessage('Payment reminder template saved.');
+    }
+    setTemplateSaving(false);
   };
 
   return (
@@ -1326,16 +1349,28 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
                   />
                 </div>
 
+                {templateMessage && (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                    {templateMessage}
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   {error ? (
                     <div className="max-w-3xl rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
                       {error}
                     </div>
                   ) : <span />}
-                  <Button type="button" onClick={sendReminder} disabled={sending || !selectedRows.length} className="gap-2">
-                    {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    Send Reminder
-                  </Button>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={savePaymentReminderTemplateFromModal} disabled={sending || templateSaving} className="gap-2">
+                      {templateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      Save Template
+                    </Button>
+                    <Button type="button" onClick={sendReminder} disabled={sending || !selectedRows.length} className="gap-2">
+                      {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      Send Reminder
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1649,6 +1684,9 @@ export default function BuyerInvoices() {
   const [emailMeta, setEmailMeta] = useState(null);
   const [emailLoading, setEmailLoading] = useState(true);
   const [emailBusy, setEmailBusy] = useState(false);
+  const [emailAction, setEmailAction] = useState('');
+  const [emailPreview, setEmailPreview] = useState(null);
+  const [internalEmailEditing, setInternalEmailEditing] = useState(false);
   const [emailMessage, setEmailMessage] = useState(null);
   const [emailError, setEmailError] = useState(null);
   const [emailDraftRestoredAt, setEmailDraftRestoredAt] = useState(null);
@@ -1871,6 +1909,7 @@ export default function BuyerInvoices() {
       setEmailDraftRestoredAt(null);
       setEmailMeta(res.data.meta || null);
       setEmailMessage('Email report schedule saved.');
+      setInternalEmailEditing(false);
     }
     setEmailBusy(false);
   };
@@ -1881,11 +1920,27 @@ export default function BuyerInvoices() {
     setEmailDraftRestoredAt(null);
     setEmailMessage(null);
     setEmailError(null);
+    setInternalEmailEditing(false);
   };
 
   const toggleEmailSchedule = () => {
     if (showEmailSchedule && emailDirty && !window.confirm('Discard unsaved email schedule changes?')) return;
-    setShowEmailSchedule((value) => !value);
+    setShowEmailSchedule((value) => {
+      const next = !value;
+      if (next) {
+        setInternalEmailEditing(false);
+        setEmailPreview(null);
+        setEmailMessage(null);
+        setEmailError(null);
+      }
+      return next;
+    });
+  };
+
+  const closeInternalEmailReminder = () => {
+    if (emailDirty && !window.confirm('Discard unsaved internal email reminder changes?')) return;
+    setShowEmailSchedule(false);
+    setInternalEmailEditing(false);
   };
 
   const closePaymentReminderTemplate = () => {
@@ -1900,6 +1955,7 @@ export default function BuyerInvoices() {
 
   const sendEmailReport = async (preview = false) => {
     setEmailBusy(true);
+    setEmailAction(preview ? 'preview' : 'send');
     setEmailError(null);
     setEmailMessage(null);
     const smtpSettings = readSmtpSettings();
@@ -1910,13 +1966,16 @@ export default function BuyerInvoices() {
     if (res.data?.error) {
       setEmailError(res.data.error);
     } else if (preview) {
+      setEmailPreview(res.data.email || null);
       setEmailMeta((prev) => ({ ...(prev || {}), lastPreviewAt: new Date().toISOString(), lastPreviewRowCount: res.data.report?.rows?.length ?? 0 }));
       setEmailMessage(`Preview ready: ${res.data.report?.rows?.length ?? 0} invoice rows. Subject: ${res.data.email?.subject}`);
     } else {
+      setEmailPreview(res.data.email || null);
       setEmailMeta((prev) => ({ ...(prev || {}), lastSentAt: new Date().toISOString(), lastSentRowCount: res.data.rows ?? 0, lastError: null }));
       setEmailMessage(`Sent ${res.data.rows ?? 0} invoice rows to ${res.data.to?.join(', ') || emailSettings.to}.`);
     }
     setEmailBusy(false);
+    setEmailAction('');
   };
 
   const mergeCollectionResult = (result) => {
@@ -2095,126 +2154,170 @@ export default function BuyerInvoices() {
       </div>
 
       {showEmailSchedule && (
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <Mail className="h-4 w-4 text-muted-foreground" />
-                <h3 className="text-sm font-semibold text-foreground">Internal Email Reminder</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="max-h-[92vh] w-[96vw] max-w-[1500px] overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-border p-4">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Outstanding buyer invoices</p>
+                <h2 className="mt-1 text-lg font-semibold text-foreground">Internal Email Reminder</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Shared server schedule. Production cron runs weekdays at 08:00 and 14:00 Hong Kong time and prevents duplicate sends.
+                </p>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Shared server schedule. Production cron runs weekdays at 08:00 and 14:00 Hong Kong time and prevents duplicate sends.
-              </p>
+              <Button variant="outline" size="icon" onClick={closeInternalEmailReminder} disabled={emailBusy}>
+                <X className="h-4 w-4" />
+              </Button>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={cancelEmailSettings} disabled={!emailDirty || emailBusy} className="gap-2">
-                <X className="h-4 w-4" /> Cancel
-              </Button>
-              <Button variant="outline" onClick={saveEmailSettings} disabled={!emailDirty || emailBusy || emailLoading} className="gap-2">
-                {emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
-              </Button>
-              <Button variant="outline" onClick={() => sendEmailReport(true)} disabled={emailBusy || emailLoading} className="gap-2">
-                {emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
-                Preview
-              </Button>
+
+            <div className="grid max-h-[calc(92vh-140px)] gap-4 overflow-hidden p-4 lg:grid-cols-[430px_minmax(0,1fr)]">
+              <div className="space-y-3 overflow-auto pr-1">
+                <DraftNotice restoredAt={emailDraftRestoredAt} label="Email reminder settings draft restored" onDiscard={cancelEmailSettings} />
+
+                <div className="grid gap-2 md:grid-cols-2">
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+                    <div className="font-semibold text-foreground">Next Scheduled Run</div>
+                    <div className="mt-1 text-muted-foreground">{emailMeta?.nextScheduledRun || '-'}</div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+                    <div className="font-semibold text-foreground">Last Sent</div>
+                    <div className="mt-1 text-muted-foreground">{fmtDateTime(emailMeta?.lastSentAt)} · {emailMeta?.lastSentRowCount ?? '-'} rows</div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+                    <div className="font-semibold text-foreground">Last Preview</div>
+                    <div className="mt-1 text-muted-foreground">{fmtDateTime(emailMeta?.lastPreviewAt)} · {emailMeta?.lastPreviewRowCount ?? '-'} rows</div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
+                    <div className="font-semibold text-foreground">Last Error</div>
+                    <div className="mt-1 truncate text-muted-foreground" title={emailMeta?.lastError || ''}>{emailMeta?.lastError || '-'}</div>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <input type="checkbox" checked={emailSettings.enabled !== false} onChange={(event) => updateEmailSetting('enabled', event.target.checked)} disabled={!internalEmailEditing} />
+                  Enable scheduled sending
+                </label>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label className="text-xs text-muted-foreground">From</Label>
+                    <Input value={emailSettings.from} onChange={(event) => updateEmailSetting('from', event.target.value)} disabled={!internalEmailEditing} />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label className="text-xs text-muted-foreground">To</Label>
+                    <Input value={emailSettings.to} onChange={(event) => updateEmailSetting('to', event.target.value)} disabled={!internalEmailEditing} />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label className="text-xs text-muted-foreground">CC</Label>
+                    <Input value={emailSettings.cc} onChange={(event) => updateEmailSetting('cc', event.target.value)} disabled={!internalEmailEditing} />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label className="text-xs text-muted-foreground">Subject</Label>
+                    <Input value={emailSettings.subject} onChange={(event) => updateEmailSetting('subject', event.target.value)} disabled={!internalEmailEditing} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Due in next days</Label>
+                    <Input type="number" min="0" max="365" value={emailSettings.daysAhead} onChange={(event) => updateEmailSetting('daysAhead', event.target.value)} disabled={!internalEmailEditing} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Send times</Label>
+                    <Input value={emailSettings.sendTimes} onChange={(event) => updateEmailSetting('sendTimes', event.target.value)} placeholder="08:00, 14:00" disabled={!internalEmailEditing} />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <Label className="text-xs text-muted-foreground">Email content</Label>
+                    <Textarea value={emailSettings.intro} onChange={(event) => updateEmailSetting('intro', event.target.value)} className="min-h-44 font-mono text-xs" disabled={!internalEmailEditing} />
+                    <p className="text-xs text-muted-foreground">
+                      Available placeholders: {'{{reportStart}}'}, {'{{reportEnd}}'}, {'{{daysAhead}}'}.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Weekdays</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {WEEKDAYS.map((day) => (
+                      <button
+                        key={day}
+                        type="button"
+                        disabled={!internalEmailEditing}
+                        onClick={() => toggleEmailWeekday(day)}
+                        className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          emailSettings.weekdays?.includes(day)
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
+                        } ${!internalEmailEditing ? 'cursor-not-allowed opacity-60' : ''}`}
+                      >
+                        {day}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <input type="checkbox" checked={emailSettings.includeSummary} onChange={(event) => updateEmailSetting('includeSummary', event.target.checked)} disabled={!internalEmailEditing} />
+                    Include KPI summary
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <input type="checkbox" checked={emailSettings.includeTable} onChange={(event) => updateEmailSetting('includeTable', event.target.checked)} disabled={!internalEmailEditing} />
+                    Include invoice table
+                  </label>
+                </div>
+
+                <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
+                  Send Now uses the Internal SMTP credentials from Settings when available. Scheduled production email uses server-side Resend or SMTP environment variables.
+                </div>
+
+                {emailMessage && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailMessage}</div>}
+                {emailError && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{emailError}</div>}
+              </div>
+
+              <div className="rounded-xl border border-border bg-background">
+                <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">Preview</div>
+                    <div className="text-xs text-muted-foreground">
+                      {emailPreview?.subject ? `Subject: ${emailPreview.subject}` : 'Generate a preview before sending.'}
+                    </div>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => sendEmailReport(true)} disabled={emailBusy || emailLoading}>
+                    {emailAction === 'preview' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
+                    {emailAction === 'preview' ? 'Previewing' : 'Preview'}
+                  </Button>
+                </div>
+                <div className="h-[560px] overflow-auto p-4">
+                  {emailPreview?.html ? (
+                    <div
+                      className="prose prose-sm max-w-none"
+                      dangerouslySetInnerHTML={{ __html: emailPreview.html }}
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                      No preview generated yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-2 border-t border-border p-4">
+              <Button variant="outline" onClick={closeInternalEmailReminder} disabled={emailBusy}>Close</Button>
+              {!internalEmailEditing ? (
+                <Button variant="outline" onClick={() => setInternalEmailEditing(true)} disabled={emailBusy || emailLoading} className="gap-2">
+                  <Mail className="h-4 w-4" /> Edit Template
+                </Button>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={cancelEmailSettings} disabled={emailBusy} className="gap-2">
+                    <X className="h-4 w-4" /> Cancel Changes
+                  </Button>
+                  <Button variant="outline" onClick={saveEmailSettings} disabled={!emailDirty || emailBusy || emailLoading} className="gap-2">
+                    {emailBusy && emailAction !== 'send' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Template
+                  </Button>
+                </>
+              )}
               <Button onClick={() => sendEmailReport(false)} disabled={emailBusy || emailLoading} className="gap-2">
-                {emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Send Now
+                {emailAction === 'send' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {emailAction === 'send' ? 'Sending' : 'Send Now'}
               </Button>
             </div>
           </div>
-
-          <DraftNotice restoredAt={emailDraftRestoredAt} label="Email reminder settings draft restored" onDiscard={cancelEmailSettings} className="mb-4" />
-
-          <div className="mb-4 grid gap-2 md:grid-cols-4">
-            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
-              <div className="font-semibold text-foreground">Next Scheduled Run</div>
-              <div className="mt-1 text-muted-foreground">{emailMeta?.nextScheduledRun || '-'}</div>
-            </div>
-            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
-              <div className="font-semibold text-foreground">Last Sent</div>
-              <div className="mt-1 text-muted-foreground">{fmtDateTime(emailMeta?.lastSentAt)} · {emailMeta?.lastSentRowCount ?? '-'} rows</div>
-            </div>
-            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
-              <div className="font-semibold text-foreground">Last Preview</div>
-              <div className="mt-1 text-muted-foreground">{fmtDateTime(emailMeta?.lastPreviewAt)} · {emailMeta?.lastPreviewRowCount ?? '-'} rows</div>
-            </div>
-            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs">
-              <div className="font-semibold text-foreground">Last Error</div>
-              <div className="mt-1 truncate text-muted-foreground" title={emailMeta?.lastError || ''}>{emailMeta?.lastError || '-'}</div>
-            </div>
-          </div>
-
-          <div className="grid gap-3 lg:grid-cols-3">
-            <label className="flex items-center gap-2 text-sm font-medium text-foreground lg:col-span-3">
-              <input type="checkbox" checked={emailSettings.enabled !== false} onChange={(event) => updateEmailSetting('enabled', event.target.checked)} />
-              Enable scheduled sending
-            </label>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">From</Label>
-              <Input value={emailSettings.from} onChange={(event) => updateEmailSetting('from', event.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">To</Label>
-              <Input value={emailSettings.to} onChange={(event) => updateEmailSetting('to', event.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">CC</Label>
-              <Input value={emailSettings.cc} onChange={(event) => updateEmailSetting('cc', event.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Subject</Label>
-              <Input value={emailSettings.subject} onChange={(event) => updateEmailSetting('subject', event.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Due in next days</Label>
-              <Input type="number" min="0" max="365" value={emailSettings.daysAhead} onChange={(event) => updateEmailSetting('daysAhead', event.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Send times</Label>
-              <Input value={emailSettings.sendTimes} onChange={(event) => updateEmailSetting('sendTimes', event.target.value)} placeholder="08:00, 14:00" />
-            </div>
-            <div className="space-y-1.5 lg:col-span-2">
-              <Label className="text-xs text-muted-foreground">Email content</Label>
-              <Textarea value={emailSettings.intro} onChange={(event) => updateEmailSetting('intro', event.target.value)} className="min-h-32" />
-              <p className="text-xs text-muted-foreground">
-                Available placeholders: {'{{reportStart}}'}, {'{{reportEnd}}'}, {'{{daysAhead}}'}.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">Weekdays</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {WEEKDAYS.map((day) => (
-                  <button
-                    key={day}
-                    type="button"
-                    onClick={() => toggleEmailWeekday(day)}
-                    className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
-                      emailSettings.weekdays?.includes(day)
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/50'
-                    }`}
-                  >
-                    {day}
-                  </button>
-                ))}
-              </div>
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input type="checkbox" checked={emailSettings.includeSummary} onChange={(event) => updateEmailSetting('includeSummary', event.target.checked)} />
-                Include KPI summary
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input type="checkbox" checked={emailSettings.includeTable} onChange={(event) => updateEmailSetting('includeTable', event.target.checked)} />
-                Include invoice table
-              </label>
-            </div>
-            <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground lg:col-span-3">
-              Send Now can still use saved SMTP credentials from Settings. Scheduled production email uses server-side Resend or SMTP environment variables.
-            </div>
-          </div>
-
-          {emailMessage && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailMessage}</div>}
-          {emailError && <div className="mt-3 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{emailError}</div>}
         </div>
       )}
 

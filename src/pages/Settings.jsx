@@ -430,19 +430,19 @@ export default function SettingsPage() {
           >
             <div className="space-y-4">
               <SmtpAccountCard
-                title="Internal Email Reminder Sender"
-                description="Used by Send Now for the internal Outstanding Buyer Invoices report. The password is saved in this browser's app settings."
+                title="Internal"
+                description="Used by internal reports and late payment interest request emails. The password is saved in this browser's app settings."
                 settings={smtpSettings}
                 onChange={setSmtpSettings}
-                enableLabel="Use this SMTP account for Internal Email Reminder Send Now"
+                enableLabel="Use this SMTP account for Internal emails"
               />
 
               <SmtpAccountCard
-                title="Payment Reminder Sender"
+                title="External Payment Reminder"
                 description="Used only by customer-facing payment reminder emails. Keep this separate from the internal report sender."
                 settings={paymentReminderSmtpSettings}
                 onChange={setPaymentReminderSmtpSettings}
-                enableLabel="Use this SMTP account for Payment Reminder emails"
+                enableLabel="Use this SMTP account for External Payment Reminder emails"
               />
             </div>
           </SettingsPanel>
