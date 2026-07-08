@@ -1052,7 +1052,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
     const hasLocalSmtp = hasUsableSmtpSettings(smtpSettings);
     const hasServerEmailProvider = Boolean(data?.settings?.emailDelivery?.hasServerProvider);
     if (!hasLocalSmtp && !hasServerEmailProvider) {
-      setError('Payment reminder email sending is not configured. Save External Payment Reminder credentials in Settings, or add RESEND_API_KEY / SMTP credentials in Vercel.');
+      setError('Payment reminder email sending is not configured. Save External Payment Reminder credentials in Settings, or configure SMTP credentials in Vercel.');
       setSending(false);
       return;
     }
@@ -2300,7 +2300,7 @@ export default function BuyerInvoices() {
                 </div>
 
                 <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
-                  Send Now uses the Internal SMTP credentials from Settings when available. Scheduled production email uses server-side Resend or SMTP environment variables.
+                  Send Now uses the Internal SMTP credentials from Settings when available. Scheduled production email uses server-side SMTP environment variables.
                 </div>
 
                 {emailMessage && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailMessage}</div>}

@@ -1807,11 +1807,10 @@ function incomingPaymentFilterUrl(settings, report) {
 }
 
 function serverEmailDeliveryStatus() {
-  const hasResend = Boolean(process.env.RESEND_API_KEY);
   const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD);
   return {
-    hasServerProvider: hasResend || hasSmtp,
-    provider: hasResend ? 'resend' : hasSmtp ? 'smtp' : 'none',
+    hasServerProvider: hasSmtp,
+    provider: hasSmtp ? 'smtp' : 'none',
   };
 }
 
@@ -5318,29 +5317,19 @@ async function incomingPaymentInterestInvoiceRequest(body = {}, req = null) {
   const from = String(body.from || DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS.from);
   const hasBrowserSmtp = Boolean(credentials.method === 'smtp' || credentials.smtp);
   const hasServerSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD);
-  const hasResend = Boolean(process.env.RESEND_API_KEY);
-  if (!hasBrowserSmtp && !hasServerSmtp && !hasResend) {
+  if (!hasBrowserSmtp && !hasServerSmtp) {
     throw appError('Interest invoice request sender is not configured. Save and enable the Internal SMTP sender in Settings > Email Senders, then try again.', 400);
   }
-  const useSmtp = hasBrowserSmtp || hasServerSmtp;
   const smtpFrom = credentials.smtp?.from || credentials.from || from;
   const recipients = uniqueEmailList(INCOMING_PAYMENT_INTEREST_RECIPIENT, profile.email);
-  const result = useSmtp
-    ? await sendWithSmtp({
-        smtp: credentials.smtp || credentials,
-        from: smtpFrom,
-        to: recipients,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-      })
-    : await sendWithResend({
-        from,
-        to: recipients,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-      });
+  const result = await sendWithSmtp({
+    smtp: credentials.smtp || credentials,
+    from: smtpFrom,
+    to: recipients,
+    subject: email.subject,
+    html: email.html,
+    text: email.text,
+  });
 
   const payload = {
     payment_id: paymentId,
@@ -5358,7 +5347,7 @@ async function incomingPaymentInterestInvoiceRequest(body = {}, req = null) {
     recipient_email: recipients.join(', '),
     email_subject: email.subject,
     email_message_id: result.id || null,
-    email_provider: useSmtp ? 'smtp' : 'resend',
+    email_provider: 'smtp',
     actor_user_id: profile.id,
     actor_email: profile.email,
     actor_name: profile.full_name || profile.email || null,
@@ -5697,28 +5686,17 @@ async function incomingPaymentEmailReport(body = {}, req = null) {
   }
   if (!settings.to.length) throw appError('At least one To recipient is required before sending the Incoming Payment report.', 400);
   const credentials = body.credentials || {};
-  const useSmtp = credentials.method === 'smtp' || credentials.smtp || (!process.env.RESEND_API_KEY && process.env.SMTP_HOST);
   const smtpFrom = credentials.smtp?.from || credentials.from || settings.from;
-  const result = useSmtp
-    ? await sendWithSmtp({
-        smtp: credentials.smtp || credentials,
-        from: smtpFrom,
-        to: settings.to,
-        cc: settings.cc,
-        bcc: settings.bcc,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-      })
-    : await sendWithResend({
-        from: settings.from,
-        to: settings.to,
-        cc: settings.cc,
-        bcc: settings.bcc,
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-      });
+  const result = await sendWithSmtp({
+    smtp: credentials.smtp || credentials,
+    from: smtpFrom,
+    to: settings.to,
+    cc: settings.cc,
+    bcc: settings.bcc,
+    subject: email.subject,
+    html: email.html,
+    text: email.text,
+  });
   return {
     sent: true,
     id: result.id,
@@ -6431,7 +6409,6 @@ async function buyerInvoicePaymentReminderSend(body, req) {
     .filter((batch) => batch?.key)
     .map((batch) => [batch.key, batch]));
   const credentials = body.credentials || {};
-  const useSmtp = credentials.method === 'smtp' || credentials.smtp || (!process.env.RESEND_API_KEY && process.env.SMTP_HOST);
   const smtpFrom = credentials.smtp?.from || credentials.from || settings.from;
   const sendResults = [];
   const collectionResults = [];
@@ -6452,32 +6429,21 @@ async function buyerInvoicePaymentReminderSend(body, req) {
     }, effectiveGroup);
     let result;
     try {
-      result = useSmtp
-        ? await sendWithSmtp({
-            smtp: credentials.smtp || credentials,
-            from: smtpFrom,
-            to,
-            cc,
-            bcc,
-            subject: email.subject,
-            html: email.html,
-            text: email.text,
-          })
-        : await sendWithResend({
-            from: settings.from,
-            to,
-            cc,
-            bcc,
-            subject: email.subject,
-            html: email.html,
-            text: email.text,
-          });
+      result = await sendWithSmtp({
+        smtp: credentials.smtp || credentials,
+        from: smtpFrom,
+        to,
+        cc,
+        bcc,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      });
     } catch (error) {
       console.error('[buyerInvoicePaymentReminderSend] email provider failed', {
         message: error.message,
-        provider: useSmtp ? 'smtp' : 'resend',
+        provider: 'smtp',
         hasRequestSmtp: Boolean(credentials.method === 'smtp' || credentials.smtp),
-        hasResendEnv: Boolean(process.env.RESEND_API_KEY),
         hasSmtpEnv: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD),
         toCount: to.length,
         ccCount: cc.length,
@@ -6536,22 +6502,6 @@ async function buyerInvoicePaymentReminderSend(body, req) {
     rows: rows.length,
     collectionResults,
   };
-}
-
-async function sendWithResend({ from, to, cc, bcc, subject, html, text }) {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error('Missing RESEND_API_KEY in Vercel. Add it for scheduled email reports, or enable a saved SMTP account in Settings for Send Now.');
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ from, to, cc, bcc, subject, html, text }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || data.error || `Resend request failed: ${res.status}`);
-  return data;
 }
 
 async function sendWithSmtp({ smtp = {}, from, to, cc, bcc, subject, html, text }) {
@@ -6665,28 +6615,18 @@ async function outstandingBuyerInvoicesEmailReport(body = {}, req = null) {
     };
   }
   const credentials = body.credentials || {};
-  const useSmtp = credentials.method === 'smtp' || credentials.smtp || (!process.env.RESEND_API_KEY && process.env.SMTP_HOST);
   const smtpFrom = credentials.smtp?.from || credentials.from || settings.from;
   let result;
   try {
-    result = useSmtp
-      ? await sendWithSmtp({
-          smtp: credentials.smtp || credentials,
-          from: smtpFrom,
-          to: settings.to,
-          cc: settings.cc,
-          subject: email.subject,
-          html: email.html,
-          text: email.text,
-        })
-      : await sendWithResend({
-          from: settings.from,
-          to: settings.to,
-          cc: settings.cc,
-          subject: email.subject,
-          html: email.html,
-          text: email.text,
-        });
+    result = await sendWithSmtp({
+      smtp: credentials.smtp || credentials,
+      from: smtpFrom,
+      to: settings.to,
+      cc: settings.cc,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+    });
   } catch (error) {
     await updateBuyerInvoiceEmailSettingsMeta({ last_error: error.message });
     throw error;

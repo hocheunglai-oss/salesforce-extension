@@ -445,7 +445,7 @@ export default function IncomingPayments() {
       if (!delivery.credentials) {
         toast({
           title: 'Using server email sender',
-          description: 'No Internal SMTP sender is saved in this browser. The request will use the system-wide RESEND_API_KEY or server SMTP setting in Vercel.',
+          description: 'No Internal SMTP sender is saved in this browser. The request will use the server SMTP setting in Vercel.',
         });
       }
       const res = await appClient.functions.invoke('incomingPaymentInterestInvoiceRequest', {

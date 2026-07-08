@@ -1,13 +1,23 @@
-export const APP_VERSION = '1.0.17';
+export const APP_VERSION = '1.0.18';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.18',
+    releasedAt: '2026-07-08',
+    title: 'SMTP-only email delivery',
+    changes: [
+      'Removed the third-party API delivery path from server email sending.',
+      'Changed all internal, external reminder, scheduled report, and late payment interest emails to use SMTP only.',
+      'Updated email configuration messages to point users to saved SMTP senders or Vercel SMTP environment variables.',
+    ],
+  },
   {
     version: '1.0.17',
     releasedAt: '2026-07-08',
     title: 'Email reminder workflow refinement',
     changes: [
       'Added Payment Collection Handler to the Outstanding Buyer Invoices internal email reminder table and plain-text output.',
-      'Changed late payment interest requests to fall back to the system-wide server email sender when no Internal browser SMTP sender is saved.',
+      'Changed late payment interest requests to fall back to the system-wide SMTP sender when no Internal browser SMTP sender is saved.',
       'Redesigned the external payment reminder modal so related invoice selection remains on top and email review/preview are split side by side.',
       'Added explicit edit, save, and cancel template controls inside the external payment reminder modal.',
     ],
@@ -58,7 +68,7 @@ export const APP_VERSION_HISTORY = [
     releasedAt: '2026-07-08',
     title: 'Incoming payment notification fixes',
     changes: [
-      'Changed late payment interest requests to require a saved SMTP sender instead of falling through to missing Resend configuration.',
+      'Changed late payment interest requests to require a saved SMTP sender instead of falling through to missing server email configuration.',
       'Improved the missing sender message so users know to configure Settings > Email Senders.',
       'Raised the notification layer and made toast close buttons always visible and clickable.',
     ],
@@ -91,7 +101,7 @@ export const APP_VERSION_HISTORY = [
     title: 'Incoming payment sender reuse',
     changes: [
       'Changed Incoming Payment report sending to reuse the saved app email sender chain.',
-      'Uses Internal Email Reminder Sender first and Payment Reminder Sender as fallback before server-side Resend.',
+      'Uses Internal Email Reminder Sender first and Payment Reminder Sender as fallback before server-side SMTP.',
       'Shows which saved sender was used after a successful Incoming Payment report send.',
     ],
   },
