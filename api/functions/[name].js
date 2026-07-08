@@ -4034,6 +4034,66 @@ function incomingPaymentLooksBankCharge(payment, {
   ].some((signal) => valueToken.includes(signal));
 }
 
+function incomingPaymentLooksBuyerSide(payment, {
+  referenceFields = [],
+  directionFields = [],
+  typeFields = [],
+  statusFields = [],
+} = {}) {
+  const fields = uniqueTextList([...referenceFields, ...directionFields, ...typeFields, ...statusFields, 'Name']);
+  const valueToken = normalizedFieldToken(fields
+    .filter((field) => payment?.[field] != null && payment[field] !== '')
+    .map((field) => payment[field])
+    .join(' '));
+  if (!valueToken) return false;
+  return [
+    'buyerpayment',
+    'buyerreceipt',
+    'paymentfrombuyer',
+    'frombuyer',
+    'customerpayment',
+    'customerreceipt',
+    'receivable',
+    'accountsreceivable',
+    'incoming',
+    'receipt',
+    'received',
+  ].some((signal) => valueToken.includes(signal));
+}
+
+function incomingPaymentLooksStemPayableCalculation(payment, {
+  amount,
+  payableAmounts = [],
+  referenceFields = [],
+  directionFields = [],
+  typeFields = [],
+  statusFields = [],
+  allowBlankSignal = false,
+} = {}) {
+  if (amount == null || amount <= 0) return false;
+  const matchesPayableAmount = payableAmounts
+    .filter((value) => value != null && Number.isFinite(Number(value)) && Math.abs(Number(value)) > 0)
+    .some((value) => amountNearlyEqual(amount, value));
+  if (!matchesPayableAmount) return false;
+  if (incomingPaymentLooksBuyerSide(payment, { referenceFields, directionFields, typeFields, statusFields })) return false;
+
+  const fields = uniqueTextList([...referenceFields, ...directionFields, ...typeFields, ...statusFields, 'Name']);
+  const valueToken = normalizedFieldToken(fields
+    .filter((field) => payment?.[field] != null && payment[field] !== '')
+    .map((field) => payment[field])
+    .join(' '));
+  if (!valueToken) return allowBlankSignal;
+  return [
+    'calculatedpayable',
+    'payablecalculation',
+    'payablebalance',
+    'calculatedamount',
+    'calculatedcost',
+    'supplierinvoiceamount',
+    'supplierinvoicecalculation',
+  ].some((signal) => valueToken.includes(signal));
+}
+
 function incomingPaymentTypeFromContext(payment, { amount, stem, supplierInvoice, supplierInvoiceFields, directionFields, typeFields, statusFields }) {
   const supplierSide = supplierInvoice || incomingPaymentLooksSupplierSide(payment, {
     supplierInvoiceFields,
@@ -7877,6 +7937,20 @@ async function salesforceStemDetailFull(body) {
     accountMap: brokerAccountMap,
   });
   const brokerCommissionGroups = brokerCommissionGroupsByStem[actualStemId] || [];
+  const stemHasDelivery = !!recordRaw.Delivery_Date__c;
+  const activeLineItems = lineItems.filter((li) => !li.Cancelled__c);
+  const supplierInvoiceTotal = numericValue(recordRaw.Total_Invoiced_Amount_From_Suppliers__c) ?? 0;
+  const supplierLineBuyTotal = activeLineItems.reduce((sum, li) => sum + lineBuyAmount(li, stemHasDelivery), 0);
+  const uninvoicedSupplierLineBuyTotal = activeLineItems.reduce((sum, li) => li.Supplier_Invoice__c ? sum : sum + lineBuyAmount(li, stemHasDelivery), 0);
+  const hasSupplierInvoiceLines = activeLineItems.some((li) => li.Supplier_Invoice__c);
+  const calculatedSupplierInvoice = supplierInvoiceTotal + (hasSupplierInvoiceLines ? uninvoicedSupplierLineBuyTotal : supplierLineBuyTotal);
+  const stemPayableAmountCandidates = [
+    calculatedSupplierInvoice,
+    supplierLineBuyTotal,
+    uninvoicedSupplierLineBuyTotal,
+    supplierInvoiceTotal,
+    numericValue(recordRaw.Payable_Balance__c),
+  ].filter((value) => value != null && Number.isFinite(Number(value)) && Math.abs(Number(value)) > 0);
 
   let supplierInvoicePayments = [];
   let buyerInvoicePayments = [];
@@ -8004,6 +8078,16 @@ async function salesforceStemDetailFull(body) {
         });
         if (supplierSide) {
           addSupplierPayment(payment);
+        } else if (incomingPaymentLooksStemPayableCalculation(payment, {
+          amount,
+          payableAmounts: stemPayableAmountCandidates,
+          referenceFields: paymentReferenceFields,
+          directionFields: paymentDirectionFields,
+          typeFields: paymentTypeFields,
+          statusFields: paymentStatusFields,
+          allowBlankSignal: !stemHasDelivery,
+        })) {
+          continue;
         } else if (amount == null || amount >= 0) {
           addBuyerPayment(payment);
         }
@@ -8035,7 +8119,6 @@ async function salesforceStemDetailFull(body) {
     supplierBrokerNameMap[id] = brokerAccountMap[id] || brokerAccountMap[String(id).slice(0, 15)] || await resolveViaQuery('Account', id, 'Name');
   }));
 
-  const stemHasDelivery = !!recordRaw.Delivery_Date__c;
   const lineItemsWithNames = lineItems.map((li) => {
     const calculatedQuantity = financialQuantity(li, stemHasDelivery);
     const calculatedSell = lineSellAmount(li, stemHasDelivery);
@@ -8078,13 +8161,6 @@ async function salesforceStemDetailFull(body) {
   const calculatedUndatedBuyerInvoice = calculatedLineItemSell + calculatedExtraCostSell;
   const shouldUseCalculatedBuyerInvoice = !recordRaw.Delivery_Date__c
     && calculatedUndatedBuyerInvoice > 0;
-  const activeLineItems = lineItems.filter((li) => !li.Cancelled__c);
-  const supplierInvoiceTotal = recordRaw.Total_Invoiced_Amount_From_Suppliers__c ?? 0;
-  const supplierLineBuyTotal = activeLineItems.reduce((sum, li) => sum + lineBuyAmount(li, stemHasDelivery), 0);
-  const uninvoicedSupplierLineBuyTotal = activeLineItems.reduce((sum, li) => li.Supplier_Invoice__c ? sum : sum + lineBuyAmount(li, stemHasDelivery), 0);
-  const hasSupplierInvoiceLines = activeLineItems.some((li) => li.Supplier_Invoice__c);
-  const calculatedSupplierInvoice = supplierInvoiceTotal + (hasSupplierInvoiceLines ? uninvoicedSupplierLineBuyTotal : supplierLineBuyTotal);
-
   const record = {
     ...recordRaw,
     Total_Invoice_Amount__c: shouldUseCalculatedBuyerInvoice

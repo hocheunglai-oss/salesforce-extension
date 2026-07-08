@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.26';
+export const APP_VERSION = '1.0.27';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.27',
+    releasedAt: '2026-07-08',
+    title: 'Stem detail buyer receipt classification',
+    changes: [
+      'Stopped Stem Detail from showing STEM-linked calculated payable amounts as buyer invoice received dates.',
+      'Added a payable-amount guard so undelivered STEM supplier cost calculations are not treated as buyer receipts.',
+    ],
+  },
   {
     version: '1.0.26',
     releasedAt: '2026-07-08',
