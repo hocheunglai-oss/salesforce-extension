@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
-import { AlertTriangle, Banknote, Eye, Loader2, Mail, Pencil, RefreshCw, Save, Search, Send, Settings2, ShieldCheck, WalletCards, X } from 'lucide-react';
+import { AlertTriangle, Banknote, Check, Eye, Loader2, Mail, Pencil, RefreshCw, Save, Search, Send, Settings2, ShieldCheck, WalletCards, X } from 'lucide-react';
 import { appClient } from '@/api/appClient';
 import PageHeader from '@/components/common/PageHeader';
 import ReorderableDataTable from '@/components/common/ReorderableDataTable';
@@ -33,6 +33,7 @@ const INTEREST_EMAIL_SETTINGS_KEY = 'salesforce_extension:incoming_payment_inter
 const RECEIVABLE_PAYMENTS_TABLE_TOKEN = '{{receivablePaymentsTable}}';
 const BUYER_CIA_TABLE_TOKEN = '{{buyerCiaInvoicesTable}}';
 const INTEREST_CALCULATION_TABLE_TOKEN = '{{interestCalculationTable}}';
+const INCOMING_EMAIL_STEPS = ['Review report', 'Review recipients', 'Email preview'];
 const DEFAULT_EMAIL_SETTINGS = {
   from: 'Fratelli Cosulich <info@cosulich.com.hk>',
   to: 'bt@cosulich.com.hk',
@@ -350,6 +351,7 @@ export default function IncomingPayments() {
   const [allocationLoading, setAllocationLoading] = useState(false);
   const [selectedStemId, setSelectedStemId] = useState(null);
   const [emailOpen, setEmailOpen] = useState(false);
+  const [emailStep, setEmailStep] = useState(0);
   const [savedEmailSettings, setSavedEmailSettings] = useState(readEmailSettings);
   const [emailSettings, setEmailSettings] = useState(() => savedEmailSettings);
   const [emailTemplateEditing, setEmailTemplateEditing] = useState(false);
@@ -759,6 +761,7 @@ export default function IncomingPayments() {
     setSavedEmailSettings(saved);
     setEmailSettings(saved);
     setEmailTemplateEditing(false);
+    setEmailStep(0);
     setEmailOpen(true);
     setEmailPreview(null);
     setEmailError('');
@@ -926,6 +929,24 @@ export default function IncomingPayments() {
       setEmailAction('');
     }
   };
+
+  const goEmailStep = (step) => {
+    const next = Math.max(0, Math.min(step, INCOMING_EMAIL_STEPS.length - 1));
+    if (next > 1 && !String(emailSettings.to || '').trim()) {
+      const message = 'Enter at least one To recipient before continuing.';
+      setEmailError(message);
+      setEmailStep(1);
+      return;
+    }
+    setEmailError('');
+    setEmailStep(next);
+    if (next === INCOMING_EMAIL_STEPS.length - 1) {
+      runEmailReport(true);
+    }
+  };
+
+  const goNextEmailStep = () => goEmailStep(emailStep + 1);
+  const goBackEmailStep = () => goEmailStep(emailStep - 1);
 
   const confirmAllocation = async () => {
     if (!allocationTarget) return;
@@ -1185,68 +1206,80 @@ export default function IncomingPayments() {
       </Dialog>
 
       <Dialog open={emailOpen} onOpenChange={(open) => (open ? setEmailOpen(true) : closeEmailReport())}>
-        <DialogContent className="max-h-[92vh] w-[96vw] max-w-[1500px] overflow-hidden">
-          <DialogHeader>
-            <DialogTitle>Incoming Payment Report Email</DialogTitle>
-            <DialogDescription>
-              The report uses the current payment-created date range and keyword filter. Tables are generated when you preview or send.
-            </DialogDescription>
+        <DialogContent className="max-h-[94vh] w-[96vw] max-w-[1500px] gap-0 overflow-hidden p-0 text-slate-950">
+          <DialogHeader className="border-b border-slate-200 px-5 py-4 text-left">
+            <div className="flex flex-wrap items-start justify-between gap-4 pr-8">
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Incoming Payment</p>
+                <DialogTitle className="mt-1 text-xl font-semibold text-slate-950">Incoming Payment Report Email</DialogTitle>
+                <DialogDescription className="mt-1 text-sm text-slate-500">
+                  Uses the current payment-created date range and keyword filter.
+                </DialogDescription>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                <div><span className="font-semibold text-slate-900">Created:</span> {fmtDate(dateFrom)} to {fmtDate(dateTo)}</div>
+                <div className="mt-1"><span className="font-semibold text-slate-900">Keyword:</span> {search || '-'}</div>
+              </div>
+            </div>
           </DialogHeader>
-          <div className="grid max-h-[70vh] gap-4 overflow-hidden pr-1 lg:grid-cols-[430px_minmax(0,1fr)]">
-            <div className="space-y-3 overflow-auto pr-1">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1.5 md:col-span-2">
-                  <Label className="text-xs text-muted-foreground">From</Label>
-                  <Input value={emailSettings.from} onChange={(event) => updateEmailSetting('from', event.target.value)} disabled={!emailTemplateEditing} />
+
+          <div className="max-h-[calc(94vh-152px)] overflow-auto px-5 py-4">
+            <div className="space-y-4">
+              <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Receivable payments</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-950">{visibleRows.length.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Buyer CIA invoices</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-950">{visibleBuyerCiaRows.length.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Incoming total</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-950">{fmtMoney(summary.totalIncomingAmount)}</div>
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-1.5 md:col-span-2">
-                  <Label className="text-xs text-muted-foreground">To</Label>
-                  <Input value={emailSettings.to} onChange={(event) => updateEmailSetting('to', event.target.value)} placeholder="email@example.com" disabled={!emailTemplateEditing} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">CC</Label>
-                  <Input value={emailSettings.cc} onChange={(event) => updateEmailSetting('cc', event.target.value)} disabled={!emailTemplateEditing} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">BCC</Label>
-                  <Input value={emailSettings.bcc} onChange={(event) => updateEmailSetting('bcc', event.target.value)} disabled={!emailTemplateEditing} />
-                </div>
-                <div className="space-y-1.5 md:col-span-2">
-                  <Label className="text-xs text-muted-foreground">Subject</Label>
-                  <Input value={emailSettings.subject} onChange={(event) => updateEmailSetting('subject', event.target.value)} disabled={!emailTemplateEditing} />
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  <div><span className="font-semibold text-slate-900">To:</span> {emailSettings.to || '-'}</div>
+                  <div className="mt-1"><span className="font-semibold text-slate-900">CC:</span> {emailSettings.cc || '-'}</div>
+                  <div className="mt-1"><span className="font-semibold text-slate-900">BCC:</span> {emailSettings.bcc || '-'}</div>
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap gap-2">
-                  {EMAIL_TABLE_TOKENS.map((item) => (
+              <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+                {INCOMING_EMAIL_STEPS.map((step, index) => {
+                  const isActive = emailStep === index;
+                  const isComplete = index < emailStep;
+                  const disabled = emailBusy || (index > 1 && !String(emailSettings.to || '').trim());
+                  return (
                     <button
-                      key={item.token}
+                      key={step}
                       type="button"
-                      draggable={emailTemplateEditing}
-                      disabled={!emailTemplateEditing}
-                      onClick={() => insertEmailToken(item.token)}
-                      onDragStart={(event) => {
-                        event.dataTransfer.setData('text/plain', item.token);
-                        event.dataTransfer.effectAllowed = 'copy';
-                      }}
+                      disabled={disabled}
+                      onClick={() => goEmailStep(index)}
                       className={cn(
-                        'rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-foreground transition-colors',
-                        emailTemplateEditing ? 'cursor-grab hover:bg-muted/70' : 'cursor-not-allowed opacity-50',
+                        'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'border-blue-600 bg-blue-600 text-white'
+                          : isComplete
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                        disabled && !isActive && 'cursor-not-allowed opacity-50 hover:bg-white',
                       )}
-                      title={emailTemplateEditing ? 'Drag into the template or click to insert' : 'Click Edit Template to modify'}
                     >
-                      {item.label}
+                      <span className={cn(
+                        'flex h-5 w-5 items-center justify-center rounded-full text-[11px]',
+                        isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600',
+                      )}>
+                        {isComplete ? <Check className="h-3 w-3" /> : index + 1}
+                      </span>
+                      {step}
                     </button>
-                  ))}
-                </div>
-                <Textarea
-                  ref={emailContentRef}
-                  value={emailSettings.intro}
-                  onChange={(event) => updateEmailSetting('intro', event.target.value)}
-                  disabled={!emailTemplateEditing}
-                  className="min-h-72 font-mono text-xs"
-                />
+                  );
+                })}
               </div>
 
               {emailError && (
@@ -1254,63 +1287,219 @@ export default function IncomingPayments() {
                   {emailError}
                 </div>
               )}
-              {emailMessage && !emailError && (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-                  {emailMessage}
+
+              {emailStep === 0 && (
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-950">Review report</h3>
+                    <p className="text-xs text-slate-500">The email will use the same filters currently applied on this page.</p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Created from</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-950">{fmtDate(dateFrom)}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Created to</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-950">{fmtDate(dateTo)}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Keyword</div>
+                      <div className="mt-1 truncate text-sm font-semibold text-slate-950">{search || '-'}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Fully paid threshold</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-950">{fmtMoney(threshold)}</div>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="text-sm font-semibold text-slate-950">Report tables</div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                        <div className="text-sm font-medium text-slate-900">Receivable Payments</div>
+                        <div className="mt-1 text-xs text-slate-500">{visibleRows.length.toLocaleString()} rows matched by current filters.</div>
+                      </div>
+                      <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                        <div className="text-sm font-medium text-slate-900">Buyer CIA Invoices</div>
+                        <div className="mt-1 text-xs text-slate-500">{visibleBuyerCiaRows.length.toLocaleString()} rows matched by current filters.</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {emailStep === 1 && (
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-950">Review recipients</h3>
+                    <p className="text-xs text-slate-500">Only the addresses shown here will be used for this send.</p>
+                  </div>
+                  <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-2">
+                    <div className="space-y-1.5 md:col-span-2">
+                      <Label className="text-xs text-slate-500">From</Label>
+                      <Input value={emailSettings.from} onChange={(event) => updateEmailSetting('from', event.target.value)} />
+                    </div>
+                    <div className="space-y-1.5 md:col-span-2">
+                      <Label className="text-xs text-slate-500">To</Label>
+                      <Input value={emailSettings.to} onChange={(event) => updateEmailSetting('to', event.target.value)} placeholder="email@example.com" className={cn(!String(emailSettings.to || '').trim() && 'border-red-300 focus-visible:ring-red-400')} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-slate-500">CC</Label>
+                      <Input value={emailSettings.cc} onChange={(event) => updateEmailSetting('cc', event.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-slate-500">BCC</Label>
+                      <Input value={emailSettings.bcc} onChange={(event) => updateEmailSetting('bcc', event.target.value)} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {emailStep === 2 && (
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-950">Email preview</h3>
+                    <p className="text-xs text-slate-500">Edit the saved template when needed, then preview and send.</p>
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-[minmax(0,520px)_minmax(0,1fr)]">
+                    <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
+                      {emailTemplateEditing && (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <div className="flex flex-wrap gap-2">
+                            {EMAIL_TABLE_TOKENS.map((item) => (
+                              <button
+                                key={item.token}
+                                type="button"
+                                draggable
+                                onClick={() => insertEmailToken(item.token)}
+                                onDragStart={(event) => {
+                                  event.dataTransfer.setData('text/plain', item.token);
+                                  event.dataTransfer.effectAllowed = 'copy';
+                                }}
+                                className="cursor-grab rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                                title="Drag into the template or click to insert"
+                              >
+                                {item.label}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="mt-2 text-xs text-slate-500">Drag table tokens into the content to move the generated tables.</p>
+                        </div>
+                      )}
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-slate-500">Subject</Label>
+                        <Input value={emailSettings.subject} onChange={(event) => updateEmailSetting('subject', event.target.value)} disabled={!emailTemplateEditing} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-slate-500">Email content</Label>
+                        <Textarea
+                          ref={emailContentRef}
+                          value={emailSettings.intro}
+                          onChange={(event) => updateEmailSetting('intro', event.target.value)}
+                          onDragOver={(event) => emailTemplateEditing && event.preventDefault()}
+                          onDrop={(event) => {
+                            if (!emailTemplateEditing) return;
+                            event.preventDefault();
+                            const token = event.dataTransfer.getData('text/plain');
+                            if (token) insertEmailToken(token);
+                          }}
+                          disabled={!emailTemplateEditing}
+                          className="min-h-[360px] font-mono text-xs"
+                        />
+                        <p className="text-xs text-slate-500">
+                          Table tokens: <span className="font-mono">{RECEIVABLE_PAYMENTS_TABLE_TOKEN}</span> and <span className="font-mono">{BUYER_CIA_TABLE_TOKEN}</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-200 bg-white">
+                      <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-3 py-2">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-950">Preview</div>
+                          <div className="mt-1 grid gap-1 text-xs text-slate-500">
+                            <div><span className="font-semibold text-slate-900">To:</span> {emailSettings.to || '-'}</div>
+                            <div><span className="font-semibold text-slate-900">CC:</span> {emailSettings.cc || '-'}</div>
+                            <div><span className="font-semibold text-slate-900">BCC:</span> {emailSettings.bcc || '-'}</div>
+                            <div><span className="font-semibold text-slate-900">Subject:</span> {emailPreview?.subject || emailSettings.subject || '-'}</div>
+                          </div>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={() => runEmailReport(true)} disabled={emailBusy}>
+                          {emailAction === 'preview' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
+                          {emailAction === 'preview' ? 'Previewing' : 'Preview'}
+                        </Button>
+                      </div>
+                      <div className="max-h-[58vh] overflow-auto p-4">
+                        {emailPreview?.html ? (
+                          <div
+                            className="rounded-lg border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-900"
+                            dangerouslySetInnerHTML={{ __html: emailPreview.html }}
+                          />
+                        ) : (
+                          <div className="flex h-[360px] items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-500">
+                            Generate a preview before sending.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {emailMessage && !emailError && (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                      {emailMessage}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
+          </div>
 
-            <div className="rounded-xl border border-border bg-background">
-              <div className="flex items-center justify-between border-b border-border px-3 py-2">
-                <div>
-                  <div className="text-sm font-semibold text-foreground">Preview</div>
-                  <div className="text-xs text-muted-foreground">
-                    {emailPreview?.subject ? `Subject: ${emailPreview.subject}` : 'Generate a preview before sending.'}
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => runEmailReport(true)} disabled={emailBusy}>
-                  {emailAction === 'preview' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
-                  {emailAction === 'preview' ? 'Previewing' : 'Preview'}
-                </Button>
-              </div>
-              <div className="h-[520px] overflow-auto p-4">
-                {emailPreview?.html ? (
-                  <div
-                    className="prose prose-sm max-w-none"
-                    dangerouslySetInnerHTML={{ __html: emailPreview.html }}
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    No preview generated yet.
+          <DialogFooter className="border-t border-slate-200 bg-slate-50 px-5 py-3">
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-h-9 flex-1">
+                {emailError && (
+                  <div className="inline-flex max-w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {emailError}
                   </div>
                 )}
               </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                {emailStep === INCOMING_EMAIL_STEPS.length - 1 && (
+                  !emailTemplateEditing ? (
+                    <Button type="button" variant="outline" onClick={startEmailTemplateEdit} disabled={emailBusy}>
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Edit Template
+                    </Button>
+                  ) : (
+                    <>
+                      <Button type="button" variant="outline" onClick={cancelEmailTemplateChanges} disabled={emailBusy}>
+                        <X className="mr-2 h-4 w-4" />
+                        Cancel
+                      </Button>
+                      <Button type="button" variant="outline" onClick={saveEmailTemplate} disabled={emailBusy || JSON.stringify(emailSettings) === JSON.stringify(savedEmailSettings)}>
+                        <Save className="mr-2 h-4 w-4" />
+                        Save Template
+                      </Button>
+                    </>
+                  )
+                )}
+                <Button type="button" variant="outline" onClick={closeEmailReport} disabled={emailBusy}>Close</Button>
+                {emailStep > 0 && (
+                  <Button type="button" variant="outline" onClick={goBackEmailStep} disabled={emailBusy}>Back</Button>
+                )}
+                {emailStep < INCOMING_EMAIL_STEPS.length - 1 && (
+                  <Button type="button" onClick={goNextEmailStep} disabled={emailBusy}>
+                    Next
+                  </Button>
+                )}
+                {emailStep === INCOMING_EMAIL_STEPS.length - 1 && (
+                  <Button type="button" onClick={() => runEmailReport(false)} disabled={emailBusy}>
+                    {emailAction === 'send' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                    {emailAction === 'send' ? 'Sending' : 'Send Email'}
+                  </Button>
+                )}
+              </div>
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={closeEmailReport}>Close</Button>
-            {!emailTemplateEditing ? (
-              <Button variant="outline" onClick={startEmailTemplateEdit}>
-                <Pencil className="mr-2 h-4 w-4" />
-                Edit Template
-              </Button>
-            ) : (
-              <>
-                <Button variant="outline" onClick={cancelEmailTemplateChanges}>
-                  <X className="mr-2 h-4 w-4" />
-                  Cancel Changes
-                </Button>
-                <Button variant="outline" onClick={saveEmailTemplate} disabled={JSON.stringify(emailSettings) === JSON.stringify(savedEmailSettings)}>
-                  <Save className="mr-2 h-4 w-4" />
-                  Save Template
-                </Button>
-              </>
-            )}
-            <Button onClick={() => runEmailReport(false)} disabled={emailBusy}>
-              {emailAction === 'send' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-              {emailAction === 'send' ? 'Sending' : 'Send Email'}
-            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

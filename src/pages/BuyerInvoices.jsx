@@ -1451,30 +1451,9 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
 
               {currentStep === 2 && (
                 <div className="space-y-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-base font-semibold text-slate-950">Email preview</h3>
-                      <p className="text-xs text-slate-500">Review the message before sending.</p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {!templateEditing ? (
-                        <Button type="button" variant="outline" size="sm" onClick={() => setTemplateEditing(true)} className="gap-2">
-                          <Mail className="h-4 w-4" />
-                          Edit Template
-                        </Button>
-                      ) : (
-                        <>
-                          <Button type="button" variant="outline" size="sm" onClick={cancelPaymentReminderTemplateChanges} disabled={sending || templateSaving} className="gap-2">
-                            <X className="h-4 w-4" />
-                            Cancel
-                          </Button>
-                          <Button type="button" variant="outline" size="sm" onClick={savePaymentReminderTemplateFromModal} disabled={sending || templateSaving} className="gap-2">
-                            {templateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                            Save Template
-                          </Button>
-                        </>
-                      )}
-                    </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-950">Email preview</h3>
+                    <p className="text-xs text-slate-500">Review the message before sending.</p>
                   </div>
 
                   <div className="grid gap-4 xl:grid-cols-[minmax(0,520px)_minmax(0,1fr)]">
@@ -1580,6 +1559,25 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
               )}
             </div>
             <div className="flex flex-wrap justify-end gap-2">
+              {data && currentStep === PAYMENT_REMINDER_STEPS.length - 1 && (
+                !templateEditing ? (
+                  <Button type="button" variant="outline" onClick={() => setTemplateEditing(true)} disabled={sending} className="gap-2">
+                    <Mail className="h-4 w-4" />
+                    Edit Template
+                  </Button>
+                ) : (
+                  <>
+                    <Button type="button" variant="outline" onClick={cancelPaymentReminderTemplateChanges} disabled={sending || templateSaving} className="gap-2">
+                      <X className="h-4 w-4" />
+                      Cancel
+                    </Button>
+                    <Button type="button" variant="outline" onClick={savePaymentReminderTemplateFromModal} disabled={sending || templateSaving} className="gap-2">
+                      {templateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      Save Template
+                    </Button>
+                  </>
+                )
+              )}
               <Button type="button" variant="outline" onClick={onClose} disabled={sending}>Close</Button>
               {data && currentStep > 0 && (
                 <Button type="button" variant="outline" onClick={goBack} disabled={sending}>Back</Button>

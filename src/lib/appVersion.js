@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.33';
+export const APP_VERSION = '1.0.34';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.34',
+    releasedAt: '2026-07-08',
+    title: 'Email modal workflow alignment',
+    changes: [
+      'Moved external payment reminder template actions to the footer immediately before Close.',
+      'Redesigned the Incoming Payment report email modal into the same step workflow used by external payment reminders.',
+    ],
+  },
   {
     version: '1.0.33',
     releasedAt: '2026-07-08',
