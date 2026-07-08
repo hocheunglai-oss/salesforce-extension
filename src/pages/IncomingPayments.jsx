@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { AlertTriangle, Banknote, CheckCircle2, Loader2, RefreshCw, Search, Settings2, ShieldCheck, WalletCards } from 'lucide-react';
+import { AlertTriangle, Banknote, Eye, Loader2, Mail, RefreshCw, Search, Send, Settings2, ShieldCheck, WalletCards } from 'lucide-react';
 import { appClient } from '@/api/appClient';
 import PageHeader from '@/components/common/PageHeader';
 import ReorderableDataTable from '@/components/common/ReorderableDataTable';
@@ -23,7 +23,33 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/lib/AuthContext';
+import { readPageState, writePageState } from '@/lib/pageStateCache';
+import { hasUsableSmtpSettings, readSmtpSettings, smtpFromAddress } from '@/lib/smtpSettings';
 import { cn } from '@/lib/utils';
+
+const PAGE_STATE_KEY = 'incoming-payments:v1';
+const EMAIL_SETTINGS_KEY = 'salesforce_extension:incoming_payment_email_settings';
+const RECEIVABLE_PAYMENTS_TABLE_TOKEN = '{{receivablePaymentsTable}}';
+const BUYER_CIA_TABLE_TOKEN = '{{buyerCiaInvoicesTable}}';
+const DEFAULT_EMAIL_SETTINGS = {
+  from: 'Fratelli Cosulich <info@cosulich.com.hk>',
+  to: 'bt@cosulich.com.hk',
+  cc: '',
+  bcc: '',
+  subject: 'Incoming Payment Report - {{dateFrom}} to {{dateTo}}',
+  intro: `Incoming Payment Report
+
+Please find below the receivable payments and Buyer CIA invoices for the selected filters.
+
+Received date range: {{dateFrom}} to {{dateTo}}.
+Incoming total: {{incomingTotal}}.
+
+${RECEIVABLE_PAYMENTS_TABLE_TOKEN}
+
+${BUYER_CIA_TABLE_TOKEN}`,
+  includeReceivablePayments: true,
+  includeBuyerCiaInvoices: true,
+};
 
 const paymentStatusClass = {
   'Buyer Payment': 'border-blue-200 bg-blue-50 text-blue-700',
@@ -59,36 +85,6 @@ function lowerText(value) {
   return String(value || '').toLowerCase();
 }
 
-function csvSafe(value) {
-  const text = String(value ?? '');
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
-function downloadCsv(rows) {
-  const headers = ['Status', 'Received Date', 'Payment Terms', 'Delay', 'From', 'Group', 'STEM', 'Amount', 'Receivable Balance'];
-  const lines = [
-    headers.map(csvSafe).join(','),
-    ...rows.map((row) => [
-      row.type || '',
-      row.paymentDate || '',
-      row.type === 'Buyer Payment' ? row.paymentTerms || '' : 'N/A',
-      row.delayDays == null ? (row.type === 'Buyer Payment' ? '' : 'N/A') : `${row.delayDays} Days`,
-      row.partyName || '',
-      row.buyerGroupName || '',
-      row.stemName || '',
-      [row.amount ?? '', ...(row.bankCharges || []).map((charge) => `Bank Charge ${charge.amount ?? ''}`)].filter(Boolean).join('\n'),
-      row.receivableBalance ?? '',
-    ].map(csvSafe).join(',')),
-  ];
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `receivable_payments_${todayHongKong()}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
 function PaymentStatusBadge({ row }) {
   return (
     <Badge variant="outline" className={cn('whitespace-nowrap', paymentStatusClass[row.type] || paymentStatusClass.Unmatched)}>
@@ -97,22 +93,64 @@ function PaymentStatusBadge({ row }) {
   );
 }
 
+function defaultPageState() {
+  return {
+    dateFrom: todayHongKong(),
+    dateTo: todayHongKong(),
+    search: '',
+    data: null,
+    thresholdDraft: '50',
+  };
+}
+
+function readEmailSettings() {
+  try {
+    const raw = localStorage.getItem(EMAIL_SETTINGS_KEY);
+    return raw ? { ...DEFAULT_EMAIL_SETTINGS, ...JSON.parse(raw) } : DEFAULT_EMAIL_SETTINGS;
+  } catch {
+    return DEFAULT_EMAIL_SETTINGS;
+  }
+}
+
+function saveEmailSettings(settings) {
+  localStorage.setItem(EMAIL_SETTINGS_KEY, JSON.stringify({ ...DEFAULT_EMAIL_SETTINGS, ...settings }));
+}
+
 export default function IncomingPayments() {
   const { toast } = useToast();
   const { isAdministrator } = useAuth();
-  const [dateFrom, setDateFrom] = useState(todayHongKong);
-  const [dateTo, setDateTo] = useState(todayHongKong);
-  const [search, setSearch] = useState('');
-  const [data, setData] = useState(null);
+  const [pageState, setPageState] = useState(() => readPageState(PAGE_STATE_KEY, defaultPageState));
+  const { dateFrom, dateTo, search, data, thresholdDraft } = pageState;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [thresholdDraft, setThresholdDraft] = useState('50');
   const [savingSettings, setSavingSettings] = useState(false);
   const [allocationTarget, setAllocationTarget] = useState(null);
   const [allocationDraft, setAllocationDraft] = useState({ targetStem: '', amount: '', note: '' });
   const [allocationLoading, setAllocationLoading] = useState(false);
   const [selectedStemId, setSelectedStemId] = useState(null);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailSettings, setEmailSettings] = useState(readEmailSettings);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailPreview, setEmailPreview] = useState(null);
+  const [emailError, setEmailError] = useState('');
+  const [emailMessage, setEmailMessage] = useState('');
+
+  const updatePageState = (patch) => {
+    setPageState((prev) => ({
+      ...prev,
+      ...(typeof patch === 'function' ? patch(prev) : patch),
+    }));
+  };
+
+  const setDateFrom = (value) => updatePageState({ dateFrom: value });
+  const setDateTo = (value) => updatePageState({ dateTo: value });
+  const setSearch = (value) => updatePageState({ search: value });
+  const setThresholdDraft = (value) => updatePageState({ thresholdDraft: value });
+
+  useEffect(() => {
+    writePageState(PAGE_STATE_KEY, pageState);
+  }, [pageState]);
 
   const load = async (options = {}) => {
     setLoading(true);
@@ -124,16 +162,17 @@ export default function IncomingPayments() {
     }, { cache: true, force: options.force });
     if (res.data?.error) {
       setError(res.data.error);
-      setData(null);
     } else {
-      setData(res.data);
-      setThresholdDraft(String(res.data?.settings?.fullyPaidThreshold ?? 50));
+      updatePageState({
+        data: res.data,
+        thresholdDraft: String(res.data?.settings?.fullyPaidThreshold ?? 50),
+      });
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    load({ force: true });
+    if (!data) load({ force: true });
   }, []);
 
   const rows = data?.rows || [];
@@ -151,6 +190,17 @@ export default function IncomingPayments() {
       row.supplierInvoiceName,
     ].some((value) => lowerText(value).includes(query)));
   }, [rows, search]);
+  const visibleBuyerCiaRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return buyerCiaRows;
+    return buyerCiaRows.filter((row) => [
+      row.buyerName,
+      row.buyerGroupName,
+      row.buyerTrader,
+      row.stemName,
+      row.keyStem,
+    ].some((value) => lowerText(value).includes(query)));
+  }, [buyerCiaRows, search]);
 
   const summary = data?.summary || {};
   const threshold = data?.settings?.fullyPaidThreshold ?? 50;
@@ -311,6 +361,51 @@ export default function IncomingPayments() {
     load({ force: true });
   };
 
+  const updateEmailSetting = (field, value) => {
+    setEmailSettings((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const saveEmailTemplate = () => {
+    saveEmailSettings(emailSettings);
+    toast({ title: 'Incoming Payment email template saved' });
+  };
+
+  const openEmailReport = () => {
+    setEmailOpen(true);
+    setEmailPreview(null);
+    setEmailError('');
+    setEmailMessage('');
+  };
+
+  const runEmailReport = async (preview = true) => {
+    setEmailBusy(true);
+    setEmailError('');
+    setEmailMessage('');
+    if (!preview) saveEmailSettings(emailSettings);
+    const smtpSettings = readSmtpSettings();
+    const credentials = hasUsableSmtpSettings(smtpSettings) && !preview
+      ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587), from: smtpFromAddress(smtpSettings, emailSettings.from) } }
+      : undefined;
+    const res = await appClient.functions.invoke('incomingPaymentEmailReport', {
+      dateFrom,
+      dateTo,
+      search,
+      settings: emailSettings,
+      credentials,
+      preview,
+    });
+    if (res.data?.error) {
+      setEmailError(res.data.error);
+    } else if (preview) {
+      setEmailPreview(res.data.email || null);
+      setEmailMessage(`Preview ready: ${res.data.report?.receivableRows ?? 0} receivable payments and ${res.data.report?.buyerCiaRows ?? 0} Buyer CIA invoices.`);
+    } else {
+      setEmailPreview(res.data.email || null);
+      setEmailMessage(`Sent Incoming Payment report to ${res.data.to?.join(', ') || emailSettings.to}.`);
+    }
+    setEmailBusy(false);
+  };
+
   const confirmAllocation = async () => {
     if (!allocationTarget) return;
     setAllocationLoading(true);
@@ -343,8 +438,9 @@ export default function IncomingPayments() {
               <Settings2 className="mr-2 h-4 w-4" />
               Global Settings
             </Button>
-            <Button variant="outline" onClick={() => downloadCsv(visibleRows)} disabled={!visibleRows.length}>
-              Export CSV
+            <Button variant="outline" onClick={openEmailReport}>
+              <Mail className="mr-2 h-4 w-4" />
+              Email Report
             </Button>
             <Button onClick={() => load({ force: true })} disabled={loading}>
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
@@ -354,24 +450,27 @@ export default function IncomingPayments() {
         )}
       />
 
-      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <StatCard label="Incoming Total" value={fmtMoney(summary.totalIncomingAmount)} sub={`${summary.incomingRows || 0} incoming records`} icon={Banknote} color="green" />
-        <StatCard label="Buyer Payments" value={fmtMoney(summary.buyerPaymentTotal)} sub="Existing Salesforce payments" icon={CheckCircle2} color="blue" />
-        <StatCard label="Supplier Refunds" value={fmtMoney(summary.supplierRefundTotal)} sub="Negative supplier invoice payments" icon={WalletCards} color="teal" />
-        <StatCard label="Available Buyer Balance" value={fmtMoney(summary.availableBalanceTotal)} sub={`${summary.availableBalanceCount || 0} overpaid STEMs`} icon={WalletCards} color="purple" />
+      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <StatCard
+          label="Incoming Total"
+          value={fmtMoney(summary.totalIncomingAmount)}
+          sub={`Buyer Payments ${fmtMoney(summary.buyerPaymentTotal)} · Supplier Refunds ${fmtMoney(summary.supplierRefundTotal)} · ${summary.incomingRows || 0} records`}
+          icon={Banknote}
+          color="green"
+        />
         <StatCard label="Needs Review" value={String(summary.unmatchedCount || 0)} sub="Unmatched or incomplete payments" icon={AlertTriangle} color="amber" />
       </div>
 
       <TableShell
         title="Buyer CIA Invoices"
-        meta={`${buyerCiaRows.length.toLocaleString()} unpaid CIA buyer invoice stems`}
+        meta={`${visibleBuyerCiaRows.length.toLocaleString()} visible of ${buyerCiaRows.length.toLocaleString()} unpaid CIA buyer invoice stems`}
         className="mb-4"
       >
         <div className="max-h-[32vh] overflow-auto">
           <ReorderableDataTable
             tableKey="incoming-payment-cia-invoices"
             columns={ciaColumns}
-            rows={buyerCiaRows}
+            rows={visibleBuyerCiaRows}
             rowKey={(row) => row.stemId}
             isReorderEnabled={isAdministrator}
             emptyIcon={Search}
@@ -545,6 +644,121 @@ export default function IncomingPayments() {
             <Button onClick={confirmAllocation} disabled={!isAdministrator || allocationLoading}>
               {allocationLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Confirm Write-back
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
+        <DialogContent className="max-h-[92vh] overflow-hidden sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Incoming Payment Report Email</DialogTitle>
+            <DialogDescription>
+              The report uses the current received-date range and keyword filter. Tables are generated when you preview or send.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid max-h-[70vh] gap-4 overflow-auto pr-1 lg:grid-cols-[0.9fr_1.1fr]">
+            <div className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label className="text-xs text-muted-foreground">From</Label>
+                  <Input value={emailSettings.from} onChange={(event) => updateEmailSetting('from', event.target.value)} />
+                </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label className="text-xs text-muted-foreground">To</Label>
+                  <Input value={emailSettings.to} onChange={(event) => updateEmailSetting('to', event.target.value)} placeholder="email@example.com" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">CC</Label>
+                  <Input value={emailSettings.cc} onChange={(event) => updateEmailSetting('cc', event.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">BCC</Label>
+                  <Input value={emailSettings.bcc} onChange={(event) => updateEmailSetting('bcc', event.target.value)} />
+                </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label className="text-xs text-muted-foreground">Subject</Label>
+                  <Input value={emailSettings.subject} onChange={(event) => updateEmailSetting('subject', event.target.value)} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Email Content</Label>
+                <Textarea
+                  value={emailSettings.intro}
+                  onChange={(event) => updateEmailSetting('intro', event.target.value)}
+                  className="min-h-56 font-mono text-xs"
+                />
+                <div className="rounded-lg border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
+                  Available table tokens: <span className="font-mono">{RECEIVABLE_PAYMENTS_TABLE_TOKEN}</span> and{' '}
+                  <span className="font-mono">{BUYER_CIA_TABLE_TOKEN}</span>. If a token is removed, that table is appended below the content.
+                </div>
+              </div>
+
+              <div className="grid gap-2 text-sm">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={emailSettings.includeReceivablePayments !== false}
+                    onChange={(event) => updateEmailSetting('includeReceivablePayments', event.target.checked)}
+                  />
+                  Include Receivable Payments table
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={emailSettings.includeBuyerCiaInvoices !== false}
+                    onChange={(event) => updateEmailSetting('includeBuyerCiaInvoices', event.target.checked)}
+                  />
+                  Include Buyer CIA Invoices table
+                </label>
+              </div>
+
+              {emailError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {emailError}
+                </div>
+              )}
+              {emailMessage && !emailError && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                  {emailMessage}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border bg-background">
+              <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">Preview</div>
+                  <div className="text-xs text-muted-foreground">
+                    {emailPreview?.subject ? `Subject: ${emailPreview.subject}` : 'Generate a preview before sending.'}
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => runEmailReport(true)} disabled={emailBusy}>
+                  {emailBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
+                  Preview
+                </Button>
+              </div>
+              <div className="h-[520px] overflow-auto p-4">
+                {emailPreview?.html ? (
+                  <div
+                    className="prose prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{ __html: emailPreview.html }}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    No preview generated yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEmailOpen(false)}>Close</Button>
+            <Button variant="outline" onClick={saveEmailTemplate}>Save Template</Button>
+            <Button onClick={() => runEmailReport(false)} disabled={emailBusy}>
+              {emailBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              Send Email
             </Button>
           </DialogFooter>
         </DialogContent>

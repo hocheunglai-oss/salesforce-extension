@@ -1,6 +1,17 @@
-export const APP_VERSION = '1.0.6';
+export const APP_VERSION = '1.0.7';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.7',
+    releasedAt: '2026-07-08',
+    title: 'Incoming payment email report',
+    changes: [
+      'Simplified Incoming Payment KPIs by moving Buyer Payments and Supplier Refunds into the Incoming Total card.',
+      'Removed the Incoming Payment CSV export action.',
+      'Added an Incoming Payment report email workflow with editable recipients, template, preview, and inline Receivable Payments and Buyer CIA Invoices tables.',
+      'Preserved Incoming Payment filters and loaded data when switching pages through a reusable page-state cache.',
+    ],
+  },
   {
     version: '1.0.6',
     releasedAt: '2026-07-08',

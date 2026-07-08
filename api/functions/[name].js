@@ -288,6 +288,7 @@ const HANDLER_MODULE_ACCESS = {
   buyerInvoicePaymentReminderSend: ['buyer_invoices'],
   outstandingBuyerInvoicesEmailReport: ['buyer_invoices'],
   incomingPaymentsList: ['incoming_payments'],
+  incomingPaymentEmailReport: ['incoming_payments'],
   incomingPaymentSettingsGet: ['incoming_payments'],
   incomingPaymentSettingsSave: ['incoming_payments'],
   incomingPaymentAllocationConfirm: ['incoming_payments'],
@@ -4725,6 +4726,306 @@ async function incomingPaymentAllocationConfirm(body, req) {
   throw appError('Salesforce payment allocation write-back is not enabled yet. Confirm the Salesforce object and fields for applying available buyer balances to another STEM.', 501);
 }
 
+const INCOMING_PAYMENT_RECEIVABLE_TABLE_TOKEN_PATTERN = /\{\{\s*receivablePaymentsTable\s*\}\}/i;
+const INCOMING_PAYMENT_BUYER_CIA_TABLE_TOKEN_PATTERN = /\{\{\s*buyerCiaInvoicesTable\s*\}\}/i;
+const DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS = {
+  from: 'Fratelli Cosulich <info@cosulich.com.hk>',
+  to: ['bt@cosulich.com.hk'],
+  cc: [],
+  bcc: [],
+  subject: 'Incoming Payment Report - {{dateFrom}} to {{dateTo}}',
+  intro: 'Incoming Payment Report\n\nPlease find below the receivable payments and Buyer CIA invoices for the selected filters.\n\nReceived date range: {{dateFrom}} to {{dateTo}}.\nIncoming total: {{incomingTotal}}.\n\n{{receivablePaymentsTable}}\n\n{{buyerCiaInvoicesTable}}',
+  includeReceivablePayments: true,
+  includeBuyerCiaInvoices: true,
+};
+
+function incomingPaymentEmailSettings(input = {}) {
+  const defaults = {
+    ...DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS,
+    from: process.env.INCOMING_PAYMENT_REPORT_FROM || DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS.from,
+    to: parseEmailList(process.env.INCOMING_PAYMENT_REPORT_TO, DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS.to),
+    cc: parseEmailList(process.env.INCOMING_PAYMENT_REPORT_CC, DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS.cc),
+    bcc: parseEmailList(process.env.INCOMING_PAYMENT_REPORT_BCC, DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS.bcc),
+  };
+  return {
+    ...defaults,
+    ...input,
+    from: String(input.from ?? defaults.from),
+    to: parseEmailList(input.to, defaults.to),
+    cc: parseEmailList(input.cc, defaults.cc),
+    bcc: parseEmailList(input.bcc, defaults.bcc),
+    subject: String(input.subject ?? defaults.subject),
+    intro: String(input.intro ?? defaults.intro),
+    includeReceivablePayments: input.includeReceivablePayments ?? defaults.includeReceivablePayments,
+    includeBuyerCiaInvoices: input.includeBuyerCiaInvoices ?? defaults.includeBuyerCiaInvoices,
+  };
+}
+
+function incomingPaymentSearchMatches(row, search, fields) {
+  const query = String(search || '').trim().toLowerCase();
+  if (!query) return true;
+  return fields.some((field) => String(row?.[field] || '').toLowerCase().includes(query));
+}
+
+function renderIncomingPaymentTemplate(value, context = {}) {
+  let output = String(value || '');
+  for (const [key, replacement] of Object.entries(context)) {
+    output = output.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'gi'), String(replacement ?? ''));
+  }
+  return output;
+}
+
+function incomingPaymentStatusPill(type) {
+  if (type === 'Supplier Refund') return 'background:#ecfdf5;border-color:#86efac;color:#047857';
+  if (type === 'Buyer Payment') return 'background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8';
+  return 'background:#fffbeb;border-color:#fcd34d;color:#92400e';
+}
+
+function incomingPaymentReportSummary(rows = []) {
+  const incomingRows = rows.filter((row) => row.isIncoming);
+  return {
+    incomingRows: incomingRows.length,
+    totalIncomingAmount: incomingRows.reduce((sum, row) => sum + Math.abs(Number(row.incomingAmount || 0)), 0),
+    buyerPaymentTotal: rows.filter((row) => row.type === 'Buyer Payment').reduce((sum, row) => sum + Math.abs(Number(row.incomingAmount || 0)), 0),
+    supplierRefundTotal: rows.filter((row) => row.type === 'Supplier Refund').reduce((sum, row) => sum + Math.abs(Number(row.incomingAmount || 0)), 0),
+    unmatchedCount: rows.filter((row) => row.type === 'Unmatched' || row.status === 'Needs review').length,
+  };
+}
+
+function incomingPaymentReceivableTableHtml(rows = []) {
+  const tableRows = rows.map((row) => {
+    const cell = 'border-bottom:1px solid #e5e7eb;padding:7px 8px;vertical-align:top';
+    const amountLines = [
+      escapeHtml(money(row.amount)),
+      ...(row.bankCharges || []).map((charge) => `<span style="display:block;color:#92400e;font-weight:600">Bank Charge ${escapeHtml(money(charge.amount))}</span>`),
+    ].join('');
+    return `
+      <tr>
+        <td style="${cell};white-space:nowrap"><span style="display:inline-block;border:1px solid;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;${incomingPaymentStatusPill(row.type)}">${escapeHtml(row.type || '-')}</span></td>
+        <td style="${cell};white-space:nowrap">${prettyDate(row.paymentDate)}</td>
+        <td style="${cell};white-space:nowrap">${escapeHtml(row.type === 'Buyer Payment' ? row.paymentTerms || '-' : 'N/A')}</td>
+        <td style="${cell};white-space:nowrap;text-align:right">${row.type === 'Buyer Payment' ? (row.delayDays == null ? '-' : `${Number(row.delayDays).toLocaleString()} Days`) : 'N/A'}</td>
+        <td style="${cell};min-width:160px">${escapeHtml(row.partyName || '-')}</td>
+        <td style="${cell};min-width:140px">${escapeHtml(row.buyerGroupName || '-')}</td>
+        <td style="${cell};min-width:180px;font-weight:600">${escapeHtml(row.stemName || '-')}</td>
+        <td style="${cell};white-space:nowrap;text-align:right;font-weight:600">${amountLines}</td>
+        <td style="${cell};white-space:nowrap;text-align:right">${money(row.receivableBalance)}</td>
+      </tr>`;
+  }).join('');
+  return `
+    <div style="margin:14px 0 18px">
+      <div style="font-size:13px;font-weight:700;margin:0 0 8px;color:#1f2937">Receivable Payments (${rows.length.toLocaleString()})</div>
+      <div style="overflow-x:auto;border:1px solid #d9e2ef;border-radius:10px">
+        <table style="border-collapse:collapse;width:auto;min-width:1040px;font-size:12px;line-height:1.3">
+          <thead>
+            <tr style="background:#f8fafc;color:#667085;text-transform:uppercase;font-size:11px;letter-spacing:.04em">
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Status</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Received Date</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Payment Terms</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:right;white-space:nowrap">Delay</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">From</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Group</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">STEM</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:right;white-space:nowrap">Amount</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:right;white-space:nowrap">Receivable</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows || '<tr><td colspan="9" style="padding:16px;text-align:center;color:#667085">No receivable payments found for the selected filters.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function incomingPaymentBuyerCiaTableHtml(rows = []) {
+  const tableRows = rows.map((row) => {
+    const cell = 'border-bottom:1px solid #e5e7eb;padding:7px 8px;vertical-align:top';
+    return `
+      <tr>
+        <td style="${cell};min-width:180px;font-weight:600">${escapeHtml(row.buyerName || '-')}</td>
+        <td style="${cell};min-width:140px">${escapeHtml(row.buyerGroupName || '-')}</td>
+        <td style="${cell};min-width:130px">${escapeHtml(row.buyerTrader || '-')}</td>
+        <td style="${cell};min-width:180px;font-weight:600">${escapeHtml(row.stemName || '-')}</td>
+        <td style="${cell};white-space:nowrap;text-align:right">${money(row.calculatedAmount)}</td>
+        <td style="${cell};white-space:nowrap;text-align:right;font-weight:600">${money(row.receivableBalance)}</td>
+        <td style="${cell};white-space:nowrap">${prettyDate(row.deliveryDate)}</td>
+      </tr>`;
+  }).join('');
+  return `
+    <div style="margin:14px 0 18px">
+      <div style="font-size:13px;font-weight:700;margin:0 0 8px;color:#1f2937">Buyer CIA Invoices (${rows.length.toLocaleString()})</div>
+      <div style="overflow-x:auto;border:1px solid #d9e2ef;border-radius:10px">
+        <table style="border-collapse:collapse;width:auto;min-width:900px;font-size:12px;line-height:1.3">
+          <thead>
+            <tr style="background:#f8fafc;color:#667085;text-transform:uppercase;font-size:11px;letter-spacing:.04em">
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Buyer</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Group</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Buyer Trader</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">STEM</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:right;white-space:nowrap">Calculated Amount</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:right;white-space:nowrap">Receivable Balance</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Delivery Date</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows || '<tr><td colspan="7" style="padding:16px;text-align:center;color:#667085">No Buyer CIA invoices found for the selected filters.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function incomingPaymentReceivableTableText(rows = []) {
+  if (!rows.length) return 'Receivable Payments: none';
+  return [
+    `Receivable Payments (${rows.length})`,
+    ...rows.map((row) => `${row.type || '-'} | ${prettyDate(row.paymentDate)} | ${row.type === 'Buyer Payment' ? row.paymentTerms || '-' : 'N/A'} | ${row.type === 'Buyer Payment' ? (row.delayDays == null ? '-' : `${row.delayDays} Days`) : 'N/A'} | ${row.partyName || '-'} | ${row.buyerGroupName || '-'} | ${row.stemName || '-'} | ${money(row.amount)} | Receivable ${money(row.receivableBalance)}`),
+  ].join('\n');
+}
+
+function incomingPaymentBuyerCiaTableText(rows = []) {
+  if (!rows.length) return 'Buyer CIA Invoices: none';
+  return [
+    `Buyer CIA Invoices (${rows.length})`,
+    ...rows.map((row) => `${row.buyerName || '-'} | ${row.buyerGroupName || '-'} | ${row.buyerTrader || '-'} | ${row.stemName || '-'} | Calculated ${money(row.calculatedAmount)} | Receivable ${money(row.receivableBalance)} | Delivery ${prettyDate(row.deliveryDate)}`),
+  ].join('\n');
+}
+
+function injectIncomingPaymentTables(content, settings, receivableTable, buyerCiaTable) {
+  let output = String(content || '');
+  const hasReceivableToken = INCOMING_PAYMENT_RECEIVABLE_TABLE_TOKEN_PATTERN.test(output);
+  const hasBuyerCiaToken = INCOMING_PAYMENT_BUYER_CIA_TABLE_TOKEN_PATTERN.test(output);
+  const replaceToken = (source, pattern, replacement) => source
+    .replace(new RegExp(`<p\\b[^>]*>\\s*${pattern.source}\\s*<\\/p>`, 'i'), replacement)
+    .replace(pattern, replacement);
+  output = replaceToken(output, INCOMING_PAYMENT_RECEIVABLE_TABLE_TOKEN_PATTERN, settings.includeReceivablePayments ? receivableTable : '');
+  output = replaceToken(output, INCOMING_PAYMENT_BUYER_CIA_TABLE_TOKEN_PATTERN, settings.includeBuyerCiaInvoices ? buyerCiaTable : '');
+  if (settings.includeReceivablePayments && !hasReceivableToken) output += receivableTable;
+  if (settings.includeBuyerCiaInvoices && !hasBuyerCiaToken) output += buyerCiaTable;
+  return output;
+}
+
+function buildIncomingPaymentEmail(report, settings) {
+  const summary = report.summary || incomingPaymentReportSummary(report.rows || []);
+  const context = {
+    dateFrom: prettyDate(report.dateFrom),
+    dateTo: prettyDate(report.dateTo),
+    today: prettyDate(dateOnly(new Date())),
+    paymentCount: (report.rows || []).length.toLocaleString(),
+    receivablePaymentCount: (report.rows || []).length.toLocaleString(),
+    buyerCiaCount: (report.buyerCiaInvoices || []).length.toLocaleString(),
+    incomingTotal: money(summary.totalIncomingAmount),
+    buyerPaymentTotal: money(summary.buyerPaymentTotal),
+    supplierRefundTotal: money(summary.supplierRefundTotal),
+    needsReviewCount: String(summary.unmatchedCount || 0),
+    keyword: report.search || '',
+  };
+  const subject = renderIncomingPaymentTemplate(settings.subject, context);
+  const content = renderIncomingPaymentTemplate(settings.intro, context);
+  const contentHtml = emailContentHtml(content);
+  const html = `
+    <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">
+      ${injectIncomingPaymentTables(
+        contentHtml,
+        settings,
+        incomingPaymentReceivableTableHtml(report.rows || []),
+        incomingPaymentBuyerCiaTableHtml(report.buyerCiaInvoices || []),
+      )}
+    </div>`;
+  const textContent = injectIncomingPaymentTables(
+    content,
+    settings,
+    `\n\n${incomingPaymentReceivableTableText(report.rows || [])}\n\n`,
+    `\n\n${incomingPaymentBuyerCiaTableText(report.buyerCiaInvoices || [])}\n\n`,
+  );
+  return { subject, html, text: textContent, summary };
+}
+
+async function incomingPaymentEmailReport(body = {}, req = null) {
+  await requireActiveUser(req);
+  const settings = incomingPaymentEmailSettings(body.settings || body);
+  const source = await incomingPaymentsList({
+    dateFrom: body.dateFrom,
+    dateTo: body.dateTo,
+    limit: body.limit || 5000,
+  });
+  const search = String(body.search || '').trim();
+  const rows = (source.rows || []).filter((row) => incomingPaymentSearchMatches(row, search, [
+    'partyName',
+    'stemName',
+    'keyStem',
+    'buyerName',
+    'buyerGroupName',
+    'supplierName',
+    'supplierInvoiceName',
+  ]));
+  const buyerCiaInvoices = (source.buyerCiaInvoices || []).filter((row) => incomingPaymentSearchMatches(row, search, [
+    'buyerName',
+    'buyerGroupName',
+    'buyerTrader',
+    'stemName',
+    'keyStem',
+  ]));
+  const report = {
+    ...source,
+    rows,
+    buyerCiaInvoices,
+    search,
+    summary: incomingPaymentReportSummary(rows),
+  };
+  const email = buildIncomingPaymentEmail(report, settings);
+  const reportMeta = {
+    dateFrom: report.dateFrom,
+    dateTo: report.dateTo,
+    search,
+    receivableRows: rows.length,
+    buyerCiaRows: buyerCiaInvoices.length,
+    summary: email.summary,
+  };
+  if (body.preview || body.dryRun) {
+    return {
+      sent: false,
+      preview: true,
+      settings,
+      report: reportMeta,
+      email: { subject: email.subject, html: email.html, text: email.text, summary: email.summary },
+    };
+  }
+  if (!settings.to.length) throw appError('At least one To recipient is required before sending the Incoming Payment report.', 400);
+  const credentials = body.credentials || {};
+  const useSmtp = credentials.method === 'smtp' || credentials.smtp || (!process.env.RESEND_API_KEY && process.env.SMTP_HOST);
+  const smtpFrom = credentials.smtp?.from || credentials.from || settings.from;
+  const result = useSmtp
+    ? await sendWithSmtp({
+        smtp: credentials.smtp || credentials,
+        from: smtpFrom,
+        to: settings.to,
+        cc: settings.cc,
+        bcc: settings.bcc,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      })
+    : await sendWithResend({
+        from: settings.from,
+        to: settings.to,
+        cc: settings.cc,
+        bcc: settings.bcc,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      });
+  return {
+    sent: true,
+    id: result.id,
+    to: settings.to,
+    cc: settings.cc,
+    bcc: settings.bcc,
+    subject: email.subject,
+    report: reportMeta,
+    rows: rows.length,
+    buyerCiaRows: buyerCiaInvoices.length,
+    email: { subject: email.subject, html: email.html, text: email.text, summary: email.summary },
+  };
+}
+
 function buyerInvoiceEmailSettings(input = {}) {
   const hasBuyerTraderFilter = Object.prototype.hasOwnProperty.call(input, 'buyerTraders');
   const defaults = {
@@ -7488,6 +7789,7 @@ const handlers = {
   outstandingBuyerInvoicesEmailReport,
   outstandingBuyerInvoicesEmailCron,
   incomingPaymentsList,
+  incomingPaymentEmailReport,
   incomingPaymentSettingsGet,
   incomingPaymentSettingsSave,
   incomingPaymentAllocationConfirm,
