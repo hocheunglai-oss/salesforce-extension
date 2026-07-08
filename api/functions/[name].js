@@ -4083,6 +4083,37 @@ function incomingPaymentLooksStemPayableCalculation(payment, {
   return true;
 }
 
+function stemPayableAmountCandidates({ stem = {}, lineItems = [], extraCosts = [] } = {}) {
+  const stemHasDelivery = !!stem.Delivery_Date__c;
+  const activeLineItems = lineItems.filter((item) => !item.Cancelled__c);
+  const activeExtraCosts = extraCosts.filter((item) => !item.Cancelled__c);
+  const supplierInvoiceTotal = numericValue(stem.Total_Invoiced_Amount_From_Suppliers__c) ?? 0;
+  const supplierLineBuyTotal = activeLineItems.reduce((sum, item) => sum + lineBuyAmount(item, stemHasDelivery), 0);
+  const uninvoicedSupplierLineBuyTotal = activeLineItems.reduce((sum, item) => item.Supplier_Invoice__c ? sum : sum + lineBuyAmount(item, stemHasDelivery), 0);
+  const supplierExtraBuyTotal = activeExtraCosts.reduce((sum, item) => sum + extraBuyAmount(item, stemHasDelivery), 0);
+  const uninvoicedSupplierExtraBuyTotal = activeExtraCosts.reduce((sum, item) => item.Supplier_Invoice__c ? sum : sum + extraBuyAmount(item, stemHasDelivery), 0);
+  const hasSupplierInvoiceLines = activeLineItems.some((item) => item.Supplier_Invoice__c);
+  const calculatedSupplierInvoice = supplierInvoiceTotal + (hasSupplierInvoiceLines ? uninvoicedSupplierLineBuyTotal : supplierLineBuyTotal);
+  return [
+    calculatedSupplierInvoice,
+    calculatedSupplierInvoice + supplierExtraBuyTotal,
+    calculatedSupplierInvoice + uninvoicedSupplierExtraBuyTotal,
+    supplierLineBuyTotal,
+    uninvoicedSupplierLineBuyTotal,
+    supplierExtraBuyTotal,
+    uninvoicedSupplierExtraBuyTotal,
+    supplierLineBuyTotal + supplierExtraBuyTotal,
+    uninvoicedSupplierLineBuyTotal + uninvoicedSupplierExtraBuyTotal,
+    supplierInvoiceTotal,
+    numericValue(stem.Payable_Balance__c),
+    numericValue(stem.Total_Costs__c),
+    numericValue(stem.Total_Cost__c),
+    numericValue(stem.Total_Cost_Amount__c),
+    ...activeLineItems.map((item) => lineBuyAmount(item, stemHasDelivery)),
+    ...activeExtraCosts.map((item) => extraBuyAmount(item, stemHasDelivery)),
+  ].filter((value) => value != null && Number.isFinite(Number(value)) && Math.abs(Number(value)) > 0);
+}
+
 function incomingPaymentTypeFromContext(payment, { amount, stem, supplierInvoice, supplierInvoiceFields, directionFields, typeFields, statusFields }) {
   const supplierSide = supplierInvoice || incomingPaymentLooksSupplierSide(payment, {
     supplierInvoiceFields,
@@ -4529,8 +4560,12 @@ async function incomingPaymentsList(body) {
       'Buyer__c',
       'Account__c',
       'Total_Invoice_Amount__c',
+      'Total_Invoiced_Amount_From_Suppliers__c',
       'Receivable_Balance__c',
       'Payable_Balance__c',
+      'Total_Costs__c',
+      'Total_Cost__c',
+      'Total_Cost_Amount__c',
       'Payment_Date__c',
       'Payment_Term__c',
       'Invoice_Due_Date__c',
@@ -4562,16 +4597,20 @@ async function incomingPaymentsList(body) {
     for (const stem of stemChunks.flat()) stemMap[stem.Id] = stem;
   }
   let brokerCommissionGroupsByStem = {};
+  let lineItemsByStem = {};
+  let extraCostsByStem = {};
   if (stemIds.length) {
-    const [lineItemChunks, buyerBrokerChunks] = await Promise.all([
+    const [lineItemChunks, buyerBrokerChunks, extraCostChunks] = await Promise.all([
       Promise.all(chunkIds(stemIds).map((chunk) => {
         const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
         return queryRows(`
           SELECT Id, STEM__c, Cancelled__c, Quantity__c, Quantity_Delivered_Per_BDN__c,
                  Quantity_Max__c, Quantity_in_MT__c, Is_Quantity_Range__c,
+                 Cost_Per_Unit__c, Unit_Buy_At__c, Unit_Cost__c, Total_Cost__c,
                  Supplier_Broker__c, Suppliers_Brokers_Commission_Per_Unit__c,
                  Buyers_Broker__c, Buyer_Broker__c, Buyers_Brokers_Commission_Per_Unit__c,
-                 Buyers_Brokers_Commission_Lumpsum__c, Commission_Cost__c
+                 Buyers_Brokers_Commission_Lumpsum__c, Commission_Cost__c, Supplier_Invoice__c,
+                 Offer_Line_Item__r.Supplier_Unit_Price__c
           FROM STEM_Line_Item__c
           WHERE STEM__c IN (${inList})
           LIMIT 5000
@@ -4586,9 +4625,33 @@ async function incomingPaymentsList(body) {
           LIMIT 5000
         `, { limit: 5000, softFail: true });
       })),
+      Promise.all(chunkIds(stemIds).map((chunk) => {
+        const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
+        return queryRows(`
+          SELECT Id, STEM__c, Cancelled__c, Quantity__c, Quantity_Delivered_Per_BDN__c,
+                 Quantity_in_MT__c, Quantity_Range_Max__c, Is_Quantity_Range__c,
+                 Unit_Cost__c, Line_Total_Buy__c, Supplier_Invoice__c
+          FROM STEM_Extra_Cost__c
+          WHERE STEM__c IN (${inList})
+          LIMIT 5000
+        `, { limit: 5000, softFail: true });
+      })),
     ]);
     const brokerLineItems = lineItemChunks.flat();
     const brokerRows = buyerBrokerChunks.flat();
+    const extraCostRows = extraCostChunks.flat();
+    lineItemsByStem = brokerLineItems.reduce((acc, item) => {
+      if (!item.STEM__c) return acc;
+      if (!acc[item.STEM__c]) acc[item.STEM__c] = [];
+      acc[item.STEM__c].push(item);
+      return acc;
+    }, {});
+    extraCostsByStem = extraCostRows.reduce((acc, item) => {
+      if (!item.STEM__c) return acc;
+      if (!acc[item.STEM__c]) acc[item.STEM__c] = [];
+      acc[item.STEM__c].push(item);
+      return acc;
+    }, {});
     const brokerAccountIds = [...new Set([
       ...brokerLineItems.map((item) => item.Supplier_Broker__c).filter(Boolean),
       ...brokerLineItems.map((item) => item.Buyers_Broker__c || item.Buyer_Broker__c).filter(Boolean),
@@ -4615,15 +4678,33 @@ async function incomingPaymentsList(body) {
     const brokerCommissionMatch = stem?.Id
       ? findBrokerCommissionPaymentMatch(payment, amount, brokerCommissionGroupsByStem[stem.Id] || [], [...referenceFields, ...directionFields, ...typeFields, ...statusFields])
       : null;
-    const type = brokerCommissionMatch
-      ? 'Broker Commission'
-      : incomingPaymentLooksBankCharge(payment, {
+    const bankCharge = incomingPaymentLooksBankCharge(payment, {
       referenceFields,
       directionFields,
       typeFields,
       statusFields,
-    })
+    });
+    const payableCalculation = stem?.Id
+      ? incomingPaymentLooksStemPayableCalculation(payment, {
+        amount,
+        payableAmounts: stemPayableAmountCandidates({
+          stem,
+          lineItems: lineItemsByStem[stem.Id] || [],
+          extraCosts: extraCostsByStem[stem.Id] || [],
+        }),
+        referenceFields,
+        directionFields,
+        typeFields,
+        statusFields,
+        allowBlankSignal: !stem.Delivery_Date__c,
+      })
+      : false;
+    const type = brokerCommissionMatch
+      ? 'Broker Commission'
+      : bankCharge
       ? 'Bank Charge'
+      : payableCalculation
+      ? 'Supplier Payment'
       : incomingPaymentTypeFromContext(payment, {
         amount,
         stem,
@@ -7927,33 +8008,7 @@ async function salesforceStemDetailFull(body) {
   });
   const brokerCommissionGroups = brokerCommissionGroupsByStem[actualStemId] || [];
   const stemHasDelivery = !!recordRaw.Delivery_Date__c;
-  const activeLineItems = lineItems.filter((li) => !li.Cancelled__c);
-  const activeExtraCosts = extraCosts.filter((item) => !item.Cancelled__c);
-  const supplierInvoiceTotal = numericValue(recordRaw.Total_Invoiced_Amount_From_Suppliers__c) ?? 0;
-  const supplierLineBuyTotal = activeLineItems.reduce((sum, li) => sum + lineBuyAmount(li, stemHasDelivery), 0);
-  const uninvoicedSupplierLineBuyTotal = activeLineItems.reduce((sum, li) => li.Supplier_Invoice__c ? sum : sum + lineBuyAmount(li, stemHasDelivery), 0);
-  const supplierExtraBuyTotal = activeExtraCosts.reduce((sum, item) => sum + extraBuyAmount(item, stemHasDelivery), 0);
-  const uninvoicedSupplierExtraBuyTotal = activeExtraCosts.reduce((sum, item) => item.Supplier_Invoice__c ? sum : sum + extraBuyAmount(item, stemHasDelivery), 0);
-  const hasSupplierInvoiceLines = activeLineItems.some((li) => li.Supplier_Invoice__c);
-  const calculatedSupplierInvoice = supplierInvoiceTotal + (hasSupplierInvoiceLines ? uninvoicedSupplierLineBuyTotal : supplierLineBuyTotal);
-  const stemPayableAmountCandidates = [
-    calculatedSupplierInvoice,
-    calculatedSupplierInvoice + supplierExtraBuyTotal,
-    calculatedSupplierInvoice + uninvoicedSupplierExtraBuyTotal,
-    supplierLineBuyTotal,
-    uninvoicedSupplierLineBuyTotal,
-    supplierExtraBuyTotal,
-    uninvoicedSupplierExtraBuyTotal,
-    supplierLineBuyTotal + supplierExtraBuyTotal,
-    uninvoicedSupplierLineBuyTotal + uninvoicedSupplierExtraBuyTotal,
-    supplierInvoiceTotal,
-    numericValue(recordRaw.Payable_Balance__c),
-    numericValue(recordRaw.Total_Costs__c),
-    numericValue(recordRaw.Total_Cost__c),
-    numericValue(recordRaw.Total_Cost_Amount__c),
-    ...activeLineItems.map((item) => lineBuyAmount(item, stemHasDelivery)),
-    ...activeExtraCosts.map((item) => extraBuyAmount(item, stemHasDelivery)),
-  ].filter((value) => value != null && Number.isFinite(Number(value)) && Math.abs(Number(value)) > 0);
+  const payableAmountCandidates = stemPayableAmountCandidates({ stem: recordRaw, lineItems, extraCosts });
 
   let supplierInvoicePayments = [];
   let buyerInvoicePayments = [];
@@ -8083,7 +8138,7 @@ async function salesforceStemDetailFull(body) {
           addSupplierPayment(payment);
         } else if (incomingPaymentLooksStemPayableCalculation(payment, {
           amount,
-          payableAmounts: stemPayableAmountCandidates,
+          payableAmounts: payableAmountCandidates,
           referenceFields: paymentReferenceFields,
           directionFields: paymentDirectionFields,
           typeFields: paymentTypeFields,
@@ -8164,6 +8219,7 @@ async function salesforceStemDetailFull(body) {
   const calculatedUndatedBuyerInvoice = calculatedLineItemSell + calculatedExtraCostSell;
   const shouldUseCalculatedBuyerInvoice = !recordRaw.Delivery_Date__c
     && calculatedUndatedBuyerInvoice > 0;
+  const calculatedSupplierInvoice = payableAmountCandidates[0] ?? 0;
   const record = {
     ...recordRaw,
     Total_Invoice_Amount__c: shouldUseCalculatedBuyerInvoice

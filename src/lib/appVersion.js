@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.28';
+export const APP_VERSION = '1.0.29';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.29',
+    releasedAt: '2026-07-08',
+    title: 'Incoming payment payable exclusion',
+    changes: [
+      'Excluded STEM payable-calculation rows from the Incoming Payment Receivable Payments table.',
+      'Reused the same payable amount guard from Stem Detail so calculated supplier/payable amounts are not treated as receivable payments.',
+    ],
+  },
   {
     version: '1.0.28',
     releasedAt: '2026-07-08',
