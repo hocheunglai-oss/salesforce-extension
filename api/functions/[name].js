@@ -4055,9 +4055,6 @@ function incomingPaymentLooksBuyerSide(payment, {
     'customerreceipt',
     'receivable',
     'accountsreceivable',
-    'incoming',
-    'receipt',
-    'received',
   ].some((signal) => valueToken.includes(signal));
 }
 
@@ -4073,7 +4070,7 @@ function incomingPaymentLooksStemPayableCalculation(payment, {
   if (amount == null || amount <= 0) return false;
   const matchesPayableAmount = payableAmounts
     .filter((value) => value != null && Number.isFinite(Number(value)) && Math.abs(Number(value)) > 0)
-    .some((value) => amountNearlyEqual(amount, value));
+    .some((value) => amountNearlyEqual(amount, value, 1));
   if (!matchesPayableAmount) return false;
   if (incomingPaymentLooksBuyerSide(payment, { referenceFields, directionFields, typeFields, statusFields })) return false;
 
@@ -4083,15 +4080,7 @@ function incomingPaymentLooksStemPayableCalculation(payment, {
     .map((field) => payment[field])
     .join(' '));
   if (!valueToken) return allowBlankSignal;
-  return [
-    'calculatedpayable',
-    'payablecalculation',
-    'payablebalance',
-    'calculatedamount',
-    'calculatedcost',
-    'supplierinvoiceamount',
-    'supplierinvoicecalculation',
-  ].some((signal) => valueToken.includes(signal));
+  return true;
 }
 
 function incomingPaymentTypeFromContext(payment, { amount, stem, supplierInvoice, supplierInvoiceFields, directionFields, typeFields, statusFields }) {
@@ -7939,17 +7928,31 @@ async function salesforceStemDetailFull(body) {
   const brokerCommissionGroups = brokerCommissionGroupsByStem[actualStemId] || [];
   const stemHasDelivery = !!recordRaw.Delivery_Date__c;
   const activeLineItems = lineItems.filter((li) => !li.Cancelled__c);
+  const activeExtraCosts = extraCosts.filter((item) => !item.Cancelled__c);
   const supplierInvoiceTotal = numericValue(recordRaw.Total_Invoiced_Amount_From_Suppliers__c) ?? 0;
   const supplierLineBuyTotal = activeLineItems.reduce((sum, li) => sum + lineBuyAmount(li, stemHasDelivery), 0);
   const uninvoicedSupplierLineBuyTotal = activeLineItems.reduce((sum, li) => li.Supplier_Invoice__c ? sum : sum + lineBuyAmount(li, stemHasDelivery), 0);
+  const supplierExtraBuyTotal = activeExtraCosts.reduce((sum, item) => sum + extraBuyAmount(item, stemHasDelivery), 0);
+  const uninvoicedSupplierExtraBuyTotal = activeExtraCosts.reduce((sum, item) => item.Supplier_Invoice__c ? sum : sum + extraBuyAmount(item, stemHasDelivery), 0);
   const hasSupplierInvoiceLines = activeLineItems.some((li) => li.Supplier_Invoice__c);
   const calculatedSupplierInvoice = supplierInvoiceTotal + (hasSupplierInvoiceLines ? uninvoicedSupplierLineBuyTotal : supplierLineBuyTotal);
   const stemPayableAmountCandidates = [
     calculatedSupplierInvoice,
+    calculatedSupplierInvoice + supplierExtraBuyTotal,
+    calculatedSupplierInvoice + uninvoicedSupplierExtraBuyTotal,
     supplierLineBuyTotal,
     uninvoicedSupplierLineBuyTotal,
+    supplierExtraBuyTotal,
+    uninvoicedSupplierExtraBuyTotal,
+    supplierLineBuyTotal + supplierExtraBuyTotal,
+    uninvoicedSupplierLineBuyTotal + uninvoicedSupplierExtraBuyTotal,
     supplierInvoiceTotal,
     numericValue(recordRaw.Payable_Balance__c),
+    numericValue(recordRaw.Total_Costs__c),
+    numericValue(recordRaw.Total_Cost__c),
+    numericValue(recordRaw.Total_Cost_Amount__c),
+    ...activeLineItems.map((item) => lineBuyAmount(item, stemHasDelivery)),
+    ...activeExtraCosts.map((item) => extraBuyAmount(item, stemHasDelivery)),
   ].filter((value) => value != null && Number.isFinite(Number(value)) && Math.abs(Number(value)) > 0);
 
   let supplierInvoicePayments = [];

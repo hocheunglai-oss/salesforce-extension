@@ -530,7 +530,7 @@ function PaymentRowsTable({ rows, type, emptyMessage }) {
   if (!rows.length) {
     return (
       <div className="rounded-lg border border-dashed border-border bg-muted/10 px-3 py-4 text-sm text-muted-foreground">
-        {emptyMessage || (isSupplier ? 'No supplier invoice paid dates found.' : 'No buyer invoice received dates found.')}
+        {emptyMessage || (isSupplier ? 'No payments to supplier found.' : 'No payments from buyer found.')}
       </div>
     );
   }
@@ -618,7 +618,7 @@ function FinancialSummaryCard({ record, supplierPayments, buyerPayments, brokerC
           </div>
           <div>
             <div className="mb-2 flex items-center justify-between gap-3">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Buyer Invoice Received Dates</h4>
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Payment from Buyer</h4>
               <span className="text-xs text-muted-foreground">{buyerPayments.length} date{buyerPayments.length === 1 ? '' : 's'}</span>
             </div>
             <PaymentRowsTable rows={buyerPayments} type="buyer" />
@@ -628,7 +628,7 @@ function FinancialSummaryCard({ record, supplierPayments, buyerPayments, brokerC
         </div>
         <div className="space-y-3 rounded-xl border border-amber-100 bg-amber-50/40 p-3">
           <div>
-            <div className="text-sm font-semibold text-foreground">Seller Side</div>
+            <div className="text-sm font-semibold text-foreground">Supplier Side</div>
             <div className="text-xs text-muted-foreground">Supplier invoice value, open payable, and paid dates.</div>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -637,7 +637,7 @@ function FinancialSummaryCard({ record, supplierPayments, buyerPayments, brokerC
           </div>
           <div>
             <div className="mb-2 flex items-center justify-between gap-3">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Supplier Invoice Paid Dates</h4>
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Payment to Supplier</h4>
               <span className="text-xs text-muted-foreground">{supplierPayments.length} date{supplierPayments.length === 1 ? '' : 's'}</span>
             </div>
             <PaymentRowsTable rows={supplierPayments} type="supplier" />

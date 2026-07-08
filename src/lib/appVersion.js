@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.27';
+export const APP_VERSION = '1.0.28';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.28',
+    releasedAt: '2026-07-08',
+    title: 'Stem detail payment labels and payable exclusion',
+    changes: [
+      'Renamed Stem Detail payment sections to Payment from Buyer, Supplier Side, and Payment to Supplier.',
+      'Strengthened Stem Detail payment classification so calculated payable rows are excluded from buyer payment dates.',
+    ],
+  },
   {
     version: '1.0.27',
     releasedAt: '2026-07-08',
