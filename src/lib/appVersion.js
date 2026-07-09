@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.45';
+export const APP_VERSION = '1.0.46';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.46',
+    releasedAt: '2026-07-09',
+    title: 'Receivable remittance payment filter',
+    changes: [
+      'Expanded Payment__c receivable-remittance detection beyond record type so remittance rows are not shown as buyer payments.',
+      'Applied the same filter to Incoming Payment, Stem Detail payment dates, cashflow payment samples, and late-payment interest calculations.',
+    ],
+  },
   {
     version: '1.0.45',
     releasedAt: '2026-07-09',

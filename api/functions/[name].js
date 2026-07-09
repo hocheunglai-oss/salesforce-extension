@@ -4801,7 +4801,7 @@ async function cashflowBuyerPaymentSamples({ lookbackMonths, accessContext = nul
   `, { limit: 10000, softFail: true });
   const eligiblePayments = payments
     .filter((payment) => payment.STEM__c)
-    .filter((payment) => !incomingPaymentIsReceivableRemittance(payment))
+    .filter((payment) => !incomingPaymentIsReceivableRemittance(payment, [...referenceFields, ...directionFields, ...typeFields, ...statusFields]))
     .filter((payment) => !incomingPaymentSupplierInvoiceId(payment, supplierInvoiceLookupFields));
   const stemIds = [...new Set(eligiblePayments.map((payment) => payment.STEM__c).filter(Boolean))];
   if (!stemIds.length) return { samples: [], warnings: [] };
@@ -5827,9 +5827,14 @@ function incomingPaymentRecordTypeToken(payment) {
   ].filter(Boolean).join(' '));
 }
 
-function incomingPaymentIsReceivableRemittance(payment) {
+function incomingPaymentIsReceivableRemittance(payment, fields = []) {
   const token = incomingPaymentRecordTypeToken(payment);
-  return token.includes('receivableremittance');
+  if (token.includes('receivableremittance') || token.includes('remittancereceivable')) return true;
+  return uniqueTextList(fields).some((field) => {
+    const valueToken = normalizedFieldToken(payment?.[field]);
+    return valueToken.includes('receivableremittance')
+      || valueToken.includes('remittancereceivable');
+  });
 }
 
 function supplierInvoicePartyName(invoice, supplierRelationships = []) {
@@ -6038,7 +6043,7 @@ async function incomingPaymentsList(body, req = null, accessContext = null) {
     LIMIT ${limit}
   `, { limit, softFail: true });
 
-  const eligiblePayments = payments.filter((payment) => !incomingPaymentIsReceivableRemittance(payment));
+  const eligiblePayments = payments.filter((payment) => !incomingPaymentIsReceivableRemittance(payment, [...referenceFields, ...directionFields, ...typeFields, ...statusFields]));
   const directStemIds = eligiblePayments.map((payment) => payment.STEM__c).filter(Boolean);
   const supplierInvoiceIds = eligiblePayments
     .map((payment) => incomingPaymentSupplierInvoiceId(payment, supplierInvoiceLookupFields))
@@ -6725,7 +6730,7 @@ async function incomingPaymentInterestCalculation(body = {}, accessContext = nul
   })[stem.Id] || [];
 
   const buyerPayments = payments
-    .filter((payment) => !incomingPaymentIsReceivableRemittance(payment))
+    .filter((payment) => !incomingPaymentIsReceivableRemittance(payment, [...referenceFields, ...directionFields, ...typeFields, ...statusFields]))
     .map((payment) => {
       const amount = incomingPaymentNumber(payment[amountField]);
       const paymentDate = payment[dateField] || payment.CreatedDate || null;
@@ -9757,7 +9762,7 @@ async function salesforceStemDetailFull(body, req = null, accessContext = null) 
         LIMIT 2000
       `, { limit: 2000, softFail: true });
       for (const payment of stemPayments) {
-        if (incomingPaymentIsReceivableRemittance(payment)) continue;
+        if (incomingPaymentIsReceivableRemittance(payment, [...paymentReferenceFields, ...paymentDirectionFields, ...paymentTypeFields, ...paymentStatusFields])) continue;
         const amount = paymentAmountField ? incomingPaymentNumber(payment[paymentAmountField]) : null;
         const brokerCommissionMatch = findBrokerCommissionPaymentMatch(payment, amount, brokerCommissionGroups, [...paymentReferenceFields, ...paymentDirectionFields, ...paymentTypeFields, ...paymentStatusFields]);
         if (brokerCommissionMatch) {
