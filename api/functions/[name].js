@@ -7324,6 +7324,8 @@ function incomingPaymentLateInterestLinkText(url) {
 function buildIncomingPaymentEmail(report, settings) {
   const summary = report.summary || incomingPaymentReportSummary(report.rows || []);
   const lateInterestUrl = incomingPaymentFilterUrl(settings, report);
+  const incomingRows = Number(summary.incomingRows || 0);
+  const needsReviewCount = Number(summary.unmatchedCount || 0);
   const context = {
     dateFrom: prettyDate(report.dateFrom),
     dateTo: prettyDate(report.dateTo),
@@ -7334,18 +7336,34 @@ function buildIncomingPaymentEmail(report, settings) {
     incomingTotal: money(summary.totalIncomingAmount),
     buyerPaymentTotal: money(summary.buyerPaymentTotal),
     supplierRefundTotal: money(summary.supplierRefundTotal),
-    needsReviewCount: String(summary.unmatchedCount || 0),
+    needsReviewCount: String(needsReviewCount),
     keyword: report.search || '',
   };
   const subject = renderIncomingPaymentTemplate(settings.subject, context);
   const content = renderIncomingPaymentTemplate(settings.intro, context);
   const contentText = hasHtmlMarkup(content) ? htmlToPlainText(content) : content;
+  const summaryHtml = `
+    <table role="presentation" style="border-collapse:collapse;margin:18px 0;width:100%;max-width:720px">
+      <tr>
+        <td style="border:1px solid #d9e2ef;border-radius:8px 0 0 8px;padding:12px;background:#f6fef9">
+          <div style="font-size:12px;color:#667085;text-transform:uppercase;letter-spacing:.04em">Incoming Total</div>
+          <div style="font-size:20px;font-weight:700;color:#059669">${money(summary.totalIncomingAmount)}</div>
+          <div style="margin-top:4px;font-size:12px;color:#667085">Buyer Payments ${money(summary.buyerPaymentTotal)} · Supplier Refunds ${money(summary.supplierRefundTotal)} · ${incomingRows.toLocaleString()} records</div>
+        </td>
+        <td style="border:1px solid #d9e2ef;border-left:0;border-radius:0 8px 8px 0;padding:12px;background:#fffbeb">
+          <div style="font-size:12px;color:#667085;text-transform:uppercase;letter-spacing:.04em">Needs Review</div>
+          <div style="font-size:20px;font-weight:700;color:#d97706">${needsReviewCount.toLocaleString()}</div>
+          <div style="margin-top:4px;font-size:12px;color:#667085">Unmatched or incomplete payments</div>
+        </td>
+      </tr>
+    </table>`;
   const contentHtml = injectIncomingPaymentLateInterestLink(
     emailContentHtml(content),
     incomingPaymentLateInterestLinkHtml(lateInterestUrl),
   );
   const html = `
     <div style="font-family:Inter,Arial,sans-serif;color:#1f2937;line-height:1.45">
+      ${summaryHtml}
       ${injectIncomingPaymentTables(
         contentHtml,
         settings,
@@ -7354,7 +7372,15 @@ function buildIncomingPaymentEmail(report, settings) {
       )}
     </div>`;
   const textContent = injectIncomingPaymentTables(
-    injectIncomingPaymentLateInterestLink(contentText, incomingPaymentLateInterestLinkText(lateInterestUrl)),
+    [
+      `Incoming Total: ${money(summary.totalIncomingAmount)}`,
+      `Buyer Payments: ${money(summary.buyerPaymentTotal)}`,
+      `Supplier Refunds: ${money(summary.supplierRefundTotal)}`,
+      `Incoming Records: ${incomingRows.toLocaleString()}`,
+      `Needs Review: ${needsReviewCount.toLocaleString()}`,
+      '',
+      injectIncomingPaymentLateInterestLink(contentText, incomingPaymentLateInterestLinkText(lateInterestUrl)),
+    ].join('\n'),
     settings,
     `\n\n${incomingPaymentReceivableTableText(report.rows || [])}\n\n`,
     `\n\n${incomingPaymentBuyerCiaTableText(report.buyerCiaInvoices || [])}\n\n`,

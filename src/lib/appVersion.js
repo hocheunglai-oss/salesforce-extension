@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.44';
+export const APP_VERSION = '1.0.45';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.45',
+    releasedAt: '2026-07-09',
+    title: 'Incoming payment email KPI cards',
+    changes: [
+      'Updated the Incoming Payment report email summary to use the same card-style KPI layout as the Outstanding Buyer Invoices email.',
+      'Added matching plain-text summary lines for email clients that do not render HTML.',
+    ],
+  },
   {
     version: '1.0.44',
     releasedAt: '2026-07-09',
