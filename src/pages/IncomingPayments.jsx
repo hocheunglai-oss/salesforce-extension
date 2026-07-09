@@ -580,8 +580,8 @@ export default function IncomingPayments() {
     {
       id: 'delay',
       header: 'Delay',
-      headerClassName: 'w-[70px] whitespace-nowrap text-right',
-      cellClassName: 'w-[70px] whitespace-nowrap text-right text-sm tabular-nums',
+      headerClassName: 'w-[70px] whitespace-nowrap text-left',
+      cellClassName: 'w-[70px] whitespace-nowrap text-left text-sm tabular-nums',
       cell: (row) => row.type === 'Buyer Payment' ? (row.delayDays == null ? '-' : row.delayDays) : 'N/A',
     },
     {

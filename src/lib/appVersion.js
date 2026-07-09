@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.40';
+export const APP_VERSION = '1.0.41';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.41',
+    releasedAt: '2026-07-09',
+    title: 'Payment table email alignment',
+    changes: [
+      'Left-aligned Delay and Overdue values and removed the Days suffix from Overdue column displays.',
+      'Updated Incoming Payment report emails to use the current Receivable Payments table order while excluding only the Interest Invoice action column.',
+    ],
+  },
   {
     version: '1.0.40',
     releasedAt: '2026-07-09',

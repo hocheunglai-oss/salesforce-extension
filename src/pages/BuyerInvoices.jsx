@@ -307,7 +307,7 @@ function invoiceTablePreviewHtml(rows = []) {
         <td style="${cellStyle}">${fmtDate(row.buyerInvoiceDueDate)}</td>
         <td style="${cellStyle};white-space:normal;min-width:95px">${escapeHtml(row.buyerTraderInCharge || '-')}</td>
         <td style="${cellStyle};white-space:normal;min-width:90px">${escapeHtml(row.prpspStatus || '-')}</td>
-        <td style="${cellStyle};text-align:right;font-weight:600">${escapeHtml(overdueDisplayValue(row.daysUntilDue))}</td>
+        <td style="${cellStyle};text-align:left;font-weight:600">${escapeHtml(overdueDisplayValue(row.daysUntilDue))}</td>
       </tr>`;
   }).join('');
   return `
@@ -322,7 +322,7 @@ function invoiceTablePreviewHtml(rows = []) {
             <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Due Date</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Trader</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">PSPRS</th>
-            <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:right;white-space:nowrap">Overdue</th>
+            <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Overdue</th>
           </tr>
         </thead>
         <tbody>${bodyRows}</tbody>
@@ -549,7 +549,7 @@ function overdueDisplayValue(daysUntilDue) {
   if (daysUntilDue == null) return '-';
   const overdue = -Number(daysUntilDue);
   const value = Object.is(overdue, -0) ? 0 : overdue;
-  return `${value.toLocaleString()} Days`;
+  return value.toLocaleString();
 }
 
 function overdueCopyStatus(daysUntilDue) {
@@ -1355,7 +1355,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
                           <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Routing</th>
                           <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Receivable</th>
                           <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Due Date</th>
-                          <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Overdue</th>
+                          <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Overdue</th>
                           <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Collection</th>
                         </tr>
                       </thead>
@@ -1385,7 +1385,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
                             </td>
                             <td className="px-3 py-2 text-right font-semibold text-slate-950">{fmtMoney(candidate.receivableBalance)}</td>
                             <td className="px-3 py-2 text-slate-700">{fmtDate(candidate.buyerInvoiceDueDate)}</td>
-                            <td className="px-3 py-2 text-right">
+                            <td className="px-3 py-2 text-left">
                               <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${reminderOverduePillClass(candidate.daysUntilDue)}`}>
                                 {overdueDisplayValue(candidate.daysUntilDue)}
                               </span>
@@ -1661,7 +1661,7 @@ function CopyInvoiceSelectionModal({ row, candidates = [], open, onClose, onCopy
                   <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Buyer Group</th>
                   <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Receivable Balance</th>
                   <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Due Date</th>
-                  <th className="sticky top-0 z-10 bg-card px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
+                  <th className="sticky top-0 z-10 bg-card px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
                 </tr>
               </thead>
               <tbody>
@@ -1679,7 +1679,7 @@ function CopyInvoiceSelectionModal({ row, candidates = [], open, onClose, onCopy
                     <td className="px-3 py-2 text-muted-foreground">{candidate.buyerGroupName || '-'}</td>
                     <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtMoney(candidate.receivableBalance)}</td>
                     <td className="px-3 py-2 text-foreground">{fmtDate(candidate.buyerInvoiceDueDate)}</td>
-                    <td className={`px-3 py-2 text-right font-medium ${dueTextClass(candidate.daysUntilDue)}`}>{overdueDisplayValue(candidate.daysUntilDue)}</td>
+                    <td className={`px-3 py-2 text-left font-medium ${dueTextClass(candidate.daysUntilDue)}`}>{overdueDisplayValue(candidate.daysUntilDue)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2379,7 +2379,7 @@ export default function BuyerInvoices() {
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment Collection Handler</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Next Follow-up</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
-                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
+                    <th className="sticky top-0 z-10 bg-card px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Overdue</th>
                     <th className="sticky top-0 z-10 bg-card px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
@@ -2419,7 +2419,7 @@ export default function BuyerInvoices() {
                           {row.status}
                         </span>
                       </td>
-                      <td className={`px-4 py-3 text-right font-medium ${dueTextClass(row.daysUntilDue)}`}>
+                      <td className={`px-4 py-3 text-left font-medium ${dueTextClass(row.daysUntilDue)}`}>
                         {overdueDisplayValue(row.daysUntilDue)}
                       </td>
                       <td className="px-4 py-3 text-right">
