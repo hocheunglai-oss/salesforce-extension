@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.53';
+export const APP_VERSION = '1.0.54';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.54',
+    releasedAt: '2026-07-09',
+    title: 'Dispute workflow page scroll containment',
+    changes: [
+      'Changed Dispute Workflow to a viewport-contained layout so the page itself does not keep scrolling.',
+      'Moved scrolling responsibility to the Dispute Beta Queue table area only.',
+    ],
+  },
   {
     version: '1.0.53',
     releasedAt: '2026-07-09',

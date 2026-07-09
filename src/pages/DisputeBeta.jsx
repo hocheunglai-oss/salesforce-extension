@@ -818,12 +818,13 @@ export default function DisputeBeta() {
   };
 
   return (
-    <div className="space-y-6 p-6 lg:p-8">
+    <div className="flex h-[calc(100vh-64px)] min-h-0 flex-col gap-4 overflow-hidden p-4 md:p-5">
       <PageHeader
         icon={FileCheck2}
         eyebrow="Dispute workflow beta"
         title="Dispute Beta"
         description="Trader instructions, dispute administrator approval, execution tracking, and settlement P&L."
+        className="shrink-0"
         meta={lastRefresh ? `Last updated ${format(lastRefresh, 'HH:mm:ss')}` : 'Auto-loaded from Salesforce and Supabase'}
         actions={(
           <Button variant="outline" onClick={() => loadRows({ force: true })} disabled={loading} className="gap-2">
@@ -833,20 +834,20 @@ export default function DisputeBeta() {
       />
 
       {fieldWarning && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="shrink-0 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <div className="font-semibold">Salesforce workflow fields are not available</div>
           <div className="mt-1">{fieldWarning}</div>
         </div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid shrink-0 gap-3 md:grid-cols-4">
         <Metric label="Beta Cases" value={totals.count.toLocaleString()} tone="red" />
         <Metric label="Pending Approval" value={totals.pending.toLocaleString()} tone="amber" />
         <Metric label="Approved / Execution" value={totals.approved.toLocaleString()} />
         <Metric label="Dispute P&L" value={fmtMoney(totals.pnl)} tone={totals.pnl >= 0 ? 'green' : 'red'} />
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4">
+      <div className="shrink-0 rounded-xl border border-border bg-card p-4">
         <div className="flex flex-wrap items-start gap-3">
           <div className="relative w-full md:w-80">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -880,13 +881,13 @@ export default function DisputeBeta() {
         </div>
       </div>
 
-      {error && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div className="shrink-0 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
 
-      <TableShell title="Dispute Beta Queue" meta={`${filteredRows.length.toLocaleString()} rows`} bodyClassName="p-0">
+      <TableShell title="Dispute Beta Queue" meta={`${filteredRows.length.toLocaleString()} rows`} bodyClassName="min-h-0 flex-1 p-0" className="flex min-h-0 flex-1 flex-col">
         {loading ? (
           <StateBlock icon={Loader2} title="Loading Dispute Beta..." description="Fetching disputed STEMs and workflow state." />
         ) : filteredRows.length ? (
-          <div className="max-h-[68vh] overflow-auto">
+          <div className="h-full min-h-0 overflow-auto overscroll-contain">
             <table className="w-full min-w-[1380px] text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/40">
