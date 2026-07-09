@@ -1,6 +1,15 @@
-export const APP_VERSION = '1.0.42';
+export const APP_VERSION = '1.0.43';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.43',
+    releasedAt: '2026-07-09',
+    title: 'Payment column alignment',
+    changes: [
+      'Right-aligned Terms and Delay in Receivable Payments.',
+      'Right-aligned Overdue values in Outstanding Buyer Invoices, reminder previews, and related email tables.',
+    ],
+  },
   {
     version: '1.0.42',
     releasedAt: '2026-07-09',

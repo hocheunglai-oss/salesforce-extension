@@ -573,15 +573,15 @@ export default function IncomingPayments() {
     {
       id: 'paymentTerms',
       header: 'Terms',
-      headerClassName: 'w-[80px] whitespace-nowrap',
-      cellClassName: 'w-[80px] max-w-[80px] whitespace-normal text-xs leading-tight',
+      headerClassName: 'w-[80px] whitespace-nowrap text-right',
+      cellClassName: 'w-[80px] max-w-[80px] whitespace-normal text-right text-xs leading-tight',
       cell: (row) => row.type === 'Buyer Payment' ? row.paymentTerms || '-' : 'N/A',
     },
     {
       id: 'delay',
       header: 'Delay',
-      headerClassName: 'w-[70px] whitespace-nowrap text-left',
-      cellClassName: 'w-[70px] whitespace-nowrap text-left text-sm tabular-nums',
+      headerClassName: 'w-[70px] whitespace-nowrap text-right',
+      cellClassName: 'w-[70px] whitespace-nowrap text-right text-sm tabular-nums',
       cell: (row) => row.type === 'Buyer Payment' ? (row.delayDays == null ? '-' : row.delayDays) : 'N/A',
     },
     {

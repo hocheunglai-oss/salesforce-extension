@@ -7217,8 +7217,8 @@ function incomingPaymentReceivableTableHtml(rows = []) {
     return `
       <tr>
         <td style="${cell};white-space:nowrap">${prettyDate(row.paymentDate)}${incomingPaymentInsertedNote(row) ? `<span style="display:block;color:#92400e;font-size:11px;font-weight:600">Inserted on ${prettyDate(row.createdDate)}</span>` : ''}</td>
-        <td style="${cell};white-space:nowrap">${escapeHtml(incomingPaymentTermsValue(row))}</td>
-        <td style="${cell};white-space:nowrap;text-align:left">${escapeHtml(incomingPaymentDelayValue(row))}</td>
+        <td style="${cell};white-space:nowrap;text-align:right">${escapeHtml(incomingPaymentTermsValue(row))}</td>
+        <td style="${cell};white-space:nowrap;text-align:right">${escapeHtml(incomingPaymentDelayValue(row))}</td>
         <td style="${cell};min-width:160px">${escapeHtml(row.partyName || '-')}</td>
         <td style="${cell};min-width:140px">${escapeHtml(row.buyerGroupName || '-')}</td>
         <td style="${cell};min-width:180px;font-weight:600">${escapeHtml(row.stemName || '-')}</td>
@@ -7234,8 +7234,8 @@ function incomingPaymentReceivableTableHtml(rows = []) {
           <thead>
             <tr style="background:#f8fafc;color:#667085;text-transform:uppercase;font-size:11px;letter-spacing:.04em">
               <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Received Date</th>
-              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Terms</th>
-              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Delay</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:right;white-space:nowrap">Terms</th>
+              <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:right;white-space:nowrap">Delay</th>
               <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">From</th>
               <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Group</th>
               <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">STEM</th>
@@ -7724,7 +7724,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
       <td style="${cellStyle}">
         <span style="display:inline-block;border:1px solid;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;white-space:nowrap;${severity.pill}">${escapeHtml(row.status)}</span>
       </td>
-      <td style="${cellStyle};text-align:left;font-weight:600;color:${severity.text};white-space:nowrap">${overdueDisplayValue(row.daysUntilDue)}</td>
+      <td style="${cellStyle};text-align:right;font-weight:600;color:${severity.text};white-space:nowrap">${overdueDisplayValue(row.daysUntilDue)}</td>
     </tr>`;
   }).join('');
   const tableHtml = settings.includeTable ? `
@@ -7743,7 +7743,7 @@ function buildBuyerInvoiceReportEmail(report, settings) {
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Payment Collection Handler</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">PSPRS</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Status</th>
-            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:left;position:sticky;top:0;background:#f8fafc">Overdue</th>
+            <th style="border-bottom:1px solid #d9e2ef;padding:8px 10px;text-align:right;position:sticky;top:0;background:#f8fafc">Overdue</th>
           </tr>
         </thead>
         <tbody>${tableRows || '<tr><td colspan="11" style="padding:18px;text-align:center;color:#667085">No outstanding buyer invoices found.</td></tr>'}</tbody>
@@ -8029,7 +8029,7 @@ function buildBuyerInvoicePaymentReminderEmail(report, settings, selected, rows,
       <td style="${nowrapCellStyle}">
         <span style="display:inline-block;border:1px solid;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;white-space:nowrap;${severity.pill}">${escapeHtml(row.status)}</span>
       </td>
-      <td style="${nowrapCellStyle};text-align:left;font-weight:600;color:${severity.text}">${overdueDisplayValue(row.daysUntilDue)}</td>
+      <td style="${nowrapCellStyle};text-align:right;font-weight:600;color:${severity.text}">${overdueDisplayValue(row.daysUntilDue)}</td>
     </tr>`;
   }).join('');
   const tableHtml = `
@@ -8045,7 +8045,7 @@ function buildBuyerInvoicePaymentReminderEmail(report, settings, selected, rows,
             <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Trader</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">PSPRS</th>
             <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Status</th>
-            <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:left;white-space:nowrap">Overdue</th>
+            <th style="border-bottom:1px solid #d9e2ef;padding:7px 8px;text-align:right;white-space:nowrap">Overdue</th>
           </tr>
         </thead>
         <tbody>${tableRows || '<tr><td colspan="9" style="padding:18px;text-align:center;color:#667085">No invoices selected.</td></tr>'}</tbody>
