@@ -1,6 +1,16 @@
-export const APP_VERSION = '1.0.49';
+export const APP_VERSION = '1.0.50';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '1.0.50',
+    releasedAt: '2026-07-09',
+    title: 'V2 workspace shell',
+    changes: [
+      'Added a separate /v2 workspace with unified navigation, simplified module names, and a cleaner operational layout while preserving v1 routes.',
+      'Applied v2-specific page header, table, card, and control styling without changing Salesforce calculations or API payloads.',
+      'Added quick switching between v1 and v2 so the current version remains separately available.',
+    ],
+  },
   {
     version: '1.0.49',
     releasedAt: '2026-07-09',

@@ -232,4 +232,85 @@
   .dark .border.bg-card .sticky.bg-card {
     background: hsl(220 22% 12% / 0.8);
   }
+
+  .v2-shell {
+    background: hsl(215 22% 96%);
+    color: hsl(222 22% 12%);
+  }
+
+  .v2-shell .glass-page-header,
+  .v2-shell .glass-surface,
+  .v2-shell .bg-card.border-border,
+  .v2-shell .border.bg-card {
+    background: hsl(0 0% 100%);
+    border-color: hsl(214 24% 88%);
+    border-radius: 8px;
+    box-shadow: 0 1px 2px hsl(220 30% 22% / 0.06);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .v2-shell .v2-page-header {
+    margin-bottom: 1rem;
+    padding: 1rem 1.25rem;
+  }
+
+  .v2-shell .v2-page-header h1 {
+    font-size: 1.375rem;
+    line-height: 1.75rem;
+  }
+
+  .v2-shell .glass-control,
+  .v2-shell .glass-control.bg-transparent,
+  .v2-shell input,
+  .v2-shell select,
+  .v2-shell textarea {
+    background: hsl(0 0% 100%);
+    border-color: hsl(214 24% 84%);
+    border-radius: 8px;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .v2-shell button,
+  .v2-shell a {
+    letter-spacing: 0;
+  }
+
+  .v2-shell table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .v2-shell table th {
+    background: hsl(215 22% 97%);
+    border-bottom: 1px solid hsl(214 24% 88%);
+    color: hsl(215 12% 46%);
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .v2-shell table td {
+    border-bottom-color: hsl(214 24% 91% / 0.8);
+    vertical-align: top;
+  }
+
+  .v2-shell tbody tr:hover {
+    background: hsl(214 95% 97%);
+  }
+
+  .v2-shell .sticky.bg-card,
+  .v2-shell thead .bg-card {
+    background: hsl(215 22% 97%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .v2-shell .rounded-xl,
+  .v2-shell .rounded-2xl {
+    border-radius: 8px;
+  }
 }

@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import ModuleGate from '@/components/ModuleGate';
 import Layout from '@/components/Layout';
+import LayoutV2 from '@/components/LayoutV2';
 import DashboardSettings from '@/pages/DashboardSettings';
 import SettingsPage from '@/pages/Settings';
 import StemPnlReport from '@/pages/StemPnlReport';
@@ -69,22 +70,40 @@ const AuthenticatedApp = () => {
         <Route path="*" element={<Navigate to="/login" replace state={{ from: location }} />} />
       )}
       {!authError && isAuthenticated && (
-        <Route element={<Layout />}>
-          <Route path="/" element={<ModuleGate moduleId="dashboard"><DashboardSettings /></ModuleGate>} />
-          <Route path="/settings" element={<ModuleGate moduleId="settings"><SettingsPage /></ModuleGate>} />
-          <Route path="/pnl" element={<ModuleGate moduleId="pnl"><StemPnlReport /></ModuleGate>} />
-          <Route path="/review" element={<ModuleGate moduleId="review"><ReviewQueue /></ModuleGate>} />
-          <Route path="/disputes" element={<ModuleGate moduleId="disputes"><DisputeManagement /></ModuleGate>} />
-          <Route path="/disputes-beta" element={<ModuleGate moduleId="disputes"><DisputeBeta /></ModuleGate>} />
-          <Route path="/buyer-invoices" element={<ModuleGate moduleId="buyer_invoices"><BuyerInvoices /></ModuleGate>} />
-          <Route path="/incoming-payments" element={<ModuleGate moduleId="incoming_payments"><IncomingPayments /></ModuleGate>} />
-          <Route path="/cashflow-forecast" element={<ModuleGate moduleId="cashflow_forecast"><CashflowForecast /></ModuleGate>} />
-          <Route path="/brokers" element={<ModuleGate moduleId="brokers"><BrokerRegister /></ModuleGate>} />
-          <Route path="/report-archive" element={<ModuleGate moduleId="report_archive"><ReportArchive /></ModuleGate>} />
-          <Route path="/audit-trail" element={<ModuleGate moduleId="admin"><UniversalAuditTrail /></ModuleGate>} />
-          <Route path="/admin" element={<ModuleGate moduleId="admin"><AdminControl /></ModuleGate>} />
-          <Route path="*" element={<PageNotFound />} />
-        </Route>
+        <>
+          <Route element={<Layout />}>
+            <Route path="/" element={<ModuleGate moduleId="dashboard"><DashboardSettings /></ModuleGate>} />
+            <Route path="/settings" element={<ModuleGate moduleId="settings"><SettingsPage /></ModuleGate>} />
+            <Route path="/pnl" element={<ModuleGate moduleId="pnl"><StemPnlReport /></ModuleGate>} />
+            <Route path="/review" element={<ModuleGate moduleId="review"><ReviewQueue /></ModuleGate>} />
+            <Route path="/disputes" element={<ModuleGate moduleId="disputes"><DisputeManagement /></ModuleGate>} />
+            <Route path="/disputes-beta" element={<ModuleGate moduleId="disputes"><DisputeBeta /></ModuleGate>} />
+            <Route path="/buyer-invoices" element={<ModuleGate moduleId="buyer_invoices"><BuyerInvoices /></ModuleGate>} />
+            <Route path="/incoming-payments" element={<ModuleGate moduleId="incoming_payments"><IncomingPayments /></ModuleGate>} />
+            <Route path="/cashflow-forecast" element={<ModuleGate moduleId="cashflow_forecast"><CashflowForecast /></ModuleGate>} />
+            <Route path="/brokers" element={<ModuleGate moduleId="brokers"><BrokerRegister /></ModuleGate>} />
+            <Route path="/report-archive" element={<ModuleGate moduleId="report_archive"><ReportArchive /></ModuleGate>} />
+            <Route path="/audit-trail" element={<ModuleGate moduleId="admin"><UniversalAuditTrail /></ModuleGate>} />
+            <Route path="/admin" element={<ModuleGate moduleId="admin"><AdminControl /></ModuleGate>} />
+            <Route path="*" element={<PageNotFound />} />
+          </Route>
+          <Route path="/v2" element={<LayoutV2 />}>
+            <Route index element={<ModuleGate moduleId="dashboard"><DashboardSettings /></ModuleGate>} />
+            <Route path="settings" element={<ModuleGate moduleId="settings"><SettingsPage /></ModuleGate>} />
+            <Route path="pnl" element={<ModuleGate moduleId="pnl"><StemPnlReport /></ModuleGate>} />
+            <Route path="review" element={<ModuleGate moduleId="review"><ReviewQueue /></ModuleGate>} />
+            <Route path="disputes" element={<ModuleGate moduleId="disputes"><DisputeManagement /></ModuleGate>} />
+            <Route path="disputes-beta" element={<ModuleGate moduleId="disputes"><DisputeBeta /></ModuleGate>} />
+            <Route path="buyer-invoices" element={<ModuleGate moduleId="buyer_invoices"><BuyerInvoices /></ModuleGate>} />
+            <Route path="incoming-payments" element={<ModuleGate moduleId="incoming_payments"><IncomingPayments /></ModuleGate>} />
+            <Route path="cashflow-forecast" element={<ModuleGate moduleId="cashflow_forecast"><CashflowForecast /></ModuleGate>} />
+            <Route path="brokers" element={<ModuleGate moduleId="brokers"><BrokerRegister /></ModuleGate>} />
+            <Route path="report-archive" element={<ModuleGate moduleId="report_archive"><ReportArchive /></ModuleGate>} />
+            <Route path="audit-trail" element={<ModuleGate moduleId="admin"><UniversalAuditTrail /></ModuleGate>} />
+            <Route path="admin" element={<ModuleGate moduleId="admin"><AdminControl /></ModuleGate>} />
+            <Route path="*" element={<PageNotFound />} />
+          </Route>
+        </>
       )}
     </Routes>
   );
