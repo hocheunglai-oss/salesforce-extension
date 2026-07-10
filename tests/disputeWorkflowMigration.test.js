@@ -25,7 +25,8 @@ test('workflow backend does not query, write, or link the Salesforce Dispute obj
 
 test('workflow queue includes invoiced and uninvoiced STEM extra-cost products', async () => {
   const source = await readFile(functionUrl, 'utf8');
-  assert.match(source, /item\['Product2Id__r'\]\?\.Name/);
+  assert.match(source, /disputeQueueExtraCostProductName\(item\)/);
+  assert.match(source, /quantityLabel: null/);
   assert.match(source, /supplierInvoiceProductRowsById\.get\(item\.Supplier_Invoice__c\)/);
   assert.match(source, /uninvoicedExtraCostProductRows\.push/);
 });

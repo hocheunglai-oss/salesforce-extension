@@ -1,6 +1,15 @@
-export const APP_VERSION = '2.0.11';
+export const APP_VERSION = '2.0.12';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '2.0.12',
+    releasedAt: '2026-07-10',
+    title: 'Focused dispute queue products',
+    changes: [
+      'Excluded Transport, Undercharge, and Adjustment extra-cost categories from the Dispute Workflow queue.',
+      'Removed quantities from extra-cost product labels while retaining quantities for normal STEM product line items.',
+    ],
+  },
   {
     version: '2.0.11',
     releasedAt: '2026-07-10',
