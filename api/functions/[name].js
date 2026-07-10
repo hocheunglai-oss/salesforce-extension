@@ -2601,6 +2601,16 @@ function lineItemQuantityLabel(item, stemHasDelivery) {
   return formatQuantityLabel(financialQuantity(item, false));
 }
 
+function extraCostQuantityLabel(item, stemHasDelivery) {
+  if (stemHasDelivery) return formatQuantityLabel(financialQuantity(item, true, 'Quantity_Range_Max__c'));
+  const min = firstNumber(item.Quantity__c, item.Quantity_in_MT__c, item.Quantity_Delivered_Per_BDN__c);
+  const max = firstNumber(item.Quantity_Range_Max__c);
+  if (item.Is_Quantity_Range__c && min != null && max != null) {
+    return `${Number(min).toLocaleString('en-US', { maximumFractionDigits: 3 })}-${Number(max).toLocaleString('en-US', { maximumFractionDigits: 3 })} MT`;
+  }
+  return formatQuantityLabel(financialQuantity(item, false, 'Quantity_Range_Max__c'));
+}
+
 function lineSellAmount(item, stemHasDelivery) {
   if (stemHasDelivery) return item.Total_Price__c ?? 0;
   const unit = firstNumber(item.Price_Per_Unit__c, item.Unit_Sell_At__c, item['Offer_Line_Item__r']?.UnitPrice);
@@ -8661,6 +8671,7 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
         const supplierProductPairs = [];
         const supplierProductPairKeys = new Set();
         const supplierInvoiceProductRowsById = new Map();
+        const uninvoicedExtraCostProductRows = [];
         const supplierLineBuyByAccount = new Map();
         const uninvoicedSupplierLineBuyByAccount = new Map();
         let lineSellTotal = 0;
@@ -8733,6 +8744,49 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
 
         for (const item of extraCosts) {
           if (item.Cancelled__c) continue;
+          const productName = item['Product2Id__r']?.Name || item['Product__r']?.Name || null;
+          const supplierAccountId = extraCostSupplierField ? item[extraCostSupplierField] : null;
+          const supplierAccountKey = disputeSalesforceIdKey(supplierAccountId);
+          const supplierName = (extraCostSupplierRelationship ? item[extraCostSupplierRelationship]?.Name : null)
+            || item.Supplier_Name__c
+            || supplierAccountId
+            || null;
+          if (productName) productNames.add(productName);
+          if (supplierName || productName) {
+            const pairKey = `${supplierAccountKey || supplierName || ''}\u0000${productName || ''}`;
+            if (!supplierProductPairKeys.has(pairKey)) {
+              supplierProductPairKeys.add(pairKey);
+              supplierProductPairs.push({
+                supplierName,
+                supplierAccountId,
+                productName,
+              });
+            }
+          }
+          if (productName) {
+            const productRow = {
+              productName,
+              quantityLabel: extraCostQuantityLabel(item, stemHasDelivery),
+              supplierName,
+              supplierAccountId,
+              paymentTerm: item.Payment_Term__c || null,
+              sourceType: 'extra_cost',
+              sourceRecordId: item.Id,
+            };
+            if (item.Supplier_Invoice__c) {
+              const invoiceRows = supplierInvoiceProductRowsById.get(item.Supplier_Invoice__c) || [];
+              invoiceRows.push(productRow);
+              supplierInvoiceProductRowsById.set(item.Supplier_Invoice__c, invoiceRows);
+            } else {
+              uninvoicedExtraCostProductRows.push({
+                supplierInvoiceId: null,
+                invoiceName: null,
+                ...productRow,
+                dueDate: null,
+                productQuantityLabel: [productRow.productName, productRow.quantityLabel].filter(Boolean).join(' - '),
+              });
+            }
+          }
           const buy = extraBuyAmount(item, stemHasDelivery);
           const sell = extraSellAmount(item, stemHasDelivery);
           extraSellTotal += sell;
@@ -8824,6 +8878,7 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
             });
           }
         }
+        supplierInvoiceDueRows.push(...uninvoicedExtraCostProductRows);
         const supplierPaymentDueDatesByAccount = new Map();
         for (const dueRow of supplierInvoiceDueRows) {
           const accountKey = disputeSalesforceIdKey(dueRow.supplierAccountId);

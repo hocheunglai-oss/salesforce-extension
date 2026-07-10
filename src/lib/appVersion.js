@@ -1,6 +1,16 @@
-export const APP_VERSION = '2.0.10';
+export const APP_VERSION = '2.0.11';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '2.0.11',
+    releasedAt: '2026-07-10',
+    title: 'Extra-cost products in dispute queue',
+    changes: [
+      'Added STEM extra-cost product names and quantities to the Dispute Workflow queue product column.',
+      'Matched invoiced extra-cost products to their supplier invoice due-date rows.',
+      'Kept uninvoiced extra-cost products visible with their supplier details.',
+    ],
+  },
   {
     version: '2.0.10',
     releasedAt: '2026-07-10',
