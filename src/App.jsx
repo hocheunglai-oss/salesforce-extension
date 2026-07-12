@@ -1,5 +1,5 @@
 import { Toaster } from "@/components/ui/toaster"
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
@@ -8,20 +8,25 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import ModuleGate from '@/components/ModuleGate';
 import Layout from '@/components/Layout';
-import DashboardSettings from '@/pages/DashboardSettings';
-import SettingsPage from '@/pages/Settings';
-import StemPnlReport from '@/pages/StemPnlReport';
-import BrokerRegister from '@/pages/BrokerRegister';
-import ReportArchive from '@/pages/ReportArchive';
-import ReviewQueue from '@/pages/ReviewQueue';
-import BuyerInvoices from '@/pages/BuyerInvoices';
-import IncomingPayments from '@/pages/IncomingPayments';
-import CashflowForecast from '@/pages/CashflowForecast';
-import DisputeWorkflow from '@/pages/DisputeWorkflow';
-import Login from '@/pages/Login';
-import AdminControl from '@/pages/AdminControl';
-import UniversalAuditTrail from '@/pages/UniversalAuditTrail';
 import { clearLegacyPaymentReminderSmtpSettings } from '@/lib/smtpSettings';
+
+const DashboardSettings = lazy(() => import('@/pages/DashboardSettings'));
+const SettingsPage = lazy(() => import('@/pages/Settings'));
+const StemPnlReport = lazy(() => import('@/pages/StemPnlReport'));
+const BrokerRegister = lazy(() => import('@/pages/BrokerRegister'));
+const ReportArchive = lazy(() => import('@/pages/ReportArchive'));
+const ReviewQueue = lazy(() => import('@/pages/ReviewQueue'));
+const BuyerInvoices = lazy(() => import('@/pages/BuyerInvoices'));
+const IncomingPayments = lazy(() => import('@/pages/IncomingPayments'));
+const CashflowForecast = lazy(() => import('@/pages/CashflowForecast'));
+const DisputeWorkflow = lazy(() => import('@/pages/DisputeWorkflow'));
+const Login = lazy(() => import('@/pages/Login'));
+const AdminControl = lazy(() => import('@/pages/AdminControl'));
+const UniversalAuditTrail = lazy(() => import('@/pages/UniversalAuditTrail'));
+
+function RouteLoader() {
+  return <div className="fixed inset-0 flex items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-primary" /></div>;
+}
 
 function AuthErrorScreen({ authError }) {
   if (authError?.type === 'user_not_registered') return <UserNotRegisteredError />;
@@ -62,6 +67,7 @@ const AuthenticatedApp = () => {
   }
 
   return (
+    <Suspense fallback={<RouteLoader />}>
     <Routes>
       <Route path="/login" element={<Login />} />
       {authError?.type === 'auth_required' && (
@@ -95,6 +101,7 @@ const AuthenticatedApp = () => {
         </>
       )}
     </Routes>
+    </Suspense>
   );
 };
 

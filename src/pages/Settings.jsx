@@ -15,7 +15,6 @@ import {
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -25,18 +24,12 @@ import PageHeader from '@/components/common/PageHeader';
 import DraftNotice from '@/components/common/DraftNotice';
 import StateBlock from '@/components/common/StateBlock';
 import { appClient } from '@/api/appClient';
-import {
-  hasUsableSmtpSettings,
-  readSmtpSettings,
-  saveSmtpSettings,
-} from '@/lib/smtpSettings';
 import { RATE_PROVIDER_OPTIONS, readExchangeRateSettings, saveExchangeRateSettings } from '@/lib/exchangeRateSettings';
 import { DOCUMENT_SOURCE_GROUPS, readDocumentSettings, saveDocumentSettings } from '@/lib/documentSettings';
 import { clearDraft, readDraft, sameDraftValue, useDraftAutosave } from '@/lib/draftAutosave';
 
 const SETTINGS_DRAFT_KEY = 'settings:page';
 const SETTINGS_TAB_KEY = 'settings:active-tab';
-const EMAIL_SENDER_TAB_KEY = 'settings:email-sender-tab';
 
 const SETTINGS_TABS = [
   { id: 'email', label: 'Email Senders', icon: Mail },
@@ -51,7 +44,6 @@ function validSettingsTab(value) {
 
 function settingsSnapshot() {
   return {
-    smtpSettings: readSmtpSettings(),
     exchangeRateSettings: readExchangeRateSettings(),
     documentSettings: readDocumentSettings(),
   };
@@ -76,96 +68,6 @@ function SettingsPanel({ title, description, icon: Icon, meta, children }) {
       </div>
       {children}
     </section>
-  );
-}
-
-function SmtpAccountCard({ title, description, settings, onChange, enableLabel }) {
-  const patch = (updates) => onChange((prev) => ({ ...prev, ...updates }));
-
-  return (
-    <div className="rounded-xl border border-border bg-background/50 p-5">
-      <div className="mb-4 flex items-start gap-3">
-        <div className="mt-0.5 rounded-lg bg-muted p-2 text-muted-foreground">
-          <Mail className="h-4 w-4" />
-        </div>
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Leave From Email blank to send from the Email Username. For Microsoft 365, a different From Email requires Send As permission.
-          </p>
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-4">
-        <label className="flex items-center gap-2 text-sm font-medium text-foreground md:col-span-4">
-          <input
-            type="checkbox"
-            checked={settings.enabled}
-            onChange={(event) => patch({ enabled: event.target.checked })}
-          />
-          {enableLabel}
-        </label>
-        <div className="space-y-1.5 md:col-span-2">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sender Name</Label>
-          <Input
-            value={settings.fromName || ''}
-            onChange={(event) => patch({ fromName: event.target.value })}
-            placeholder="Fratelli Cosulich"
-          />
-        </div>
-        <div className="space-y-1.5 md:col-span-2">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">From Email</Label>
-          <Input
-            value={settings.fromEmail || ''}
-            onChange={(event) => patch({ fromEmail: event.target.value })}
-            placeholder="collections@cosulich.com.hk"
-          />
-        </div>
-        <div className="space-y-1.5 md:col-span-2">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">SMTP Host</Label>
-          <Input
-            value={settings.host}
-            onChange={(event) => patch({ host: event.target.value })}
-            placeholder="smtp.office365.com"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Port</Label>
-          <Input
-            type="number"
-            value={settings.port}
-            onChange={(event) => patch({ port: event.target.value })}
-            placeholder="587"
-          />
-        </div>
-        <label className="flex items-end gap-2 pb-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={settings.secure}
-            onChange={(event) => patch({ secure: event.target.checked })}
-          />
-          SSL/TLS immediately
-        </label>
-        <div className="space-y-1.5 md:col-span-2">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Email Username</Label>
-          <Input
-            value={settings.user}
-            onChange={(event) => patch({ user: event.target.value })}
-            placeholder="email@cosulich.com.hk"
-          />
-        </div>
-        <div className="space-y-1.5 md:col-span-2">
-          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Password / App Password</Label>
-          <Input
-            type="password"
-            value={settings.password}
-            onChange={(event) => patch({ password: event.target.value })}
-            placeholder="Saved when you click Save All Settings"
-          />
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -213,17 +115,6 @@ function formatHealthDate(value) {
   }).format(date);
 }
 
-function maskLocalValue(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  if (raw.includes('@')) {
-    const [name, domain] = raw.split('@');
-    return `${name.slice(0, 2) || '*'}***@${domain}`;
-  }
-  if (raw.length <= 8) return '***';
-  return `${raw.slice(0, 3)}***${raw.slice(-3)}`;
-}
-
 function StatusBadge({ status }) {
   const meta = STATUS_META[status] || STATUS_META.not_configured;
   const Icon = meta.icon;
@@ -250,50 +141,12 @@ function KeyValueList({ items }) {
   );
 }
 
-function BrowserSmtpHealthRow({ id, name, settings, purpose }) {
-  const configured = hasUsableSmtpSettings(settings);
-  const enabled = settings?.enabled === true;
-  return {
-    id,
-    name,
-    category: 'Email',
-    purpose,
-    scope: 'browser',
-    provider: 'SMTP',
-    endpoint: settings?.host || null,
-    authType: 'Browser-saved SMTP username/password',
-    status: configured ? 'configured' : enabled ? 'warning' : 'not_configured',
-    configured,
-    missingEnv: configured ? [] : ['host/user/password in this browser'],
-    tokenExpiry: 'Not applicable.',
-    checkedAt: new Date().toISOString(),
-    latencyMs: null,
-    notes: ['Saved locally in this browser and supplied to the API only when sending manually.'],
-    details: {
-      enabled,
-      host: settings?.host || null,
-      port: settings?.port || null,
-      user: maskLocalValue(settings?.user),
-      fromEmail: maskLocalValue(settings?.fromEmail),
-    },
-  };
-}
-
-function SystemHealthPanel({ smtpSettings }) {
+function SystemHealthPanel() {
   const [loading, setLoading] = useState(false);
   const [health, setHealth] = useState(null);
   const [error, setError] = useState('');
 
-  const browserRows = useMemo(() => ([
-    BrowserSmtpHealthRow({
-      id: 'browser-internal-smtp',
-      name: 'Browser Internal SMTP Sender',
-      settings: smtpSettings,
-      purpose: 'Manual internal reports and late payment interest requests when sent from this browser.',
-    }),
-  ]), [smtpSettings]);
-
-  const rows = useMemo(() => [...(health?.rows || []), ...browserRows], [browserRows, health?.rows]);
+  const rows = useMemo(() => health?.rows || [], [health?.rows]);
 
   const summary = useMemo(() => rows.reduce((acc, row) => {
     acc.total += 1;
@@ -321,7 +174,7 @@ function SystemHealthPanel({ smtpSettings }) {
     <SettingsPanel
       icon={Activity}
       title="System Health"
-      description="Live status of server-side APIs, browser-local senders, external tools, and token expiry notes."
+      description="Live status of server-side APIs, the shared email sender, external tools, and token expiry notes."
       meta={health?.generatedAt ? `Last checked ${formatHealthDate(health.generatedAt)}` : null}
     >
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -419,13 +272,11 @@ function SystemHealthPanel({ smtpSettings }) {
 export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [smtpSettings, setSmtpSettings] = useState(readSmtpSettings);
   const [exchangeRateSettings, setExchangeRateSettings] = useState(readExchangeRateSettings);
   const [documentSettings, setDocumentSettings] = useState(readDocumentSettings);
   const [baseSettings, setBaseSettings] = useState(settingsSnapshot);
   const [draftRestoredAt, setDraftRestoredAt] = useState(null);
   const [activeTab, setActiveTab] = useState(() => validSettingsTab(localStorage.getItem(SETTINGS_TAB_KEY)));
-  const [activeEmailSenderTab, setActiveEmailSenderTab] = useState(() => localStorage.getItem(EMAIL_SENDER_TAB_KEY) || 'internal');
 
   useEffect(() => {
     const base = settingsSnapshot();
@@ -433,7 +284,6 @@ export default function SettingsPage() {
     const next = draft?.data && !sameDraftValue(draft.data, base)
       ? { ...base, ...draft.data }
       : base;
-    setSmtpSettings(next.smtpSettings || base.smtpSettings);
     setExchangeRateSettings(next.exchangeRateSettings || base.exchangeRateSettings);
     setDocumentSettings(next.documentSettings || base.documentSettings);
     setBaseSettings(base);
@@ -441,10 +291,9 @@ export default function SettingsPage() {
   }, []);
 
   const settingsDraftValue = useMemo(() => ({
-    smtpSettings,
     exchangeRateSettings,
     documentSettings,
-  }), [documentSettings, exchangeRateSettings, smtpSettings]);
+  }), [documentSettings, exchangeRateSettings]);
   const settingsDirty = Boolean(baseSettings && !sameDraftValue(settingsDraftValue, baseSettings));
   useDraftAutosave(SETTINGS_DRAFT_KEY, settingsDraftValue, {
     enabled: true,
@@ -458,18 +307,11 @@ export default function SettingsPage() {
     localStorage.setItem(SETTINGS_TAB_KEY, next);
   };
 
-  const changeEmailSenderTab = (tab) => {
-    setActiveEmailSenderTab(tab);
-    localStorage.setItem(EMAIL_SENDER_TAB_KEY, tab);
-  };
-
   const saveAll = async () => {
     setSaving(true);
-    saveSmtpSettings(smtpSettings);
     saveExchangeRateSettings(exchangeRateSettings);
     saveDocumentSettings(documentSettings);
     const savedValue = {
-      smtpSettings,
       exchangeRateSettings,
       documentSettings,
     };
@@ -484,7 +326,6 @@ export default function SettingsPage() {
   const discardSettingsDraft = () => {
     clearDraft(SETTINGS_DRAFT_KEY);
     if (baseSettings) {
-      setSmtpSettings(baseSettings.smtpSettings || readSmtpSettings());
       setExchangeRateSettings(baseSettings.exchangeRateSettings || readExchangeRateSettings());
       setDocumentSettings(baseSettings.documentSettings || readDocumentSettings());
     }
@@ -539,42 +380,17 @@ export default function SettingsPage() {
         <TabsContent value="email" className="mt-0">
           <SettingsPanel
             icon={Mail}
-            title="Email Senders"
-            description="Manage the browser sender for internal mail and review the shared server sender used for external payment reminders."
+            title="Shared Email Sender"
+            description="All internal reports, late-interest requests, and external payment reminders use one centrally managed server mailbox."
           >
-            <Tabs value={activeEmailSenderTab} onValueChange={changeEmailSenderTab} className="space-y-4">
-              <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-muted/50 p-1 sm:w-fit sm:grid-cols-2">
-                <TabsTrigger value="internal" className="gap-2 px-4 data-[state=active]:bg-background">
-                  <Mail className="h-3.5 w-3.5" />
-                  Internal
-                </TabsTrigger>
-                <TabsTrigger value="external-payment-reminder" className="gap-2 px-4 data-[state=active]:bg-background">
-                  <Mail className="h-3.5 w-3.5" />
-                  External Payment Reminder
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="internal" className="mt-0">
-                <SmtpAccountCard
-                  title="Internal"
-                  description="Used by internal reports and late payment interest request emails. The password is saved in this browser's app settings."
-                  settings={smtpSettings}
-                  onChange={setSmtpSettings}
-                  enableLabel="Use this SMTP account for Internal emails"
-                />
-              </TabsContent>
-
-              <TabsContent value="external-payment-reminder" className="mt-0">
-                <div className="flex items-start gap-3 py-2">
-                  <Server className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground">Shared server sender</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">Every user sends External Payment Reminders through the same centrally managed SMTP mailbox.</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Credentials are stored in Vercel and are not saved in individual browsers. Connection status is available in System Health.</p>
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
+            <div className="flex items-start gap-3 py-2">
+              <Server className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Central SMTP sender</h3>
+                <p className="mt-1 text-sm text-muted-foreground">Every user sends through the same mailbox and sender identity.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Credentials are stored only in Vercel. Connection status is available in System Health.</p>
+              </div>
+            </div>
           </SettingsPanel>
         </TabsContent>
 
@@ -644,7 +460,7 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="health" className="mt-0">
-          <SystemHealthPanel smtpSettings={smtpSettings} />
+          <SystemHealthPanel />
         </TabsContent>
       </Tabs>
 

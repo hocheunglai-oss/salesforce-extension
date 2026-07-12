@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { KeyRound, Loader2, Plus, RefreshCw, Save, ShieldCheck, Trash2, UserCog, UserPlus, Users } from 'lucide-react';
 import { appClient } from '@/api/appClient';
-import { APP_MODULES, FULL_ACCESS, USER_TYPES } from '@/lib/authModules';
+import { APP_CAPABILITIES, APP_MODULES, FULL_ACCESS, FULL_CAPABILITIES, USER_TYPES } from '@/lib/authModules';
 import { useAuth } from '@/lib/AuthContext';
 import PageHeader from '@/components/common/PageHeader';
 import DraftNotice from '@/components/common/DraftNotice';
@@ -25,6 +25,7 @@ const emptyUserForm = {
   password: '',
   use_type_defaults: true,
   permissions: {},
+  capabilities: {},
 };
 
 const emptyTypeForm = {
@@ -34,6 +35,7 @@ const emptyTypeForm = {
   sort_order: 100,
   is_system: false,
   permissions: { dashboard: true },
+  capabilities: {},
 };
 
 const REPORT_ARCHIVE_MODULE_ID = 'report_archive';
@@ -61,6 +63,10 @@ function normalizedPermissions(modules, permissions = {}) {
       ? reportArchiveAccess(permissions?.[module.id])
       : permissions?.[module.id] === true,
   ]));
+}
+
+function normalizedCapabilities(definitions, capabilities = {}) {
+  return Object.fromEntries(definitions.map((capability) => [capability.id, capabilities?.[capability.id] === true]));
 }
 
 function typeLabel(type) {
@@ -157,6 +163,31 @@ function ModuleGrid({ modules, permissions, locked = false, onToggle, onSetAcces
   );
 }
 
+function CapabilityGrid({ definitions, capabilities, locked = false, onToggle }) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {definitions.map((capability) => (
+        <label
+          key={capability.id}
+          className={`flex min-h-16 items-start justify-between gap-3 rounded-md border border-border bg-background/60 px-3 py-2 text-sm ${locked ? 'opacity-75' : ''}`}
+        >
+          <span>
+            <span className="block font-medium text-foreground">{capability.label}</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">{capability.description}</span>
+          </span>
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={capabilities?.[capability.id] === true}
+            disabled={locked}
+            onChange={() => onToggle?.(capability.id)}
+          />
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export default function AdminControl() {
   const { authMode, isSupabaseConfigured, user: currentUser } = useAuth();
   const [activeSection, setActiveSection] = useState('users');
@@ -164,6 +195,8 @@ export default function AdminControl() {
   const [modules, setModules] = useState(APP_MODULES);
   const [userTypes, setUserTypes] = useState(USER_TYPES);
   const [typePermissions, setTypePermissions] = useState({});
+  const [capabilityDefinitions, setCapabilityDefinitions] = useState(APP_CAPABILITIES);
+  const [typeCapabilities, setTypeCapabilities] = useState({});
   const [auditLogs, setAuditLogs] = useState([]);
   const [userForm, setUserForm] = useState(emptyUserForm);
   const [typeForm, setTypeForm] = useState(emptyTypeForm);
@@ -200,14 +233,26 @@ export default function AdminControl() {
     () => normalizedPermissions(sortedModules, typePermissions[userForm.user_type] || {}),
     [sortedModules, typePermissions, userForm.user_type]
   );
+  const selectedTypeCapabilities = useMemo(
+    () => normalizedCapabilities(capabilityDefinitions, typeCapabilities[userForm.user_type] || {}),
+    [capabilityDefinitions, typeCapabilities, userForm.user_type]
+  );
   const effectiveUserPermissions = userForm.user_type === 'administrator'
     ? FULL_ACCESS
     : userForm.use_type_defaults
       ? selectedTypePermissions
       : normalizedPermissions(sortedModules, userForm.permissions);
+  const effectiveUserCapabilities = userForm.user_type === 'administrator'
+    ? FULL_CAPABILITIES
+    : userForm.use_type_defaults
+      ? selectedTypeCapabilities
+      : normalizedCapabilities(capabilityDefinitions, userForm.capabilities);
   const activeTypePermissions = typeForm.id === 'administrator'
     ? FULL_ACCESS
     : normalizedPermissions(sortedModules, typeForm.permissions);
+  const activeTypeCapabilities = typeForm.id === 'administrator'
+    ? FULL_CAPABILITIES
+    : normalizedCapabilities(capabilityDefinitions, typeForm.capabilities);
   const selectedTypeAssignedCount = useMemo(
     () => users.filter((item) => item.user_type === typeForm.id).length,
     [typeForm.id, users]
@@ -247,6 +292,8 @@ export default function AdminControl() {
         setUsers(usersRes.data.users || []);
         setUserTypes(nextUserTypes);
         setTypePermissions(usersRes.data.typePermissions || {});
+        setCapabilityDefinitions(usersRes.data.capabilities?.length ? usersRes.data.capabilities : APP_CAPABILITIES);
+        setTypeCapabilities(usersRes.data.typeCapabilities || {});
       }
       if (!logsRes.data?.error) setAuditLogs(logsRes.data.logs || []);
     } catch (loadError) {
@@ -272,6 +319,7 @@ export default function AdminControl() {
       const base = {
         ...emptyUserForm,
         permissions: normalizedPermissions(sortedModules, typePermissions.viewer || {}),
+        capabilities: normalizedCapabilities(capabilityDefinitions, typeCapabilities.viewer || {}),
       };
       const draft = readDraft(userDraftKey(base));
       const next = draft?.data && !sameDraftValue(draft.data, safeUserDraft(base))
@@ -288,6 +336,9 @@ export default function AdminControl() {
     const sourcePermissions = useTypeDefaults
       ? typePermissions[item.user_type] || item.permissions || {}
       : item.permissions || {};
+    const sourceCapabilities = useTypeDefaults
+      ? typeCapabilities[item.user_type] || item.capabilities || {}
+      : item.capabilities || {};
     const base = {
       id: item.id,
       email: item.email || '',
@@ -297,6 +348,7 @@ export default function AdminControl() {
       password: '',
       use_type_defaults: useTypeDefaults,
       permissions: normalizedPermissions(sortedModules, sourcePermissions),
+      capabilities: normalizedCapabilities(capabilityDefinitions, sourceCapabilities),
     };
     const draft = readDraft(userDraftKey(base));
     const next = draft?.data && !sameDraftValue(draft.data, safeUserDraft(base))
@@ -312,11 +364,13 @@ export default function AdminControl() {
     setUserForm((prev) => {
       const useTypeDefaults = userType === 'administrator' ? true : prev.use_type_defaults;
       const typeDefaults = normalizedPermissions(sortedModules, typePermissions[userType] || {});
+      const capabilityDefaults = normalizedCapabilities(capabilityDefinitions, typeCapabilities[userType] || {});
       return {
         ...prev,
         user_type: userType,
         use_type_defaults: useTypeDefaults,
         permissions: useTypeDefaults ? typeDefaults : normalizedPermissions(sortedModules, prev.permissions),
+        capabilities: useTypeDefaults ? capabilityDefaults : normalizedCapabilities(capabilityDefinitions, prev.capabilities),
       };
     });
   };
@@ -328,6 +382,9 @@ export default function AdminControl() {
       permissions: checked
         ? normalizedPermissions(sortedModules, typePermissions[prev.user_type] || {})
         : normalizedPermissions(sortedModules, effectiveUserPermissions),
+      capabilities: checked
+        ? normalizedCapabilities(capabilityDefinitions, typeCapabilities[prev.user_type] || {})
+        : normalizedCapabilities(capabilityDefinitions, effectiveUserCapabilities),
     }));
   };
 
@@ -352,6 +409,16 @@ export default function AdminControl() {
     }));
   };
 
+  const toggleUserCapability = (capabilityId) => {
+    setUserForm((prev) => ({
+      ...prev,
+      capabilities: {
+        ...prev.capabilities,
+        [capabilityId]: !prev.capabilities?.[capabilityId],
+      },
+    }));
+  };
+
   const saveUser = async (event) => {
     event.preventDefault();
     setSavingUser(true);
@@ -366,6 +433,7 @@ export default function AdminControl() {
       password: userForm.password,
       use_type_defaults: userForm.user_type === 'administrator' ? true : userForm.use_type_defaults,
       permissions: userForm.user_type === 'administrator' ? FULL_ACCESS : normalizedPermissions(sortedModules, userForm.permissions),
+      capabilities: userForm.user_type === 'administrator' ? FULL_CAPABILITIES : normalizedCapabilities(capabilityDefinitions, userForm.capabilities),
     };
     const res = await appClient.functions.invoke('adminUserSave', payload);
     setSavingUser(false);
@@ -409,6 +477,7 @@ export default function AdminControl() {
       const base = {
         ...emptyTypeForm,
         permissions: normalizedPermissions(sortedModules, { dashboard: true }),
+        capabilities: normalizedCapabilities(capabilityDefinitions, {}),
       };
       const draft = readDraft(userTypeDraftKey(base));
       const next = draft?.data && !sameDraftValue(draft.data, base)
@@ -428,6 +497,7 @@ export default function AdminControl() {
       sort_order: item.sort_order ?? item.sortOrder ?? 100,
       is_system: item.is_system === true,
       permissions: normalizedPermissions(sortedModules, typePermissions[item.id] || {}),
+      capabilities: normalizedCapabilities(capabilityDefinitions, typeCapabilities[item.id] || {}),
     };
     const draft = readDraft(userTypeDraftKey(base));
     const next = draft?.data && !sameDraftValue(draft.data, base)
@@ -460,6 +530,16 @@ export default function AdminControl() {
     }));
   };
 
+  const toggleTypeCapability = (capabilityId) => {
+    setTypeForm((prev) => ({
+      ...prev,
+      capabilities: {
+        ...prev.capabilities,
+        [capabilityId]: !prev.capabilities?.[capabilityId],
+      },
+    }));
+  };
+
   const saveUserType = async (event) => {
     event.preventDefault();
     setSavingType(true);
@@ -471,6 +551,7 @@ export default function AdminControl() {
       description: typeForm.description.trim(),
       sort_order: typeForm.sort_order,
       permissions: typeForm.id === 'administrator' ? FULL_ACCESS : normalizedPermissions(sortedModules, typeForm.permissions),
+      capabilities: typeForm.id === 'administrator' ? FULL_CAPABILITIES : normalizedCapabilities(capabilityDefinitions, typeForm.capabilities),
     };
     const res = await appClient.functions.invoke('adminUserTypeSave', payload);
     setSavingType(false);
@@ -487,6 +568,7 @@ export default function AdminControl() {
       id: res.data.userType?.id || prev.id,
       is_system: res.data.userType?.is_system === true,
       permissions: normalizedPermissions(sortedModules, res.data.userType?.permissions || prev.permissions),
+      capabilities: normalizedCapabilities(capabilityDefinitions, res.data.userType?.capabilities || prev.capabilities),
     }));
     await load({ force: true });
   };
@@ -787,6 +869,20 @@ export default function AdminControl() {
                   onSetAccess={setUserModuleAccess}
                 />
               </div>
+              <div className="mt-6">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workflow & Settings Permissions</div>
+                  <div className="text-xs text-muted-foreground">
+                    {userForm.use_type_defaults || userForm.user_type === 'administrator' ? 'Inherited' : 'Custom'}
+                  </div>
+                </div>
+                <CapabilityGrid
+                  definitions={capabilityDefinitions}
+                  capabilities={effectiveUserCapabilities}
+                  locked={userForm.user_type === 'administrator' || userForm.use_type_defaults}
+                  onToggle={toggleUserCapability}
+                />
+              </div>
             </div>
             <DialogFooter className="border-t border-border px-5 py-4">
               {userForm.id && userForm.id !== currentUser?.id && (
@@ -875,6 +971,22 @@ export default function AdminControl() {
                   locked={typeForm.id === 'administrator'}
                   onToggle={toggleTypeModule}
                   onSetAccess={setTypeModuleAccess}
+                />
+              </div>
+              <div className="mt-6">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Default Workflow & Settings Permissions</div>
+                  {typeForm.id === 'administrator' && (
+                    <div className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                      <KeyRound className="h-3.5 w-3.5" /> Always full access
+                    </div>
+                  )}
+                </div>
+                <CapabilityGrid
+                  definitions={capabilityDefinitions}
+                  capabilities={activeTypeCapabilities}
+                  locked={typeForm.id === 'administrator'}
+                  onToggle={toggleTypeCapability}
                 />
               </div>
             </div>

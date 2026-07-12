@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { APP_MODULES, FULL_ACCESS } from '@/lib/authModules';
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient';
+import { appClient } from '@/api/appClient';
 
 const AuthContext = createContext();
 
@@ -161,6 +162,7 @@ export const AuthProvider = ({ children }) => {
     if (!isSupabaseConfigured) return undefined;
     const { data } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') return;
+      appClient.functions.clearCache();
       if (event === 'SIGNED_OUT') {
         setUser(null);
         setModuleAccess({});
@@ -187,6 +189,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
+    appClient.functions.clearCache();
     if (isSupabaseConfigured) await supabase.auth.signOut();
     setUser(null);
     setModuleAccess({});

@@ -286,6 +286,7 @@ function documentPreviewKind(document) {
 }
 
 function nextWorkflowOwner(stage) {
+  if (stage === 'Closed') return 'Complete';
   if (stage === 'Pending Approval') return 'Approver';
   if (['Approved - Pending Accounting', 'Accounting In Progress', 'Settled - Ready to Close'].includes(stage)) return 'Finance / Accounting';
   if (stage === 'Closed') return 'Complete';
@@ -915,11 +916,12 @@ function ManageWorkflowModal({ stem, open, onClose, onSaved, capabilities }) {
   if (!open || !stem) return null;
 
   const partyRegistry = stem._Dispute_Parties;
+  const legacyReadOnly = caseRow?.legacyReadOnly === true;
   const partyIssues = Array.isArray(partyRegistry?.issues) ? partyRegistry.issues : [];
   const candidateSchemaValid = partyRegistry?.candidateSchemaValid === true;
-  const selectionValid = selectedAccountIds.length > 0;
-  const partiesValid = candidateSchemaValid && selectionValid;
-  const canEdit = editableWorkflow(caseRow) && candidateSchemaValid;
+  const selectionValid = legacyReadOnly || selectedAccountIds.length > 0;
+  const partiesValid = legacyReadOnly || (candidateSchemaValid && selectionValid);
+  const canEdit = !legacyReadOnly && editableWorkflow(caseRow) && candidateSchemaValid;
   const documentedActionIds = new Set(documents.map((document) => document.actionId).filter(Boolean));
   const missingRequiredDocuments = actions.filter((action) => action.requiresAttachment && (!action.id || !documentedActionIds.has(action.id)));
   const canSubmit = canEdit && selectionValid && actions.length > 0 && missingRequiredDocuments.length === 0;
@@ -1100,6 +1102,11 @@ function ManageWorkflowModal({ stem, open, onClose, onSaved, capabilities }) {
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
           {error && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+          {legacyReadOnly && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              This dispute was already closed in Salesforce before FCOS workflow tracking. It is shown as read-only history and is not assigned back to a trader.
+            </div>
+          )}
           {missingRequiredDocuments.length > 0 && (
             <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1113,7 +1120,7 @@ function ManageWorkflowModal({ stem, open, onClose, onSaved, capabilities }) {
             </div>
           )}
 
-          {!candidateSchemaValid && (
+          {!legacyReadOnly && !candidateSchemaValid && (
             <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
               <div className="flex items-center gap-2 font-semibold"><AlertCircle className="h-4 w-4" /> Correct Salesforce Account sources</div>
               <div className="mt-2 space-y-1">
@@ -1435,7 +1442,7 @@ export default function DisputeWorkflow() {
       )}
 
       <div className="grid shrink-0 gap-3 md:grid-cols-5">
-        <Metric label="Cases" value={totals.count.toLocaleString()} tone="red" />
+        <Metric label="Disputed STEMs" value={totals.count.toLocaleString()} tone="red" />
         <Metric label="Pending Approval" value={totals.pending.toLocaleString()} tone="amber" />
         <Metric label="Pending Accounting" value={totals.accounting.toLocaleString()} />
         <Metric label="Ready to Close" value={totals.readyToClose.toLocaleString()} tone="green" />
@@ -1503,8 +1510,9 @@ export default function DisputeWorkflow() {
                   const workflow = workflowFromRow(row);
                   const stage = workflow.case?.workflowStatus || 'Draft';
                   const detailLines = queueDetailLines(row);
-                  const hasPartyIssues = row._Dispute_Parties?.candidateSchemaValid !== true;
-                  const needsPartySelection = row._Dispute_Parties?.candidateSchemaValid === true && row._Dispute_Parties?.selectionValid !== true;
+                  const hasPartyIssues = !workflow.case?.legacyReadOnly && row._Dispute_Parties?.candidateSchemaValid !== true;
+                  const legacyReadOnly = workflow.case?.legacyReadOnly === true;
+                  const needsPartySelection = !legacyReadOnly && row._Dispute_Parties?.candidateSchemaValid === true && row._Dispute_Parties?.selectionValid !== true;
                   return (
                     <tr
                       key={row.Id}
@@ -1578,7 +1586,7 @@ export default function DisputeWorkflow() {
                             setManagedStem(row);
                           }}
                         >
-                          <CircleDollarSign className="h-3.5 w-3.5" /> Manage
+                          <CircleDollarSign className="h-3.5 w-3.5" /> {legacyReadOnly ? 'View' : 'Manage'}
                         </Button>
                       </td>
                     </tr>

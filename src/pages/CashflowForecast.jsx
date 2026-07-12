@@ -202,6 +202,7 @@ export default function CashflowForecast() {
   }, []);
 
   const rows = data.rows || [];
+  const canManageSettings = data.capabilities?.canManageSettings === true;
   const buyerGroupOptions = useMemo(() => (
     [...new Set(rows.map((row) => row.buyerGroup).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b))
@@ -606,7 +607,7 @@ export default function CashflowForecast() {
           title="Forecast Settings"
           meta={`Holiday source: ${data.holidaySourceStatus?.some((row) => row.fromCache) ? 'Nager.Date with cache' : 'Nager.Date'}`}
           actions={(
-            <Button onClick={saveSettings} disabled={saving || !settingsDraft}>
+            <Button onClick={saveSettings} disabled={saving || !settingsDraft || !canManageSettings}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               Save
             </Button>
@@ -615,21 +616,22 @@ export default function CashflowForecast() {
         >
           {settingsDraft && (
             <div className="grid gap-3 sm:grid-cols-2">
+              {!canManageSettings && <div className="sm:col-span-2 text-xs text-muted-foreground">These shared assumptions are read-only for your role.</div>}
               <div>
                 <Label className="text-xs text-muted-foreground">Horizon Days</Label>
-                <Input type="number" min="1" max="365" value={settingsDraft.horizonDays} onChange={(event) => setSettingsDraft((current) => ({ ...current, horizonDays: event.target.value }))} />
+                <Input disabled={!canManageSettings} type="number" min="1" max="365" value={settingsDraft.horizonDays} onChange={(event) => setSettingsDraft((current) => ({ ...current, horizonDays: event.target.value }))} />
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Lookback Months</Label>
-                <Input type="number" min="1" max="36" value={settingsDraft.lookbackMonths} onChange={(event) => setSettingsDraft((current) => ({ ...current, lookbackMonths: event.target.value }))} />
+                <Input disabled={!canManageSettings} type="number" min="1" max="36" value={settingsDraft.lookbackMonths} onChange={(event) => setSettingsDraft((current) => ({ ...current, lookbackMonths: event.target.value }))} />
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Minimum Buyer Samples</Label>
-                <Input type="number" min="1" max="100" value={settingsDraft.minBuyerSamples} onChange={(event) => setSettingsDraft((current) => ({ ...current, minBuyerSamples: event.target.value }))} />
+                <Input disabled={!canManageSettings} type="number" min="1" max="100" value={settingsDraft.minBuyerSamples} onChange={(event) => setSettingsDraft((current) => ({ ...current, minBuyerSamples: event.target.value }))} />
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Minimum Group Samples</Label>
-                <Input type="number" min="1" max="100" value={settingsDraft.minGroupSamples} onChange={(event) => setSettingsDraft((current) => ({ ...current, minGroupSamples: event.target.value }))} />
+                <Input disabled={!canManageSettings} type="number" min="1" max="100" value={settingsDraft.minGroupSamples} onChange={(event) => setSettingsDraft((current) => ({ ...current, minGroupSamples: event.target.value }))} />
               </div>
             </div>
           )}
@@ -640,10 +642,10 @@ export default function CashflowForecast() {
               Manual Blocked Dates
             </div>
             <div className="grid gap-2 sm:grid-cols-[150px_110px_1fr_auto]">
-              <Input type="date" value={overrideDraft.date} onChange={(event) => setOverrideDraft((current) => ({ ...current, date: event.target.value }))} />
-              <Input value={overrideDraft.countryCode} onChange={(event) => setOverrideDraft((current) => ({ ...current, countryCode: event.target.value.toUpperCase() }))} placeholder="MANUAL" />
-              <Input value={overrideDraft.name} onChange={(event) => setOverrideDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Reason" />
-              <Button variant="outline" onClick={addOverride} disabled={saving}>
+              <Input disabled={!canManageSettings} type="date" value={overrideDraft.date} onChange={(event) => setOverrideDraft((current) => ({ ...current, date: event.target.value }))} />
+              <Input disabled={!canManageSettings} value={overrideDraft.countryCode} onChange={(event) => setOverrideDraft((current) => ({ ...current, countryCode: event.target.value.toUpperCase() }))} placeholder="MANUAL" />
+              <Input disabled={!canManageSettings} value={overrideDraft.name} onChange={(event) => setOverrideDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Reason" />
+              <Button variant="outline" onClick={addOverride} disabled={saving || !canManageSettings}>
                 <Check className="mr-2 h-4 w-4" />
                 Add
               </Button>
@@ -655,7 +657,7 @@ export default function CashflowForecast() {
                     <div className="font-medium">{fmtDate(override.date)} · {override.name}</div>
                     <div className="text-xs text-muted-foreground">{override.countryCode}</div>
                   </div>
-                  <Button size="icon" variant="ghost" onClick={() => deleteOverride(override.id)} disabled={saving} title="Delete blocked date">
+                  <Button size="icon" variant="ghost" onClick={() => deleteOverride(override.id)} disabled={saving || !canManageSettings} title="Delete blocked date">
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>

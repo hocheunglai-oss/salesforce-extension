@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Download, Loader2, RefreshCw, Search, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Download, History, Loader2, RefreshCw, Save, Search, UserCog, X } from 'lucide-react';
 import { appClient } from '@/api/appClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import PageHeader from '@/components/common/PageHeader';
 import FilterSummary, { FilterChip } from '@/components/common/FilterSummary';
 import TableShell from '@/components/common/TableShell';
@@ -18,6 +20,9 @@ const BUYER_FIELD = 'Total_Invoice_Amount__c';
 const SUPPLIER_FIELD = 'Total_Invoiced_Amount_From_Suppliers__c';
 const STORAGE_KEY = 'review_queue_filters';
 const YEARS = getRecentYears();
+const WORKFLOW_STATUSES = ['Open', 'Acknowledged', 'In Progress', 'Resolved', 'Dismissed'];
+const WORKFLOW_DEPARTMENTS = ['Unassigned', 'Trading', 'Operations', 'Accounting', 'Management'];
+const WORKFLOW_PRIORITIES = ['High', 'Medium', 'Low'];
 
 const REVIEW_FILTERS = [
   { key: 'all', label: 'All exceptions' },
@@ -115,12 +120,23 @@ export default function ReviewQueue() {
   const [activeReviewType, setActiveReviewType] = useState(
     REVIEW_FILTERS.some(filter => filter.key === savedFilters.activeReviewType) ? savedFilters.activeReviewType : 'all'
   );
+  const [workflowScope, setWorkflowScope] = useState(
+    ['active', 'resolved', 'all'].includes(savedFilters.workflowScope) ? savedFilters.workflowScope : 'active'
+  );
   const [search, setSearch] = useState('');
   const [data, setData] = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedStemId, setSelectedStemId] = useState(null);
+  const [workflowByStemId, setWorkflowByStemId] = useState({});
+  const [ownerOptions, setOwnerOptions] = useState([]);
+  const [selectedWorkflowRow, setSelectedWorkflowRow] = useState(null);
+  const [workflowSaving, setWorkflowSaving] = useState(false);
+  const [workflowError, setWorkflowError] = useState('');
+  const [workflowForm, setWorkflowForm] = useState({
+    status: 'Open', department: 'Unassigned', ownerUserId: '', priority: 'High', dueDate: '', latestNote: '', resolutionNote: '',
+  });
   const debounceRef = useRef(null);
 
   const toggleYear = (yr) => setSelectedYears(prev =>
@@ -145,13 +161,21 @@ export default function ReviewQueue() {
     } else {
       setData(res.data);
       setLastRefresh(new Date(res.meta?.cachedAt || Date.now()));
+      const stemIds = (res.data?.recentStems || []).map((row) => row.Id).filter(Boolean);
+      const workflowRes = await appClient.functions.invoke('exceptionReviewWorkflowList', { stemIds }, { cache: true, force: options.force });
+      if (workflowRes.data?.error) {
+        setError(workflowRes.data.error);
+      } else {
+        setWorkflowByStemId(workflowRes.data.byStemId || {});
+        setOwnerOptions(workflowRes.data.ownerOptions || []);
+      }
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ selectedYears, selectedMonths, activeReviewType }));
-  }, [selectedYears, selectedMonths, activeReviewType]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ selectedYears, selectedMonths, activeReviewType, workflowScope }));
+  }, [selectedYears, selectedMonths, activeReviewType, workflowScope]);
 
   useEffect(() => {
     clearTimeout(debounceRef.current);
@@ -163,22 +187,71 @@ export default function ReviewQueue() {
   const selectedMonthLabel = formatSelectedMonths(selectedMonths);
 
   const reviewRows = useMemo(() => {
-    const rows = (data?.recentStems || []).map(classifyStem).filter(row => row.reviewReasons.length > 0);
+    const rows = (data?.recentStems || []).map(classifyStem).filter(row => row.reviewReasons.length > 0).map((row) => ({
+      ...row,
+      exceptionWorkflow: workflowByStemId[row.Id] || null,
+    }));
+    const scopedRows = rows.filter((row) => {
+      const status = row.exceptionWorkflow?.status || 'Open';
+      if (workflowScope === 'active') return status !== 'Resolved' && status !== 'Dismissed';
+      if (workflowScope === 'resolved') return status === 'Resolved' || status === 'Dismissed';
+      return true;
+    });
     const filteredByType = activeReviewType === 'all'
-      ? rows
-      : rows.filter(row => row.reviewReasons.some(reason => reason.key === activeReviewType));
+      ? scopedRows
+      : scopedRows.filter(row => row.reviewReasons.some(reason => reason.key === activeReviewType));
     if (!search.trim()) return filteredByType;
     const q = search.toLowerCase();
     return filteredByType.filter(row =>
       [row.Name, row.KeyStem__c, row.Buyer_Name__c, row.Buyer__c, row.ETA_Start_Date__c, row.Delivery_Date__c]
         .some(value => value != null && String(value).toLowerCase().includes(q))
     );
-  }, [data?.recentStems, activeReviewType, search]);
+  }, [data?.recentStems, activeReviewType, search, workflowByStemId, workflowScope]);
 
   const classifiedRows = useMemo(() => (data?.recentStems || []).map(classifyStem), [data?.recentStems]);
   const highPriorityCount = classifiedRows.filter(row => row.reviewSeverity === 'high').length;
   const potentialDelayCount = classifiedRows.filter(row => row.reviewReasons.some(reason => reason.key === 'potential-delay')).length;
   const clearCount = classifiedRows.filter(row => row.reviewReasons.length === 0).length;
+
+  const openWorkflow = (row) => {
+    const workflow = workflowByStemId[row.Id] || {};
+    setSelectedWorkflowRow(row);
+    setWorkflowError('');
+    setWorkflowForm({
+      status: workflow.status || 'Open',
+      department: workflow.department || 'Unassigned',
+      ownerUserId: workflow.ownerUserId || '',
+      priority: workflow.priority || 'High',
+      dueDate: workflow.dueDate || '',
+      latestNote: workflow.latestNote || '',
+      resolutionNote: workflow.resolutionNote || '',
+    });
+  };
+
+  const saveWorkflow = async () => {
+    if (!selectedWorkflowRow) return;
+    setWorkflowSaving(true);
+    setWorkflowError('');
+    const existing = workflowByStemId[selectedWorkflowRow.Id] || null;
+    const res = await appClient.functions.invoke('exceptionReviewWorkflowSave', {
+      stemId: selectedWorkflowRow.Id,
+      ...workflowForm,
+      expectedUpdatedAt: existing?.updatedAt || null,
+    });
+    setWorkflowSaving(false);
+    if (res.data?.error) {
+      setWorkflowError(res.data.error);
+      return;
+    }
+    setWorkflowByStemId((prev) => ({
+      ...prev,
+      [selectedWorkflowRow.Id]: {
+        ...res.data.item,
+        events: [res.data.event, ...(prev[selectedWorkflowRow.Id]?.events || [])].filter(Boolean),
+      },
+    }));
+    setSelectedWorkflowRow(null);
+  };
 
   const exportCsv = () => {
     if (!reviewRows.length) return;
@@ -288,10 +361,23 @@ export default function ReviewQueue() {
                 </Button>
               ))}
             </div>
+            <div className="mt-3 inline-flex overflow-hidden rounded-md border border-border bg-background">
+              {[['active', 'Active'], ['resolved', 'Resolved'], ['all', 'All']].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setWorkflowScope(value)}
+                  className={cn('h-8 px-3 text-xs font-semibold', workflowScope === value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <FilterSummary className="mt-4" title="Queue Scope">
               <FilterChip label="Year" value={selectedYearLabel || 'None'} tone="active" />
               <FilterChip label="Month" value={selectedMonthLabel || 'None'} tone="active" />
               <FilterChip label="Date logic" value="Delivery Date, else Expected Delivery" />
+              <FilterChip label="Workflow" value={workflowScope === 'active' ? 'Active items' : workflowScope === 'resolved' ? 'Resolved items' : 'All items'} />
             </FilterSummary>
           </div>
         </div>
@@ -353,9 +439,13 @@ export default function ReviewQueue() {
                   <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-left font-semibold uppercase tracking-wide text-muted-foreground">Name</th>
                   <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-left font-semibold uppercase tracking-wide text-muted-foreground">Buyer Name</th>
                   <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-left font-semibold uppercase tracking-wide text-muted-foreground">Delivery Date</th>
+                  <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-left font-semibold uppercase tracking-wide text-muted-foreground">Workflow</th>
+                  <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-left font-semibold uppercase tracking-wide text-muted-foreground">Owner</th>
+                  <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-left font-semibold uppercase tracking-wide text-muted-foreground">Due</th>
                   <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-right font-semibold uppercase tracking-wide text-muted-foreground">Buyer Invoice</th>
                   <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-right font-semibold uppercase tracking-wide text-muted-foreground">Supplier Invoice</th>
                   <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-right font-semibold uppercase tracking-wide text-muted-foreground">Gross Profit</th>
+                  <th className="sticky top-0 z-10 bg-card py-2.5 px-3 text-right font-semibold uppercase tracking-wide text-muted-foreground">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -382,6 +472,12 @@ export default function ReviewQueue() {
                         {row.usesFallbackDate && <span className="text-[11px] text-amber-600">Expected: {fmtDate(row.Expected_Delivery_Date__c)}</span>}
                       </div>
                     </td>
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      <div className="font-medium text-foreground">{row.exceptionWorkflow?.status || 'Open'}</div>
+                      <div className="text-[11px] text-muted-foreground">{row.exceptionWorkflow?.department || 'Unassigned'} · {row.exceptionWorkflow?.priority || 'High'}</div>
+                    </td>
+                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{row.exceptionWorkflow?.ownerName || 'Unassigned'}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{fmtDate(row.exceptionWorkflow?.dueDate)}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums text-foreground whitespace-nowrap">{fmtMoney(row[BUYER_FIELD])}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums text-foreground whitespace-nowrap">{fmtMoney(row[SUPPLIER_FIELD])}</td>
                     <td className={cn(
@@ -389,6 +485,20 @@ export default function ReviewQueue() {
                       row.grossProfit == null ? 'text-muted-foreground' : row.grossProfit >= 0 ? 'text-emerald-600' : 'text-red-600'
                     )}>
                       {fmtMoney(row.grossProfit)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="gap-2"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openWorkflow(row);
+                        }}
+                      >
+                        <UserCog className="h-3.5 w-3.5" /> Manage
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -406,6 +516,80 @@ export default function ReviewQueue() {
         onClose={() => setSelectedStemId(null)}
         onUpdated={() => load(selectedYears, selectedMonths, { force: true })}
       />
+
+      <Dialog open={Boolean(selectedWorkflowRow)} onOpenChange={(open) => !open && setSelectedWorkflowRow(null)}>
+        <DialogContent className="max-h-[92vh] max-w-3xl overflow-hidden p-0">
+          <DialogHeader className="border-b border-border px-5 py-4">
+            <DialogTitle>Manage Exception · {selectedWorkflowRow?.Name || 'STEM'}</DialogTitle>
+            <DialogDescription>Assign the next owner and record the handoff or resolution for all departments to see.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[calc(92vh-150px)] overflow-auto px-5 py-4">
+            {workflowError && <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{workflowError}</div>}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Status</span>
+                <select value={workflowForm.status} onChange={(event) => setWorkflowForm((prev) => ({ ...prev, status: event.target.value }))} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                  {WORKFLOW_STATUSES.map((value) => <option key={value}>{value}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Priority</span>
+                <select value={workflowForm.priority} onChange={(event) => setWorkflowForm((prev) => ({ ...prev, priority: event.target.value }))} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                  {WORKFLOW_PRIORITIES.map((value) => <option key={value}>{value}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Department</span>
+                <select value={workflowForm.department} onChange={(event) => setWorkflowForm((prev) => ({ ...prev, department: event.target.value }))} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                  {WORKFLOW_DEPARTMENTS.map((value) => <option key={value}>{value}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Owner</span>
+                <select value={workflowForm.ownerUserId} onChange={(event) => setWorkflowForm((prev) => ({ ...prev, ownerUserId: event.target.value }))} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                  <option value="">Unassigned</option>
+                  {ownerOptions.map((owner) => <option key={owner.id} value={owner.id}>{owner.name} · {owner.userType}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1.5 sm:col-span-2">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Due Date</span>
+                <Input type="date" value={workflowForm.dueDate} onChange={(event) => setWorkflowForm((prev) => ({ ...prev, dueDate: event.target.value }))} />
+              </label>
+              <label className="space-y-1.5 sm:col-span-2">
+                <span className="text-xs font-semibold uppercase text-muted-foreground">Handoff Note</span>
+                <Textarea rows={3} value={workflowForm.latestNote} onChange={(event) => setWorkflowForm((prev) => ({ ...prev, latestNote: event.target.value }))} placeholder="What was checked, and what should happen next?" />
+              </label>
+              {(workflowForm.status === 'Resolved' || workflowForm.status === 'Dismissed') && (
+                <label className="space-y-1.5 sm:col-span-2">
+                  <span className="text-xs font-semibold uppercase text-muted-foreground">Resolution Note</span>
+                  <Textarea required rows={3} value={workflowForm.resolutionNote} onChange={(event) => setWorkflowForm((prev) => ({ ...prev, resolutionNote: event.target.value }))} placeholder="Explain the final outcome." />
+                </label>
+              )}
+            </div>
+
+            <div className="mt-6 border-t border-border pt-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground"><History className="h-4 w-4" /> History</div>
+              {(workflowByStemId[selectedWorkflowRow?.Id]?.events || []).length ? (
+                <div className="space-y-2">
+                  {workflowByStemId[selectedWorkflowRow?.Id].events.map((event) => (
+                    <div key={event.id} className="rounded-md border border-border bg-muted/20 p-3 text-sm">
+                      <div className="flex justify-between gap-3"><span className="font-medium">{event.status} · {event.department}</span><span className="text-xs text-muted-foreground">{event.createdAt ? format(new Date(event.createdAt), 'dd MMM yyyy HH:mm') : ''}</span></div>
+                      <div className="mt-1 text-xs text-muted-foreground">{event.ownerName || 'Unassigned'} · {event.priority || '-'} · {event.actorEmail || '-'}</div>
+                      {event.note && <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{event.note}</p>}
+                    </div>
+                  ))}
+                </div>
+              ) : <StateBlock title="No workflow history" description="Save the first assignment or review note to begin the shared history." />}
+            </div>
+          </div>
+          <DialogFooter className="border-t border-border px-5 py-4">
+            <Button variant="outline" onClick={() => setSelectedWorkflowRow(null)} disabled={workflowSaving}>Cancel</Button>
+            <Button onClick={saveWorkflow} disabled={workflowSaving || ((workflowForm.status === 'Resolved' || workflowForm.status === 'Dismissed') && !workflowForm.resolutionNote.trim())} className="gap-2">
+              {workflowSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Update
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

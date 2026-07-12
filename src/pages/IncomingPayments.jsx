@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
-import { AlertTriangle, Banknote, Check, Eye, Loader2, Mail, Pencil, RefreshCw, Save, Search, Send, Settings2, ShieldCheck, WalletCards, X } from 'lucide-react';
+import { AlertTriangle, Banknote, Check, Eye, Loader2, Mail, Pencil, RefreshCw, Save, Search, Send, Settings2, WalletCards, X } from 'lucide-react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { appClient } from '@/api/appClient';
@@ -22,11 +22,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/lib/AuthContext';
 import { readPageState, writePageState } from '@/lib/pageStateCache';
-import { hasUsableSmtpSettings, readSmtpSettings, smtpFromAddress } from '@/lib/smtpSettings';
 import { cn } from '@/lib/utils';
 
 const PAGE_STATE_KEY = 'incoming-payments';
@@ -232,20 +230,6 @@ function saveInterestEmailSettings(settings) {
   localStorage.setItem(INTEREST_EMAIL_SETTINGS_KEY, JSON.stringify({ ...DEFAULT_INTEREST_EMAIL_SETTINGS, ...settings }));
 }
 
-function incomingPaymentSmtpCredentials(from) {
-  const internalSettings = readSmtpSettings();
-  if (hasUsableSmtpSettings(internalSettings)) {
-    return {
-      label: 'Internal',
-      credentials: {
-        method: 'smtp',
-        smtp: { ...internalSettings, port: Number(internalSettings.port || 587), from: smtpFromAddress(internalSettings, from) },
-      },
-    };
-  }
-  return { label: '', credentials: undefined };
-}
-
 function escapeInterestHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -412,9 +396,6 @@ export default function IncomingPayments() {
   const [error, setError] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [allocationTarget, setAllocationTarget] = useState(null);
-  const [allocationDraft, setAllocationDraft] = useState({ targetStem: '', amount: '', note: '' });
-  const [allocationLoading, setAllocationLoading] = useState(false);
   const [selectedStemId, setSelectedStemId] = useState(readUrlStemId);
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailStep, setEmailStep] = useState(0);
@@ -540,13 +521,6 @@ export default function IncomingPayments() {
     }
     setInterestRequestLoading((prev) => ({ ...prev, [paymentId]: true }));
     try {
-      const delivery = incomingPaymentSmtpCredentials(emailSettings.from || DEFAULT_EMAIL_SETTINGS.from);
-      if (!delivery.credentials) {
-        toast({
-          title: 'Using server email sender',
-          description: 'No Internal SMTP sender is saved in this browser. The request will use the server SMTP setting in Vercel.',
-        });
-      }
       const res = await appClient.functions.invoke('incomingPaymentInterestInvoiceRequest', {
         paymentId,
         paymentName: row.paymentName || row.paymentDisplayName || row.salesforcePaymentName,
@@ -565,7 +539,6 @@ export default function IncomingPayments() {
         from: emailSettings.from || DEFAULT_EMAIL_SETTINGS.from,
         template: readInterestEmailSettings(),
         appUrl: window.location.origin,
-        credentials: delivery.credentials,
         force: forceResend,
       });
       if (res.data?.error) {
@@ -573,10 +546,9 @@ export default function IncomingPayments() {
         return;
       }
       markInterestInvoiceRequested(paymentId, res.data?.notification || null);
-      const senderNote = delivery.label ? ` using ${delivery.label}` : '';
       toast({
         title: res.data?.resent ? 'Interest invoice request sent again' : 'Interest invoice request sent',
-        description: `Louisa and your email have been notified${senderNote}.`,
+        description: res.data?.trackingWarning || 'Louisa and your email have been notified through the shared server sender.',
       });
     } catch (error) {
       toast({
@@ -750,26 +722,6 @@ export default function IncomingPayments() {
       headerClassName: 'text-right',
       cellClassName: 'whitespace-nowrap text-right font-semibold text-violet-700',
       cell: (group) => fmtMoney(group.totalAvailableBalance),
-    },
-    {
-      id: 'action',
-      header: 'Action',
-      headerClassName: 'text-right',
-      cellClassName: 'text-right',
-      cell: (group) => (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={(event) => {
-            event.stopPropagation();
-            setAllocationTarget(group);
-            setAllocationDraft({ targetStem: '', amount: String(group.totalAvailableBalance || ''), note: '' });
-          }}
-        >
-          <ShieldCheck className="mr-2 h-4 w-4" />
-          Allocate
-        </Button>
-      ),
     },
   ], []);
 
@@ -958,13 +910,11 @@ export default function IncomingPayments() {
     setEmailError('');
     setEmailMessage('');
     try {
-      const delivery = preview ? { credentials: undefined, label: '' } : incomingPaymentSmtpCredentials(emailSettings.from);
       const res = await appClient.functions.invoke('incomingPaymentEmailReport', {
         dateFrom,
         dateTo,
         search,
         settings: { ...emailSettings, appUrl: window.location.origin },
-        credentials: delivery.credentials,
         preview,
       });
       if (res.data?.error) {
@@ -979,9 +929,8 @@ export default function IncomingPayments() {
         setEmailMessage(`Preview ready: ${res.data.report?.receivableRows ?? 0} receivable payments and ${res.data.report?.buyerCiaRows ?? 0} Buyer CIA invoices.`);
       } else {
         setEmailPreview(res.data.email || null);
-        const senderNote = delivery.label ? ` using ${delivery.label}` : '';
-        setEmailMessage(`Sent Incoming Payment report to ${res.data.to?.join(', ') || emailSettings.to}${senderNote}.`);
-        toast({ title: 'Incoming Payment report sent', description: `Sent to ${res.data.to?.join(', ') || emailSettings.to}${senderNote}.` });
+        setEmailMessage(`Sent Incoming Payment report to ${res.data.to?.join(', ') || emailSettings.to} through the shared server sender.`);
+        toast({ title: 'Incoming Payment report sent', description: `Sent to ${res.data.to?.join(', ') || emailSettings.to}.` });
       }
     } catch (error) {
       const message = error?.message || 'Unexpected error while sending Incoming Payment report.';
@@ -1014,24 +963,6 @@ export default function IncomingPayments() {
 
   const goNextEmailStep = () => goEmailStep(emailStep + 1);
   const goBackEmailStep = () => goEmailStep(emailStep - 1);
-
-  const confirmAllocation = async () => {
-    if (!allocationTarget) return;
-    setAllocationLoading(true);
-    const res = await appClient.functions.invoke('incomingPaymentAllocationConfirm', {
-      buyerGroupName: allocationTarget.buyerGroupName,
-      targetStem: allocationDraft.targetStem,
-      amount: allocationDraft.amount,
-      note: allocationDraft.note,
-    });
-    setAllocationLoading(false);
-    if (res.data?.error) {
-      toast({ title: 'Salesforce write-back not enabled', description: res.data.error, variant: 'destructive' });
-      return;
-    }
-    toast({ title: 'Allocation confirmed' });
-    setAllocationTarget(null);
-  };
 
   return (
     <div className="min-h-screen bg-background px-4 py-5 md:px-6">
@@ -1224,49 +1155,6 @@ export default function IncomingPayments() {
             <Button onClick={saveSettings} disabled={!isAdministrator || savingSettings}>
               {savingSettings && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={Boolean(allocationTarget)} onOpenChange={(open) => !open && setAllocationTarget(null)}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Allocate Available Balance</DialogTitle>
-            <DialogDescription>
-              Available balances can only be assigned within the same buyer group. Salesforce write-back still requires confirmation of the target allocation object/fields.
-            </DialogDescription>
-          </DialogHeader>
-          {allocationTarget && (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-border bg-muted/40 p-3 text-sm">
-                <div className="font-medium">{allocationTarget.buyerGroupName}</div>
-                <div className="text-muted-foreground">Available: {fmtMoney(allocationTarget.totalAvailableBalance)}</div>
-              </div>
-              <div>
-                <Label>Target STEM</Label>
-                <Input value={allocationDraft.targetStem} onChange={(event) => setAllocationDraft((prev) => ({ ...prev, targetStem: event.target.value }))} placeholder="Enter target STEM name or key" />
-              </div>
-              <div>
-                <Label>Amount to allocate</Label>
-                <Input type="number" step="0.01" value={allocationDraft.amount} onChange={(event) => setAllocationDraft((prev) => ({ ...prev, amount: event.target.value }))} />
-              </div>
-              <div>
-                <Label>Approval note</Label>
-                <Textarea value={allocationDraft.note} onChange={(event) => setAllocationDraft((prev) => ({ ...prev, note: event.target.value }))} placeholder="Optional approval note" />
-              </div>
-              {!isAdministrator && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  Only administrators can confirm Salesforce write-back.
-                </div>
-              )}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAllocationTarget(null)}>Cancel</Button>
-            <Button onClick={confirmAllocation} disabled={!isAdministrator || allocationLoading}>
-              {allocationLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Confirm Write-back
             </Button>
           </DialogFooter>
         </DialogContent>

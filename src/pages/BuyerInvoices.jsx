@@ -20,11 +20,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  hasUsableSmtpSettings,
-  readSmtpSettings,
-  smtpFromAddress,
-} from '@/lib/smtpSettings';
 import { numericValue, textValue } from '@/lib/displayValue';
 import { cn } from '@/lib/utils';
 import { clearDraft, readDraft, sameDraftValue, useDraftAutosave } from '@/lib/draftAutosave';
@@ -771,6 +766,7 @@ function CollectionModal({ row, open, onClose, onSaved, ownerOptions = [] }) {
     const res = await appClient.functions.invoke('buyerInvoiceCollectionSave', {
       stemId: row.stemId,
       updates: form,
+      expectedUpdatedAt: row.collection?.updatedAt || null,
     });
     if (res.data?.error) {
       setError(res.data.error);
@@ -890,7 +886,7 @@ function CollectionModal({ row, open, onClose, onSaved, ownerOptions = [] }) {
   );
 }
 
-function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
+function PaymentReminderModal({ row, open, daysAhead, canManageSettings, onClose, onSent }) {
   const draftKey = row?.stemId ? `buyer-invoices:payment-reminder:${row.stemId}:${daysAhead}` : null;
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -1553,7 +1549,7 @@ function PaymentReminderModal({ row, open, daysAhead, onClose, onSent }) {
               )}
             </div>
             <div className="flex flex-wrap justify-end gap-2">
-              {data && currentStep === PAYMENT_REMINDER_STEPS.length - 1 && (
+              {canManageSettings && data && currentStep === PAYMENT_REMINDER_STEPS.length - 1 && (
                 !templateEditing ? (
                   <Button type="button" variant="outline" onClick={() => setTemplateEditing(true)} disabled={sending} className="gap-2">
                     <Mail className="h-4 w-4" />
@@ -1709,6 +1705,7 @@ export default function BuyerInvoices() {
   const [savedEmailSettings, setSavedEmailSettings] = useState(readLegacyEmailSettings);
   const [emailSettings, setEmailSettings] = useState(savedEmailSettings);
   const [emailMeta, setEmailMeta] = useState(null);
+  const [canManageEmailSettings, setCanManageEmailSettings] = useState(false);
   const [emailLoading, setEmailLoading] = useState(true);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailAction, setEmailAction] = useState('');
@@ -1730,7 +1727,7 @@ export default function BuyerInvoices() {
 
   const emailDirty = useMemo(() => !sameSettings(emailSettings, savedEmailSettings), [emailSettings, savedEmailSettings]);
   useDraftAutosave('buyer-invoices:email-settings', emailSettings, {
-    enabled: !emailLoading,
+    enabled: canManageEmailSettings && !emailLoading,
     dirty: emailDirty,
     message: 'Autosaved internal email reminder/template draft. Save or discard it before leaving.',
   });
@@ -1823,6 +1820,7 @@ export default function BuyerInvoices() {
       setEmailSettings(nextSettings);
       setEmailDraftRestoredAt(draft?.data && !sameSettings(nextSettings, formSettings) ? draft.updatedAt : null);
       setEmailMeta(res.data.meta || null);
+      setCanManageEmailSettings(res.data.capabilities?.canManageSettings === true);
       setEmailError(null);
     }
     setEmailLoading(false);
@@ -1976,11 +1974,7 @@ export default function BuyerInvoices() {
     setEmailAction(preview ? 'preview' : 'send');
     setEmailError(null);
     setEmailMessage(null);
-    const smtpSettings = readSmtpSettings();
-    const credentials = hasUsableSmtpSettings(smtpSettings) && !preview
-      ? { method: 'smtp', smtp: { ...smtpSettings, port: Number(smtpSettings.port || 587), from: smtpFromAddress(smtpSettings, emailSettings.from) } }
-      : undefined;
-    const res = await appClient.functions.invoke('outstandingBuyerInvoicesEmailReport', { settings: settingsForServer(), credentials, preview, force: !preview });
+    const res = await appClient.functions.invoke('outstandingBuyerInvoicesEmailReport', { settings: settingsForServer(), preview, force: !preview });
     if (res.data?.error) {
       setEmailError(res.data.error);
     } else if (preview) {
@@ -2290,7 +2284,7 @@ export default function BuyerInvoices() {
                 </div>
 
                 <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground">
-                  Send Now uses the Internal SMTP credentials from Settings when available. Scheduled production email uses server-side SMTP environment variables.
+                  Send Now and scheduled reports use the same shared server sender. Template and schedule changes are restricted to authorized managers.
                 </div>
 
                 {emailMessage && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailMessage}</div>}
@@ -2326,7 +2320,7 @@ export default function BuyerInvoices() {
             </div>
 
             <div className="shrink-0 flex flex-wrap justify-end gap-2 border-t border-border p-4">
-              {!internalEmailEditing ? (
+              {canManageEmailSettings && (!internalEmailEditing ? (
                 <Button variant="outline" onClick={() => setInternalEmailEditing(true)} disabled={emailBusy || emailLoading} className="gap-2">
                   <Mail className="h-4 w-4" /> Edit Template
                 </Button>
@@ -2339,7 +2333,7 @@ export default function BuyerInvoices() {
                     {emailBusy && emailAction !== 'send' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Template
                   </Button>
                 </>
-              )}
+              ))}
               <Button variant="outline" onClick={closeInternalEmailReminder} disabled={emailBusy}>Close</Button>
               <Button onClick={() => sendEmailReport(false)} disabled={emailBusy || emailLoading} className="gap-2">
                 {emailAction === 'send' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -2507,6 +2501,7 @@ export default function BuyerInvoices() {
         row={selectedReminderRow}
         open={!!selectedReminderRow}
         daysAhead={Math.max(0, Math.min(Number(daysAhead) || 0, 365))}
+        canManageSettings={canManageEmailSettings}
         onClose={() => setSelectedReminderRow(null)}
         onSent={handleReminderSent}
       />

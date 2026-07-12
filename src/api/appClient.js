@@ -1,6 +1,7 @@
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient';
 
 const STORAGE_PREFIX = 'fcos';
+const DEFAULT_FUNCTION_CACHE_TTL_MS = 30_000;
 const functionResponseCache = new Map();
 
 const storage = {
@@ -91,10 +92,14 @@ async function invoke(name, payload = {}, options = {}) {
   const cacheKey = options.cacheKey || (options.cache ? functionCacheKey(name, payload) : null);
   if (cacheKey && !options.force && functionResponseCache.has(cacheKey)) {
     const cached = functionResponseCache.get(cacheKey);
-    return {
-      data: cloneJson(cached.data),
-      meta: { cached: true, cachedAt: cached.updatedAt },
-    };
+    const ttlMs = Math.max(0, Number(options.cacheTtlMs ?? DEFAULT_FUNCTION_CACHE_TTL_MS));
+    if (Date.now() - cached.cachedAtMs <= ttlMs) {
+      return {
+        data: cloneJson(cached.data),
+        meta: { cached: true, cachedAt: cached.updatedAt },
+      };
+    }
+    functionResponseCache.delete(cacheKey);
   }
 
   const headers = { 'content-type': 'application/json' };
@@ -120,7 +125,7 @@ async function invoke(name, payload = {}, options = {}) {
 
   const fetchedAt = now();
   if (cacheKey) {
-    functionResponseCache.set(cacheKey, { data: cloneJson(data), updatedAt: fetchedAt });
+    functionResponseCache.set(cacheKey, { data: cloneJson(data), updatedAt: fetchedAt, cachedAtMs: Date.now() });
   }
 
   return { data, meta: cacheKey ? { cached: false, cachedAt: fetchedAt } : undefined };
@@ -150,6 +155,7 @@ export const appClient = {
       };
     },
     async logout() {
+      clearFunctionCache();
       if (isSupabaseConfigured) await supabase.auth.signOut();
     },
     redirectToLogin() {},

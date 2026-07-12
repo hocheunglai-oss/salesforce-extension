@@ -44,6 +44,14 @@ const ADMIN_APP_MODULES = [
 
 const ADMIN_MODULE_IDS = new Set(ADMIN_APP_MODULES.map((module) => module.id));
 const ADMIN_FULL_ACCESS = Object.fromEntries(ADMIN_APP_MODULES.map((module) => [module.id, true]));
+const ADMIN_CAPABILITIES = [
+  { id: 'disputes_approve', label: 'Approve Dispute Instructions', description: 'Approve, reject, or return trader dispute instructions.' },
+  { id: 'disputes_account', label: 'Settle and Close Disputes', description: 'Record payment instructions, final settlement, and case closure.' },
+  { id: 'buyer_invoices_manage', label: 'Manage Buyer Invoice Settings', description: 'Change the shared internal report schedule and template.' },
+  { id: 'cashflow_forecast_manage', label: 'Manage Cashflow Settings', description: 'Change forecast assumptions and blocked dates.' },
+];
+const ADMIN_CAPABILITY_IDS = new Set(ADMIN_CAPABILITIES.map((capability) => capability.id));
+const ADMIN_FULL_CAPABILITIES = Object.fromEntries(ADMIN_CAPABILITIES.map((capability) => [capability.id, true]));
 const REPORT_ARCHIVE_MODULE_ID = 'report_archive';
 const REPORT_ARCHIVE_MANAGE_MODULE_ID = 'report_archive_manage';
 const DEFAULT_USER_TYPES = [
@@ -61,6 +69,14 @@ const FALLBACK_TYPE_PERMISSIONS = {
   operations: { dashboard: true, review: true, disputes: true, buyer_invoices: false, incoming_payments: true, cashflow_forecast: false, pnl: true, brokers: false, report_archive: false, settings: false, admin: false },
   interoffice: { dashboard: true, review: true, disputes: true, buyer_invoices: true, incoming_payments: true, cashflow_forecast: true, pnl: true, brokers: true, report_archive: false, settings: false, admin: false },
   viewer: { dashboard: true, review: false, disputes: false, buyer_invoices: false, incoming_payments: true, cashflow_forecast: false, pnl: false, brokers: false, report_archive: false, settings: false, admin: false },
+};
+const FALLBACK_TYPE_CAPABILITIES = {
+  administrator: ADMIN_FULL_CAPABILITIES,
+  manager: { disputes_approve: true, disputes_account: false, buyer_invoices_manage: true, cashflow_forecast_manage: true },
+  finance: { disputes_approve: false, disputes_account: true, buyer_invoices_manage: true, cashflow_forecast_manage: true },
+  operations: { disputes_approve: false, disputes_account: false, buyer_invoices_manage: false, cashflow_forecast_manage: false },
+  interoffice: { disputes_approve: false, disputes_account: false, buyer_invoices_manage: false, cashflow_forecast_manage: false },
+  viewer: { disputes_approve: false, disputes_account: false, buyer_invoices_manage: false, cashflow_forecast_manage: false },
 };
 const INTEROFFICE_USER_TYPE_ID = 'interoffice';
 const INTEROFFICE_EXCLUDED_BUYER_GROUP = 'FRATELLI COSULICH';
@@ -228,6 +244,17 @@ function normalizeUserTypePermissions(userTypeId, permissions = {}) {
   return normalized;
 }
 
+function normalizeCapabilities(userTypeId, capabilities = {}) {
+  if (userTypeId === 'administrator') return ADMIN_FULL_CAPABILITIES;
+  const fallback = FALLBACK_TYPE_CAPABILITIES[userTypeId] || {};
+  return Object.fromEntries(ADMIN_CAPABILITIES.map((capability) => [
+    capability.id,
+    Object.prototype.hasOwnProperty.call(capabilities, capability.id)
+      ? capabilities[capability.id] === true
+      : fallback[capability.id] === true,
+  ]));
+}
+
 async function listAccessModel(client) {
   const [typesRes, permissionsRes] = await Promise.all([
     client
@@ -250,10 +277,16 @@ async function listAccessModel(client) {
     sort_order: Number(type.sort_order ?? 100),
   }));
   const typePermissions = Object.fromEntries(userTypes.map((type) => [type.id, normalizeUserTypePermissions(type.id)]));
+  const typeCapabilities = Object.fromEntries(userTypes.map((type) => [type.id, normalizeCapabilities(type.id)]));
   const manageRowsByType = {};
   for (const row of permissionsRes.data || []) {
     if (row.module_id === REPORT_ARCHIVE_MANAGE_MODULE_ID) {
       manageRowsByType[row.user_type_id] = row.can_view === true;
+      continue;
+    }
+    if (ADMIN_CAPABILITY_IDS.has(row.module_id)) {
+      if (!typeCapabilities[row.user_type_id]) typeCapabilities[row.user_type_id] = normalizeCapabilities(row.user_type_id);
+      typeCapabilities[row.user_type_id][row.module_id] = row.can_view === true;
       continue;
     }
     if (!ADMIN_MODULE_IDS.has(row.module_id)) continue;
@@ -267,8 +300,9 @@ async function listAccessModel(client) {
         : 'full';
     }
     typePermissions[type.id] = normalizeUserTypePermissions(type.id, typePermissions[type.id]);
+    typeCapabilities[type.id] = normalizeCapabilities(type.id, typeCapabilities[type.id]);
   }
-  return { userTypes, typePermissions };
+  return { userTypes, typePermissions, typeCapabilities };
 }
 
 const AUTH_EXEMPT_HANDLERS = new Set([
@@ -283,6 +317,8 @@ const HANDLER_MODULE_ACCESS = {
   salesforceStemDetail: ['dashboard', 'review', 'disputes', 'buyer_invoices', 'cashflow_forecast', 'pnl', 'brokers'],
   salesforceStemDocuments: ['dashboard', 'review', 'disputes', 'buyer_invoices', 'cashflow_forecast', 'pnl', 'brokers'],
   salesforceDocumentDownload: ['dashboard', 'review', 'disputes', 'buyer_invoices', 'pnl', 'brokers'],
+  exceptionReviewWorkflowList: ['review'],
+  exceptionReviewWorkflowSave: ['review'],
   salesforceDisputeStems: ['disputes'],
   disputeBetaList: ['disputes'],
   disputeBetaSaveDraft: ['disputes'],
@@ -367,10 +403,41 @@ async function userHasAnyModuleAccess(client, profile, moduleIds) {
     .eq('user_type_id', profile.user_type)
     .in('module_id', validModuleIds);
   if (error) throw error;
-  if ((data || []).some((row) => row.can_view === true)) return true;
+  if ((data || []).length) return (data || []).some((row) => row.can_view === true);
 
   const fallback = FALLBACK_TYPE_PERMISSIONS[profile?.user_type] || {};
   return validModuleIds.some((moduleId) => fallback[moduleId] === true);
+}
+
+async function userHasCapability(client, profile, capabilityId) {
+  if (!ADMIN_CAPABILITY_IDS.has(capabilityId)) return false;
+  if (profile?.user_type === 'administrator') return true;
+
+  const { data: userPermission, error: userError } = await client
+    .from('user_module_permissions')
+    .select('can_view')
+    .eq('user_id', profile?.id)
+    .eq('module_id', capabilityId)
+    .maybeSingle();
+  if (userError) throw userError;
+  if (userPermission) return userPermission.can_view === true;
+
+  const { data: typePermission, error: typeError } = await client
+    .from('user_type_module_permissions')
+    .select('can_view')
+    .eq('user_type_id', profile?.user_type)
+    .eq('module_id', capabilityId)
+    .maybeSingle();
+  if (typeError) throw typeError;
+  if (typePermission) return typePermission.can_view === true;
+
+  return FALLBACK_TYPE_CAPABILITIES[profile?.user_type]?.[capabilityId] === true;
+}
+
+async function requireCapability(client, profile, capabilityId, message) {
+  if (!await userHasCapability(client, profile, capabilityId)) {
+    throw appError(message || 'You do not have permission for this action.', 403);
+  }
 }
 
 async function reportArchiveAccessForUser(client, profile) {
@@ -463,10 +530,147 @@ async function requireHandlerAccess(name, req) {
   return context;
 }
 
+const EXCEPTION_REVIEW_STATUSES = ['Open', 'Acknowledged', 'In Progress', 'Resolved', 'Dismissed'];
+const EXCEPTION_REVIEW_DEPARTMENTS = ['Unassigned', 'Trading', 'Operations', 'Accounting', 'Management'];
+const EXCEPTION_REVIEW_PRIORITIES = ['High', 'Medium', 'Low'];
+
+function serializeExceptionReviewItem(row) {
+  if (!row) return null;
+  return {
+    stemId: row.stem_id,
+    status: row.status,
+    department: row.department,
+    ownerUserId: row.owner_user_id || null,
+    ownerName: row.owner_name || '',
+    priority: row.priority,
+    dueDate: row.due_date || null,
+    latestNote: row.latest_note || '',
+    resolutionNote: row.resolution_note || '',
+    lastEventAt: row.last_event_at || null,
+    lastUpdatedByEmail: row.last_updated_by_email || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function serializeExceptionReviewEvent(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    stemId: row.stem_id,
+    eventType: row.event_type,
+    status: row.status || null,
+    department: row.department || null,
+    ownerName: row.owner_name || '',
+    priority: row.priority || null,
+    dueDate: row.due_date || null,
+    note: row.note || '',
+    actorEmail: row.actor_email || null,
+    createdAt: row.created_at || null,
+  };
+}
+
+async function exceptionReviewWorkflowList(body = {}, req = null, accessContext = null) {
+  const context = accessContext || await requireActiveUser(req);
+  const { client } = context;
+  const stemIds = [...new Set((Array.isArray(body.stemIds) ? body.stemIds : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))].slice(0, 500);
+  await Promise.all(stemIds.map((stemId) => requireInterofficeStemAccess(stemId, context)));
+
+  const [itemsResult, eventsResult, ownersResult] = await Promise.all([
+    stemIds.length
+      ? client.from('exception_review_items').select('*').in('stem_id', stemIds)
+      : Promise.resolve({ data: [], error: null }),
+    stemIds.length
+      ? client.from('exception_review_events').select('*').in('stem_id', stemIds).order('created_at', { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
+    client.from('user_profiles').select('id,email,full_name,user_type').eq('active', true).order('full_name'),
+  ]);
+  if (itemsResult.error) throw itemsResult.error;
+  if (eventsResult.error) throw eventsResult.error;
+  if (ownersResult.error) throw ownersResult.error;
+
+  const eventsByStem = {};
+  for (const row of eventsResult.data || []) {
+    if (!eventsByStem[row.stem_id]) eventsByStem[row.stem_id] = [];
+    eventsByStem[row.stem_id].push(serializeExceptionReviewEvent(row));
+  }
+  const byStemId = Object.fromEntries((itemsResult.data || []).map((row) => [row.stem_id, {
+    ...serializeExceptionReviewItem(row),
+    events: eventsByStem[row.stem_id] || [],
+  }]));
+  return {
+    byStemId,
+    ownerOptions: (ownersResult.data || []).map((owner) => ({
+      id: owner.id,
+      name: owner.full_name || owner.email,
+      email: owner.email,
+      userType: owner.user_type,
+    })),
+    statuses: EXCEPTION_REVIEW_STATUSES,
+    departments: EXCEPTION_REVIEW_DEPARTMENTS,
+    priorities: EXCEPTION_REVIEW_PRIORITIES,
+  };
+}
+
+async function exceptionReviewWorkflowSave(body = {}, req = null, accessContext = null) {
+  const context = accessContext || await requireActiveUser(req);
+  const { client, profile } = context;
+  const stemId = String(body.stemId || '').trim();
+  if (!stemId) throw appError('STEM is required.', 400);
+  await requireInterofficeStemAccess(stemId, context);
+  const status = EXCEPTION_REVIEW_STATUSES.includes(body.status) ? body.status : 'Open';
+  const department = EXCEPTION_REVIEW_DEPARTMENTS.includes(body.department) ? body.department : 'Unassigned';
+  const priority = EXCEPTION_REVIEW_PRIORITIES.includes(body.priority) ? body.priority : 'High';
+  const ownerUserId = String(body.ownerUserId || '').trim() || null;
+  let ownerName = '';
+  if (ownerUserId) {
+    const { data: owner, error: ownerError } = await client
+      .from('user_profiles')
+      .select('id,email,full_name,active')
+      .eq('id', ownerUserId)
+      .eq('active', true)
+      .maybeSingle();
+    if (ownerError) throw ownerError;
+    if (!owner) throw appError('The selected owner is no longer active.', 400);
+    ownerName = owner.full_name || owner.email;
+  }
+  const latestNote = String(body.latestNote || '').trim();
+  const resolutionNote = String(body.resolutionNote || '').trim();
+  if ((status === 'Resolved' || status === 'Dismissed') && !resolutionNote) {
+    throw appError('A resolution note is required before resolving or dismissing an exception.', 400);
+  }
+  const { data, error } = await client.rpc('save_exception_review_item', {
+    p_stem_id: stemId,
+    p_updates: {
+      status,
+      department,
+      owner_user_id: ownerUserId,
+      owner_name: ownerName,
+      priority,
+      due_date: body.dueDate || null,
+      latest_note: latestNote,
+      resolution_note: resolutionNote,
+    },
+    p_actor_user_id: profile.id,
+    p_actor_email: profile.email,
+    p_expected_updated_at: body.expectedUpdatedAt || null,
+  });
+  if (error) {
+    if (/changed after it was opened/i.test(error.message || '')) throw appError(error.message, 409);
+    throw error;
+  }
+  return {
+    item: serializeExceptionReviewItem(data?.item),
+    event: serializeExceptionReviewEvent(data?.event),
+  };
+}
+
 async function sanitizeManagedUserPayload(client, body = {}) {
   const email = String(body.email || '').trim().toLowerCase();
   const fullName = String(body.full_name || body.fullName || '').trim();
-  const { userTypes, typePermissions } = await listAccessModel(client);
+  const { userTypes, typePermissions, typeCapabilities } = await listAccessModel(client);
   const typeIds = new Set(userTypes.map((type) => type.id));
   const userType = typeIds.has(body.user_type) ? body.user_type : 'viewer';
   const active = body.active !== false;
@@ -489,6 +693,9 @@ async function sanitizeManagedUserPayload(client, body = {}) {
     permissions: useTypeDefaults
       ? normalizePermissions(userType, typePermissions[userType] || {})
       : normalizePermissions(userType, body.permissions || {}),
+    capabilities: useTypeDefaults
+      ? normalizeCapabilities(userType, typeCapabilities[userType] || {})
+      : normalizeCapabilities(userType, body.capabilities || {}),
   };
 }
 
@@ -605,6 +812,12 @@ async function persistManagedUser(client, body, actor = null) {
       can_view: reportArchiveAccessLevel(payload.permissions[REPORT_ARCHIVE_MODULE_ID]) === 'full',
       updated_at: nowIso,
     });
+    permissionRows.push(...ADMIN_CAPABILITIES.map((capability) => ({
+      user_id: authUser.id,
+      module_id: capability.id,
+      can_view: payload.capabilities[capability.id] === true,
+      updated_at: nowIso,
+    })));
     const { error: insertPermissionError } = await client
       .from('user_module_permissions')
       .insert(permissionRows);
@@ -621,6 +834,7 @@ async function persistManagedUser(client, body, actor = null) {
     access_levels: {
       [REPORT_ARCHIVE_MODULE_ID]: reportArchiveAccessLevel(payload.permissions[REPORT_ARCHIVE_MODULE_ID]),
     },
+    capabilities: Object.entries(payload.capabilities).filter(([, allowed]) => allowed).map(([id]) => id),
   });
 
   return {
@@ -631,12 +845,13 @@ async function persistManagedUser(client, body, actor = null) {
     active: payload.active,
     use_type_defaults: payload.use_type_defaults,
     permissions: payload.permissions,
+    capabilities: payload.capabilities,
   };
 }
 
 async function adminUsersList(body, req) {
   const { client } = await requireAdministrator(req);
-  const { userTypes, typePermissions } = await listAccessModel(client);
+  const { userTypes, typePermissions, typeCapabilities } = await listAccessModel(client);
   const { data: profiles, error: profileError } = await client
     .from('user_profiles')
     .select('id,email,full_name,user_type,active,use_type_defaults,created_at,updated_at')
@@ -655,10 +870,16 @@ async function adminUsersList(body, req) {
   }
 
   const permissionsByUser = {};
+  const capabilitiesByUser = {};
   const manageRowsByUser = {};
   for (const row of permissionRows) {
     if (row.module_id === REPORT_ARCHIVE_MANAGE_MODULE_ID) {
       manageRowsByUser[row.user_id] = row.can_view === true;
+      continue;
+    }
+    if (ADMIN_CAPABILITY_IDS.has(row.module_id)) {
+      if (!capabilitiesByUser[row.user_id]) capabilitiesByUser[row.user_id] = {};
+      capabilitiesByUser[row.user_id][row.module_id] = row.can_view === true;
       continue;
     }
     if (!ADMIN_MODULE_IDS.has(row.module_id)) continue;
@@ -682,8 +903,13 @@ async function adminUsersList(body, req) {
       : profile.use_type_defaults !== false
         ? normalizePermissions(profile.user_type, typePermissions[profile.user_type] || {})
         : normalizePermissions(profile.user_type, permissionsByUser[profile.id] || {}),
+    capabilities: profile.user_type === 'administrator'
+      ? ADMIN_FULL_CAPABILITIES
+      : profile.use_type_defaults !== false
+        ? normalizeCapabilities(profile.user_type, typeCapabilities[profile.user_type] || {})
+        : normalizeCapabilities(profile.user_type, capabilitiesByUser[profile.id] || {}),
   }));
-  return { users, modules: ADMIN_APP_MODULES, userTypes, typePermissions };
+  return { users, modules: ADMIN_APP_MODULES, capabilities: ADMIN_CAPABILITIES, userTypes, typePermissions, typeCapabilities };
 }
 
 async function adminAuditLogs(body, req) {
@@ -927,6 +1153,7 @@ async function adminUserTypeSave(body, req) {
   if (typeError) throw typeError;
 
   const permissions = normalizeUserTypePermissions(id, body.permissions || {});
+  const capabilities = normalizeCapabilities(id, body.capabilities || {});
   await ensureReportArchiveManageModule(client);
   const { error: deletePermissionError } = await client
     .from('user_type_module_permissions')
@@ -948,6 +1175,12 @@ async function adminUserTypeSave(body, req) {
         can_view: reportArchiveAccessLevel(permissions[REPORT_ARCHIVE_MODULE_ID]) === 'full',
         updated_at: new Date().toISOString(),
       },
+      ...ADMIN_CAPABILITIES.map((capability) => ({
+        user_type_id: id,
+        module_id: capability.id,
+        can_view: capabilities[capability.id] === true,
+        updated_at: new Date().toISOString(),
+      })),
     ]);
   if (insertPermissionError) throw insertPermissionError;
 
@@ -959,9 +1192,10 @@ async function adminUserTypeSave(body, req) {
     access_levels: {
       [REPORT_ARCHIVE_MODULE_ID]: reportArchiveAccessLevel(permissions[REPORT_ARCHIVE_MODULE_ID]),
     },
+    capabilities: Object.entries(capabilities).filter(([, allowed]) => allowed).map(([capabilityId]) => capabilityId),
   });
 
-  return { userType: { ...userType, permissions } };
+  return { userType: { ...userType, permissions, capabilities } };
 }
 
 async function adminUserTypeDelete(body, req) {
@@ -1194,13 +1428,23 @@ async function googleDriveTrashFile(fileId) {
   return response.json();
 }
 
+async function googleDriveRestoreFile(fileId) {
+  const fields = encodeURIComponent('id,name,trashed,modifiedTime');
+  const response = await googleDriveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=${fields}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ trashed: false }),
+  });
+  return response.json();
+}
+
 async function googleDriveDownloadFile(fileId) {
   const response = await googleDriveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`);
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function reportExportCreate(body, req) {
-  const { client, profile } = await requireActiveUser(req);
+async function reportExportCreate(body, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const reportType = String(body.reportType || body.report_type || 'xls_report').trim().toLowerCase();
   const fileName = safeReportFileName(body.fileName || body.file_name);
   const mimeType = String(body.mimeType || body.mime_type || REPORT_EXPORT_MIME_TYPE);
@@ -1231,8 +1475,9 @@ async function reportExportCreate(body, req) {
     .single();
   if (insertError) throw insertError;
 
+  let driveFile = null;
   try {
-    const driveFile = await googleDriveUploadFile({ fileName, mimeType: REPORT_EXPORT_MIME_TYPE, buffer });
+    driveFile = await googleDriveUploadFile({ fileName, mimeType: REPORT_EXPORT_MIME_TYPE, buffer });
     const updatePayload = {
       drive_file_id: driveFile.id || null,
       drive_web_view_link: driveFile.webViewLink || null,
@@ -1255,6 +1500,11 @@ async function reportExportCreate(body, req) {
     return { report: serializeReportExport(updated, []) };
   } catch (error) {
     const message = error.message || 'Google Drive upload failed.';
+    if (driveFile?.id) {
+      await googleDriveTrashFile(driveFile.id).catch((cleanupError) => {
+        console.error('Failed to clean up orphaned Google Drive report', cleanupError.message);
+      });
+    }
     const { data: failed } = await client
       .from('report_exports')
       .update({
@@ -1275,8 +1525,8 @@ async function reportExportCreate(body, req) {
   }
 }
 
-async function reportExportsList(body, req) {
-  const { client } = await requireActiveUser(req);
+async function reportExportsList(body, req, accessContext = null) {
+  const { client } = accessContext || await requireActiveUser(req);
   const includeDeleted = body.includeDeleted === true || body.include_deleted === true;
   const limit = Math.max(10, Math.min(Number(body.limit) || 200, 500));
   let query = client
@@ -1322,8 +1572,8 @@ async function loadReportExportForAction(client, id) {
   return data;
 }
 
-async function reportExportRename(body, req) {
-  const { client, profile } = await requireActiveUser(req);
+async function reportExportRename(body, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
   await requireReportArchiveFullAccess(client, profile);
   const id = String(body.id || '').trim();
   if (!id) throw appError('Report export id is required.', 400);
@@ -1341,7 +1591,12 @@ async function reportExportRename(body, req) {
     .eq('id', id)
     .select(REPORT_EXPORT_SELECT)
     .single();
-  if (error) throw error;
+  if (error) {
+    await googleDriveRenameFile(current.drive_file_id, current.file_name).catch((rollbackError) => {
+      console.error('Failed to roll back Google Drive report rename', rollbackError.message);
+    });
+    throw error;
+  }
   await writeReportExportEvent(client, id, 'renamed', profile, {
     previousFileName: current.file_name,
     newFileName: updated.file_name,
@@ -1349,8 +1604,8 @@ async function reportExportRename(body, req) {
   return { report: serializeReportExport(updated, []) };
 }
 
-async function reportExportDelete(body, req) {
-  const { client, profile } = await requireActiveUser(req);
+async function reportExportDelete(body, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
   await requireReportArchiveFullAccess(client, profile);
   const id = String(body.id || '').trim();
   if (!id) throw appError('Report export id is required.', 400);
@@ -1369,7 +1624,12 @@ async function reportExportDelete(body, req) {
     .eq('id', id)
     .select(REPORT_EXPORT_SELECT)
     .single();
-  if (error) throw error;
+  if (error) {
+    await googleDriveRestoreFile(current.drive_file_id).catch((rollbackError) => {
+      console.error('Failed to restore Google Drive report after archive delete failure', rollbackError.message);
+    });
+    throw error;
+  }
   await writeReportExportEvent(client, id, 'deleted', profile, {
     previousFileName: current.file_name,
     metadata: { driveFileId: current.drive_file_id },
@@ -1377,8 +1637,8 @@ async function reportExportDelete(body, req) {
   return { report: serializeReportExport(updated, []) };
 }
 
-async function reportExportDownload(body, req) {
-  const { client, profile } = await requireActiveUser(req);
+async function reportExportDownload(body, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const id = String(body.id || '').trim();
   if (!id) throw appError('Report export id is required.', 400);
   const current = await loadReportExportForAction(client, id);
@@ -1395,8 +1655,8 @@ async function reportExportDownload(body, req) {
   };
 }
 
-async function buyerInvoiceCollectionList(body, req) {
-  const { client, profile } = await requireActiveUser(req);
+async function buyerInvoiceCollectionList(body, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const stemIds = Array.isArray(body.stemIds)
     ? body.stemIds.map((id) => String(id || '').trim()).filter(Boolean)
     : [];
@@ -1409,34 +1669,15 @@ async function buyerInvoiceCollectionList(body, req) {
   };
 }
 
-async function persistBuyerInvoiceCollection(body, req, eventOverride = null) {
-  const { client, profile } = await requireActiveUser(req);
+async function persistBuyerInvoiceCollection(body, req, eventOverride = null, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const stemId = String(body.stemId || body.stem_id || '').trim();
   if (!stemId) throw appError('stemId is required.', 400);
   await requireInterofficeStemAccess(stemId, { client, profile });
 
   const updates = normalizeCollectionUpdates(body.updates || body, profile);
-  const nowIso = new Date().toISOString();
-  const itemPayload = {
-    stem_id: stemId,
-    ...updates,
-    last_event_at: nowIso,
-    last_updated_by: profile.id,
-    last_updated_by_email: profile.email,
-    updated_at: nowIso,
-  };
-  if (!Object.prototype.hasOwnProperty.call(itemPayload, 'status')) itemPayload.status = 'Not Started';
-
-  const { data: item, error: itemError } = await client
-    .from('buyer_invoice_collection_items')
-    .upsert(itemPayload, { onConflict: 'stem_id' })
-    .select('stem_id,status,owner_user_id,owner_name,latest_note,next_follow_up_date,promised_payment_date,promised_amount,last_event_at,last_updated_by,last_updated_by_email,created_at,updated_at')
-    .single();
-  if (itemError) throw itemError;
-
   const eventInput = eventOverride || body.event || {};
   const eventPayload = {
-    stem_id: stemId,
     event_type: normalizeEventType(eventInput.eventType || eventInput.event_type || collectionEventTypeFromChanges(updates)),
     status: Object.prototype.hasOwnProperty.call(updates, 'status') ? updates.status : eventInput.status || null,
     owner_name: Object.prototype.hasOwnProperty.call(updates, 'owner_name') ? updates.owner_name : eventInput.ownerName || eventInput.owner_name || null,
@@ -1444,24 +1685,29 @@ async function persistBuyerInvoiceCollection(body, req, eventOverride = null) {
     next_follow_up_date: Object.prototype.hasOwnProperty.call(updates, 'next_follow_up_date') ? updates.next_follow_up_date : dateOrNull(eventInput.nextFollowUpDate || eventInput.next_follow_up_date),
     promised_payment_date: Object.prototype.hasOwnProperty.call(updates, 'promised_payment_date') ? updates.promised_payment_date : dateOrNull(eventInput.promisedPaymentDate || eventInput.promised_payment_date),
     promised_amount: Object.prototype.hasOwnProperty.call(updates, 'promised_amount') ? updates.promised_amount : decimalOrNull(eventInput.promisedAmount || eventInput.promised_amount),
-    actor_user_id: profile.id,
-    actor_email: profile.email,
   };
-  const { data: event, error: eventError } = await client
-    .from('buyer_invoice_collection_events')
-    .insert(eventPayload)
-    .select('id,stem_id,event_type,status,owner_name,note,next_follow_up_date,promised_payment_date,promised_amount,actor_user_id,actor_email,created_at')
-    .single();
-  if (eventError) throw eventError;
+  const expectedUpdatedAt = body.expectedUpdatedAt || body.expected_updated_at || null;
+  const { data, error } = await client.rpc('save_buyer_invoice_collection', {
+    p_stem_id: stemId,
+    p_updates: updates,
+    p_event: eventPayload,
+    p_actor_user_id: profile.id,
+    p_actor_email: profile.email,
+    p_expected_updated_at: expectedUpdatedAt,
+  });
+  if (error) throw error;
+  const item = data?.item;
+  const event = data?.event;
+  if (!item || !event) throw appError('Collection save did not return the updated workflow state.', 500);
 
   return { item: serializeCollectionItem(item), event: serializeCollectionEvent(event) };
 }
 
-async function buyerInvoiceCollectionSave(body, req) {
-  return persistBuyerInvoiceCollection(body, req);
+async function buyerInvoiceCollectionSave(body, req, accessContext = null) {
+  return persistBuyerInvoiceCollection(body, req, null, accessContext);
 }
 
-async function buyerInvoiceCollectionEventCreate(body, req) {
+async function buyerInvoiceCollectionEventCreate(body, req, accessContext = null) {
   const event = body.event || {};
   const updates = {};
   if (event.status) updates.status = event.status;
@@ -1476,7 +1722,7 @@ async function buyerInvoiceCollectionEventCreate(body, req) {
   if (Object.prototype.hasOwnProperty.call(event, 'promisedAmount') || Object.prototype.hasOwnProperty.call(event, 'promised_amount')) {
     updates.promisedAmount = event.promisedAmount ?? event.promised_amount;
   }
-  return persistBuyerInvoiceCollection({ ...body, updates }, req, event);
+  return persistBuyerInvoiceCollection({ ...body, updates }, req, event, accessContext);
 }
 
 async function salesforceSchema() {
@@ -1994,13 +2240,6 @@ const BUYER_INVOICE_COLLECTION_STATUSES = [
   'On Hold',
 ];
 const BUYER_INVOICE_EVENT_TYPES = ['update', 'status_change', 'note', 'follow_up', 'promise', 'owner_change'];
-const DISPUTE_BETA_ADMIN_EMAILS = new Set([
-  'vincent@cosulich.com.hk',
-  'vincent.lee@cosulich.com.hk',
-  'stanley@cosulich.com.hk',
-  'stanley.chui@cosulich.com.hk',
-]);
-const DISPUTE_BETA_ADMIN_NAMES = new Set(['vincent lee', 'stanley chui']);
 const DISPUTE_BETA_WORKFLOW_STATUSES = ['Draft', 'Pending Approval', 'Revision Requested', 'Rejected', 'Approved - Pending Accounting', 'Accounting In Progress', 'Settled - Ready to Close', 'Closed'];
 const DISPUTE_BETA_APPROVAL_STATUSES = ['Draft', 'Pending Approval', 'Approved', 'Rejected', 'Revision Requested'];
 const DISPUTE_BETA_EXECUTION_STATUSES = ['Pending Accounting', 'Instruction Issued', 'Settled', 'Not Required'];
@@ -4390,8 +4629,8 @@ async function loadIncomingPaymentSettings() {
   return serializeIncomingPaymentSettings(data);
 }
 
-async function incomingPaymentSettingsGet(body, req) {
-  await requireActiveUser(req);
+async function incomingPaymentSettingsGet(body, req, accessContext = null) {
+  if (!accessContext) await requireActiveUser(req);
   return { settings: await loadIncomingPaymentSettings() };
 }
 
@@ -5133,6 +5372,9 @@ async function cashflowForecast(body, req = null, accessContext = null) {
       return String(a.counterparty || '').localeCompare(String(b.counterparty || ''));
     });
   const summary = cashflowSummarizeRows(rows, bucket);
+  const canManageSettings = accessContext
+    ? await userHasCapability(accessContext.client, accessContext.profile, 'cashflow_forecast_manage')
+    : false;
   return {
     dateFrom,
     dateTo,
@@ -5147,6 +5389,7 @@ async function cashflowForecast(body, req = null, accessContext = null) {
     holidayOverrides: holidayData.overrides,
     holidaySourceStatus: holidayData.statuses,
     warnings: [...new Set(warnings.filter(Boolean))],
+    capabilities: { canManageSettings },
   };
 }
 
@@ -5166,8 +5409,8 @@ async function cashflowBuyerPaymentPerformance(body, req = null, accessContext =
   };
 }
 
-async function cashflowSettingsGet(body, req) {
-  await requireActiveUser(req);
+async function cashflowSettingsGet(body, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const today = dateOnly(new Date());
   const settings = await loadCashflowSettings();
   const years = Array.isArray(body.years) && body.years.length
@@ -5178,11 +5421,13 @@ async function cashflowSettingsGet(body, req) {
     settings,
     holidayOverrides: holidayData.overrides,
     holidaySourceStatus: holidayData.statuses,
+    capabilities: { canManageSettings: await userHasCapability(client, profile, 'cashflow_forecast_manage') },
   };
 }
 
-async function cashflowSettingsSave(body, req) {
-  const { client, profile } = await requireActiveUser(req);
+async function cashflowSettingsSave(body, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  await requireCapability(client, profile, 'cashflow_forecast_manage', 'Cashflow settings management permission is required.');
   if (body.overrideAction === 'add') {
     const date = dateOnly(body.date || body.holidayDate);
     if (!date) throw appError('Blocked date is required.', 400);
@@ -6371,7 +6616,8 @@ async function incomingPaymentsList(body, req = null, accessContext = null) {
     return {
       ...row,
       interestInvoiceNotification: notification,
-      interestInvoiceNotificationSent: Boolean(notification),
+      interestInvoiceNotificationSent: notification?.deliveryStatus === 'sent',
+      interestInvoiceNotificationPending: ['sending', 'uncertain'].includes(notification?.deliveryStatus),
     };
   });
 
@@ -6451,8 +6697,12 @@ const INCOMING_PAYMENT_INTEREST_NOTIFICATION_FIELDS = [
   'actor_email',
   'actor_name',
   'metadata',
+  'delivery_status',
+  'last_attempt_at',
+  'last_error',
   'sent_at',
   'created_at',
+  'updated_at',
 ].join(',');
 
 function incomingPaymentDbNumber(value) {
@@ -6490,8 +6740,12 @@ function serializeIncomingPaymentInterestNotification(row = null) {
     actorEmail: row.actor_email,
     actorName: row.actor_name,
     metadata: row.metadata || {},
+    deliveryStatus: row.delivery_status || 'sent',
+    lastAttemptAt: row.last_attempt_at || null,
+    lastError: row.last_error || null,
     sentAt: row.sent_at,
     createdAt: row.created_at,
+    updatedAt: row.updated_at || row.created_at,
   };
 }
 
@@ -6987,7 +7241,7 @@ function buildIncomingPaymentInterestEmail(body, profile, calculation) {
 }
 
 async function incomingPaymentInterestInvoiceRequest(body = {}, req = null, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const paymentId = String(body.paymentId || body.payment_id || '').trim();
   if (!paymentId) throw appError('paymentId is required.', 400);
 
@@ -6998,33 +7252,24 @@ async function incomingPaymentInterestInvoiceRequest(body = {}, req = null, acce
 
   const existing = await fetchIncomingPaymentInterestNotification(client, paymentId);
   const forceResend = body.force === true || body.confirmResend === true || body.allowResend === true;
-  if (existing && !forceResend) return { sent: false, alreadySent: true, requiresConfirmation: true, notification: existing };
+  if (existing && !forceResend) {
+    const deliveryUncertain = ['sending', 'uncertain'].includes(existing.deliveryStatus);
+    return { sent: false, alreadySent: existing.deliveryStatus === 'sent', deliveryUncertain, requiresConfirmation: true, notification: existing };
+  }
 
   const calculation = await incomingPaymentInterestCalculation({ ...body, delayDays, paymentId }, accessContext);
   const email = buildIncomingPaymentInterestEmail({ ...body, delayDays, paymentId }, profile, calculation);
-  const credentials = body.credentials || {};
   const from = String(body.from || DEFAULT_INCOMING_PAYMENT_EMAIL_SETTINGS.from);
-  const hasBrowserSmtp = Boolean(credentials.method === 'smtp' || credentials.smtp);
   const hasServerSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD);
-  if (!hasBrowserSmtp && !hasServerSmtp) {
-    throw appError('Interest invoice request sender is not configured. Save and enable the Internal SMTP sender in Settings > Email Senders, then try again.', 400);
+  if (!hasServerSmtp) {
+    throw appError('The shared server email sender is not configured. Ask an administrator to check Settings > System Health.', 400);
   }
-  const smtpFrom = credentials.smtp?.from || credentials.from || from;
+  const smtpFrom = smtpAuthenticatedFromAddress({ user: process.env.SMTP_USER }, from) || from;
   const recipients = email.to;
   if (!recipients.length) {
     throw appError('Late payment interest request recipient is not configured. Add at least one To recipient in the template.', 400);
   }
-  const result = await sendWithSmtp({
-    smtp: credentials.smtp || credentials,
-    from: smtpFrom,
-    to: recipients,
-    cc: email.cc,
-    bcc: email.bcc,
-    subject: email.subject,
-    html: email.html,
-    text: email.text,
-  });
-
+  const attemptAt = new Date().toISOString();
   const payload = {
     payment_id: paymentId,
     payment_name: String(body.paymentName || body.paymentDisplayName || body.salesforcePaymentName || '').trim() || null,
@@ -7040,11 +7285,16 @@ async function incomingPaymentInterestInvoiceRequest(body = {}, req = null, acce
     receivable_balance: incomingPaymentDbNumber(calculation.receivableBalance ?? body.receivableBalance),
     recipient_email: uniqueEmailList(recipients, email.cc, email.bcc).join(', '),
     email_subject: email.subject,
-    email_message_id: result.id || null,
+    email_message_id: null,
     email_provider: 'smtp',
     actor_user_id: profile.id,
     actor_email: profile.email,
     actor_name: profile.full_name || profile.email || null,
+    delivery_status: 'sending',
+    last_attempt_at: attemptAt,
+    last_error: null,
+    sent_at: null,
+    updated_at: attemptAt,
     metadata: {
       source: 'incoming_payment',
       delayThresholdDays: 3,
@@ -7071,21 +7321,63 @@ async function incomingPaymentInterestInvoiceRequest(body = {}, req = null, acce
     },
   };
 
-  const saveQuery = existing
+  const reserveQuery = existing
     ? client
       .from('incoming_payment_interest_notifications')
-      .update({
-        ...payload,
-        sent_at: new Date().toISOString(),
-      })
+      .update(payload)
       .eq('payment_id', paymentId)
     : client
       .from('incoming_payment_interest_notifications')
       .insert(payload);
-  const { data, error } = await saveQuery
+  const { data: reserved, error: reserveError } = await reserveQuery
     .select(INCOMING_PAYMENT_INTEREST_NOTIFICATION_FIELDS)
     .single();
-  if (error) throw error;
+  if (reserveError) throw reserveError;
+
+  let result;
+  try {
+    result = await sendWithSmtp({
+      from: smtpFrom,
+      to: recipients,
+      cc: email.cc,
+      bcc: email.bcc,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+    });
+  } catch (error) {
+    await client
+      .from('incoming_payment_interest_notifications')
+      .update({ delivery_status: 'failed', last_error: error.message, updated_at: new Date().toISOString() })
+      .eq('payment_id', paymentId);
+    throw error;
+  }
+
+  const sentAt = new Date().toISOString();
+  const { data, error } = await client
+    .from('incoming_payment_interest_notifications')
+    .update({
+      delivery_status: 'sent',
+      email_message_id: result.id || result.messageId || null,
+      sent_at: sentAt,
+      last_error: null,
+      updated_at: sentAt,
+    })
+    .eq('payment_id', paymentId)
+    .select(INCOMING_PAYMENT_INTEREST_NOTIFICATION_FIELDS)
+    .single();
+  if (error) {
+    await client
+      .from('incoming_payment_interest_notifications')
+      .update({ delivery_status: 'uncertain', last_error: `Email sent but tracking update failed: ${error.message}`, updated_at: new Date().toISOString() })
+      .eq('payment_id', paymentId);
+    return {
+      sent: true,
+      trackingWarning: 'Email was sent, but FCOS could not finalize its delivery record. Do not resend until an administrator reconciles it.',
+      to: recipients,
+      notification: { ...serializeIncomingPaymentInterestNotification(reserved), deliveryStatus: 'uncertain' },
+    };
+  }
   return {
     sent: true,
     alreadySent: Boolean(existing),
@@ -7377,7 +7669,7 @@ function buildIncomingPaymentEmail(report, settings) {
 }
 
 async function incomingPaymentEmailReport(body = {}, req = null, accessContext = null) {
-  await requireActiveUser(req);
+  if (!accessContext) await requireActiveUser(req);
   const settings = incomingPaymentEmailSettings(body.settings || body);
   const source = await incomingPaymentsList({
     dateFrom: body.dateFrom,
@@ -7427,10 +7719,8 @@ async function incomingPaymentEmailReport(body = {}, req = null, accessContext =
     };
   }
   if (!settings.to.length) throw appError('At least one To recipient is required before sending the Incoming Payment report.', 400);
-  const credentials = body.credentials || {};
-  const smtpFrom = credentials.smtp?.from || credentials.from || settings.from;
+  const smtpFrom = smtpAuthenticatedFromAddress({ user: process.env.SMTP_USER }, settings.from) || settings.from;
   const result = await sendWithSmtp({
-    smtp: credentials.smtp || credentials,
     from: smtpFrom,
     to: settings.to,
     cc: settings.cc,
@@ -7535,13 +7825,17 @@ async function updateBuyerInvoiceEmailSettingsMeta(patch = {}) {
   if (error) console.error('Failed to update buyer invoice email settings metadata', error.message);
 }
 
-async function buyerInvoiceEmailSettingsGet(body, req) {
-  await requireActiveUser(req);
-  return loadStoredBuyerInvoiceEmailSettings();
+async function buyerInvoiceEmailSettingsGet(body, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  return {
+    ...await loadStoredBuyerInvoiceEmailSettings(),
+    capabilities: { canManageSettings: await userHasCapability(client, profile, 'buyer_invoices_manage') },
+  };
 }
 
-async function buyerInvoiceEmailSettingsSave(body, req) {
-  const { profile } = await requireActiveUser(req);
+async function buyerInvoiceEmailSettingsSave(body, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  await requireCapability(client, profile, 'buyer_invoices_manage', 'Buyer invoice shared settings management permission is required.');
   return saveStoredBuyerInvoiceEmailSettings(body.settings || body, profile);
 }
 
@@ -8088,7 +8382,7 @@ async function loadBuyerInvoicePaymentReminderContext(body = {}, accessContext =
 }
 
 async function buyerInvoicePaymentReminderPrepare(body, req, accessContext = null) {
-  await requireActiveUser(req);
+  if (!accessContext) await requireActiveUser(req);
   const { settings, report, selected, candidates } = await loadBuyerInvoicePaymentReminderContext(body, accessContext);
   const routing = paymentReminderRoutingForRows(candidates);
   const firstGroup = routing.groups.find((group) => group.rows.some((row) => row.stemId === selected.stemId))
@@ -8138,7 +8432,7 @@ async function buyerInvoicePaymentReminderPrepare(body, req, accessContext = nul
 }
 
 async function buyerInvoicePaymentReminderSend(body, req, accessContext = null) {
-  await requireActiveUser(req);
+  if (!accessContext) await requireActiveUser(req);
   const { settings, report, selected, candidates } = await loadBuyerInvoicePaymentReminderContext(body, accessContext);
   const selectedStemIds = new Set((Array.isArray(body.invoiceStemIds) ? body.invoiceStemIds : [])
     .map((id) => String(id || '').trim())
@@ -8159,6 +8453,7 @@ async function buyerInvoicePaymentReminderSend(body, req, accessContext = null) 
   const smtpFrom = smtpAuthenticatedFromAddress(sharedSmtp, configuredFrom) || configuredFrom;
   const sendResults = [];
   const collectionResults = [];
+  const collectionWarnings = [];
   for (const group of routing.groups) {
     const groupSelected = group.rows.find((row) => row.stemId === selected.stemId) || group.rows[0] || selected;
     const reviewedBatch = reviewedRecipientBatches.get(group.key);
@@ -8213,21 +8508,26 @@ async function buyerInvoicePaymentReminderSend(body, req, accessContext = null) 
       const currentStatus = row.collection?.status || 'Not Started';
       const nextStatus = currentStatus === 'Not Started' ? 'Reminder Sent' : currentStatus;
       const ownerName = row.collection?.ownerName || splitBuyerTraderNames(row.buyerTraderInCharge)[0] || '';
-      const collectionResult = await persistBuyerInvoiceCollection({
-        stemId: row.stemId,
-        updates: {
-          status: nextStatus,
-          ownerName,
-          latestNote: note,
-        },
-        event: {
-          eventType: currentStatus === 'Not Started' ? 'status_change' : 'note',
-          status: nextStatus,
-          ownerName,
-          note,
-        },
-      }, req);
-      collectionResults.push(collectionResult);
+      try {
+        const collectionResult = await persistBuyerInvoiceCollection({
+          stemId: row.stemId,
+          expectedUpdatedAt: row.collection?.updatedAt || null,
+          updates: {
+            status: nextStatus,
+            ownerName,
+            latestNote: note,
+          },
+          event: {
+            eventType: currentStatus === 'Not Started' ? 'status_change' : 'note',
+            status: nextStatus,
+            ownerName,
+            note,
+          },
+        }, req, null, accessContext);
+        collectionResults.push(collectionResult);
+      } catch (error) {
+        collectionWarnings.push({ stemId: row.stemId, error: error.message });
+      }
     }
   }
 
@@ -8249,6 +8549,7 @@ async function buyerInvoicePaymentReminderSend(body, req, accessContext = null) 
     subject: sendResults[0]?.subject || null,
     rows: rows.length,
     collectionResults,
+    collectionWarnings,
   };
 }
 
@@ -8411,12 +8712,10 @@ async function outstandingBuyerInvoicesEmailReport(body = {}, req = null, access
       email: { subject: email.subject, html: email.html, text: email.text, totals: email.totals },
     };
   }
-  const credentials = body.credentials || {};
-  const smtpFrom = credentials.smtp?.from || credentials.from || settings.from;
+  const smtpFrom = smtpAuthenticatedFromAddress({ user: process.env.SMTP_USER }, settings.from) || settings.from;
   let result;
   try {
     result = await sendWithSmtp({
-      smtp: credentials.smtp || credentials,
       from: smtpFrom,
       to: settings.to,
       cc: settings.cc,
@@ -9048,20 +9347,11 @@ function normalizeDisputeBetaStatus(value, allowed, fallback) {
   return allowed.includes(raw) ? raw : fallback;
 }
 
-function isDisputeBetaAdmin(profile = {}) {
-  if (profile.user_type === 'administrator') return true;
-  const email = String(profile.email || '').trim().toLowerCase();
-  const name = String(profile.full_name || '').trim().replace(/\s+/g, ' ').toLowerCase();
-  return DISPUTE_BETA_ADMIN_EMAILS.has(email) || DISPUTE_BETA_ADMIN_NAMES.has(name);
-}
-
-function isDisputeAccounting(profile = {}) {
-  return profile.user_type === 'finance' || profile.user_type === 'administrator';
-}
-
-function disputeWorkflowCapabilities(profile = {}) {
-  const isApprover = isDisputeBetaAdmin(profile);
-  const isAccounting = isDisputeAccounting(profile);
+async function disputeWorkflowCapabilities(client, profile = {}) {
+  const [isApprover, isAccounting] = await Promise.all([
+    userHasCapability(client, profile, 'disputes_approve'),
+    userHasCapability(client, profile, 'disputes_account'),
+  ]);
   return {
     role: profile.user_type || 'user',
     canPrepare: true,
@@ -9079,6 +9369,26 @@ function disputeBetaCaseFromStem(stem = {}) {
     buyer_name: stem._Buyer_Name || stem.Buyer_Name__c || null,
     supplier_names: stem._Supplier_Names || null,
     current_salesforce_status: stem.Dispute_Status__c || null,
+  };
+}
+
+function legacyClosedDisputeCase(stem = {}) {
+  const salesforceStatus = String(stem.Dispute_Status__c || '').trim();
+  if (!/^closed\b/i.test(salesforceStatus)) return null;
+  return {
+    id: null,
+    stemId: stem.Id,
+    stemName: stem._Display_Name || stem.Name || stem.KeyStem__c || stem.Id,
+    buyerName: stem._Buyer_Name || stem.Buyer_Name__c || '',
+    supplierNames: stem._Supplier_Names || '',
+    currentSalesforceStatus: salesforceStatus,
+    workflowStatus: 'Closed',
+    approvalStatus: 'Approved',
+    latestNote: 'Closed in Salesforce before FCOS workflow tracking.',
+    settlementFinancials: {},
+    settlementPnl: 0,
+    salesforceWritebackStatus: 'legacy',
+    legacyReadOnly: true,
   };
 }
 
@@ -9574,18 +9884,20 @@ function validateStoredDisputeActions(actions, partyRows, registry) {
 }
 
 async function disputeBetaList(body = {}, req, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const salesforceData = await salesforceDisputeStems({ limit: body.limit || 10000 }, null, accessContext || { client, profile });
   const rows = salesforceData.rows || [];
   const workflowMap = await loadDisputeBetaWorkflowMap(client, rows.map((row) => row.Id));
+  const capabilities = await disputeWorkflowCapabilities(client, profile);
   return {
-    isDisputeAdmin: isDisputeBetaAdmin(profile),
-    isDisputeAccounting: isDisputeAccounting(profile),
-    capabilities: disputeWorkflowCapabilities(profile),
+    isDisputeAdmin: capabilities.canApprove,
+    isDisputeAccounting: capabilities.canAccount,
+    capabilities,
     requiredSalesforceFieldsMissing: true,
     fieldWarning: 'Disputed Accounts, approval, accounting, documents, and audit state are stored in Supabase. Salesforce receives only the high-level STEM Dispute Status.',
     rows: rows.map((row) => {
       const workflow = workflowMap[row.Id] || { case: null, parties: [], actions: [], events: [], documents: [] };
+      if (!workflow.case) workflow.case = legacyClosedDisputeCase(row);
       return {
         ...row,
         _Dispute_Parties: disputeRegistryWithSelection(row._Dispute_Parties, workflow.parties),
@@ -9596,7 +9908,7 @@ async function disputeBetaList(body = {}, req, accessContext = null) {
 }
 
 async function disputeBetaSaveDraft(body = {}, req, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const stem = body.stem || {};
   const stemId = stem.Id || body.stemId;
   if (!stemId) throw appError('stemId is required.', 400);
@@ -9693,7 +10005,7 @@ async function disputeBetaSaveDraft(body = {}, req, accessContext = null) {
 }
 
 async function disputeBetaSubmitApproval(body = {}, req, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const caseRow = await getDisputeBetaCase(client, body.caseId || body.stemId);
   await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
   const currentStem = await loadCurrentDisputeStem(caseRow.stem_id, accessContext || { client, profile });
@@ -9733,8 +10045,8 @@ async function disputeBetaSubmitApproval(body = {}, req, accessContext = null) {
 }
 
 async function disputeBetaApprove(body = {}, req, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
-  if (!isDisputeBetaAdmin(profile)) throw appError('Dispute administrator approval is required.', 403);
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  await requireCapability(client, profile, 'disputes_approve', 'Dispute approval permission is required.', 403);
   const caseRow = await getDisputeBetaCase(client, body.caseId || body.stemId);
   await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
   if (caseRow.approval_status !== 'Pending Approval') throw appError('Only pending Dispute Workflow cases can be approved.', 400);
@@ -9797,8 +10109,8 @@ async function disputeBetaApprove(body = {}, req, accessContext = null) {
 }
 
 async function disputeBetaReject(body = {}, req, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
-  if (!isDisputeBetaAdmin(profile)) throw appError('Dispute administrator approval is required.', 403);
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  await requireCapability(client, profile, 'disputes_approve', 'Dispute approval permission is required.', 403);
   const caseRow = await getDisputeBetaCase(client, body.caseId || body.stemId);
   await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
   if (caseRow.approval_status !== 'Pending Approval') throw appError('Only pending Dispute Workflow cases can be rejected or returned for revision.', 400);
@@ -9830,7 +10142,7 @@ async function disputeBetaReject(body = {}, req, accessContext = null) {
 }
 
 async function disputeWorkflowDocuments(body = {}, req, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const caseRow = await getDisputeBetaCase(client, body.caseId || body.stemId);
   await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
   const documents = await loadDisputeWorkflowDocuments(client, caseRow.id);
@@ -9838,14 +10150,18 @@ async function disputeWorkflowDocuments(body = {}, req, accessContext = null) {
 }
 
 async function disputeWorkflowUploadDocument(body = {}, req, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
+  const { client, profile } = accessContext || await requireActiveUser(req);
   const caseRow = await getDisputeBetaCase(client, body.caseId || body.stemId);
   await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
   const currentStem = await loadCurrentDisputeStem(caseRow.stem_id, accessContext || { client, profile });
   const partyRows = await loadDisputeWorkflowParties(client, caseRow.id);
   const registry = assertValidDisputeParties(currentStem, partyRows);
   const canEdit = ['Draft', 'Rejected', 'Revision Requested'].includes(caseRow.workflow_status);
-  if (!canEdit && !isDisputeBetaAdmin(profile) && !isDisputeAccounting(profile)) {
+  const [canApproveDocuments, canAccountDocuments] = await Promise.all([
+    userHasCapability(client, profile, 'disputes_approve'),
+    userHasCapability(client, profile, 'disputes_account'),
+  ]);
+  if (!canEdit && !canApproveDocuments && !canAccountDocuments) {
     throw appError('Only accounting or administrators can add documents after trader submission.', 403);
   }
 
@@ -9984,8 +10300,8 @@ async function disputeWorkflowUploadDocument(body = {}, req, accessContext = nul
 }
 
 async function disputeWorkflowAccountingUpdate(body = {}, req, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
-  if (!isDisputeAccounting(profile)) throw appError('Finance or administrator access is required for accounting updates.', 403);
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  await requireCapability(client, profile, 'disputes_account', 'Dispute accounting permission is required for accounting updates.');
   const actionId = String(body.actionId || '').trim();
   if (!actionId) throw appError('actionId is required.', 400);
   const { data: action, error: actionLookupError } = await client
@@ -10106,8 +10422,8 @@ async function disputeBetaMarkExecuted(body = {}, req, accessContext = null) {
 }
 
 async function disputeBetaClose(body = {}, req, accessContext = null) {
-  const { client, profile } = await requireActiveUser(req);
-  if (!isDisputeAccounting(profile)) throw appError('Finance or administrator access is required to close a dispute.', 403);
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  await requireCapability(client, profile, 'disputes_account', 'Dispute accounting permission is required to close a dispute.');
   const caseRow = await getDisputeBetaCase(client, body.caseId || body.stemId);
   await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
   const currentStem = await loadCurrentDisputeStem(caseRow.stem_id, accessContext || { client, profile });
@@ -10774,6 +11090,8 @@ const handlers = {
   salesforceDashboardFiltered: salesforceDashboardFilteredFull,
   salesforceStemDetail: salesforceStemDetailFull,
   salesforceStemDocuments,
+  exceptionReviewWorkflowList,
+  exceptionReviewWorkflowSave,
   salesforceDescribeChildren,
   salesforceTopBuyers,
   salesforceBrokerRegister: salesforceBrokerRegisterFull,

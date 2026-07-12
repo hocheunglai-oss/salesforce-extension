@@ -23,6 +23,15 @@ export const APP_MODULES = [
 
 export const FULL_ACCESS = Object.fromEntries(APP_MODULES.map((module) => [module.id, true]));
 
+export const APP_CAPABILITIES = [
+  { id: 'disputes_approve', label: 'Approve disputes', description: 'Approve or reject dispute instructions.' },
+  { id: 'disputes_account', label: 'Settle disputes', description: 'Record accounting settlement and close disputes.' },
+  { id: 'buyer_invoices_manage', label: 'Manage invoice email settings', description: 'Change buyer invoice templates and schedules.' },
+  { id: 'cashflow_forecast_manage', label: 'Manage cashflow settings', description: 'Change forecast settings and manual overrides.' },
+];
+
+export const FULL_CAPABILITIES = Object.fromEntries(APP_CAPABILITIES.map((capability) => [capability.id, true]));
+
 export function moduleLabel(moduleId) {
   return APP_MODULES.find((module) => module.id === moduleId)?.label || moduleId;
 }
