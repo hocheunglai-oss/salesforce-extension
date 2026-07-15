@@ -4,7 +4,7 @@ import { appClient } from '@/api/appClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
 import PnlTable from '@/components/dashboard/PnlTable';
 import StemDetailModal from '@/components/dashboard/StemDetailModal';
@@ -280,8 +280,10 @@ export default function DashboardSettings() {
       HSFO: 0,
       VLSFO: 0,
       LSMGO: 0,
+      grossMarginPct: item.grossMarginPct ?? null,
     }));
   const monthlyTrendIsVolume = monthlyTrendMode === 'volume';
+  const monthlyTrendData = monthlyTrendIsVolume ? monthlyProductVolumes : (data?.monthlyNetPnl || []);
 
   useEffect(() => {
     if (showAnalytics) {
@@ -609,8 +611,8 @@ export default function DashboardSettings() {
                   </h3>
                   <p className="text-xs text-muted-foreground">
                     {monthlyTrendIsVolume
-                      ? `Combined monthly volume by product family for ${data.monthlyNetPnlYear || THIS_YEAR}`
-                      : `Total Gross Profit by month for ${data.monthlyNetPnlYear || THIS_YEAR}`}
+                      ? `Combined monthly volume by product family with Gross Margin % for ${data.monthlyNetPnlYear || THIS_YEAR}`
+                      : `Total Gross Profit and Gross Margin % by month for ${data.monthlyNetPnlYear || THIS_YEAR}`}
                   </p>
                 </div>
                 <div className="flex rounded-lg border border-border bg-muted/30 p-1">
@@ -634,22 +636,35 @@ export default function DashboardSettings() {
                   </button>
                 </div>
               </div>
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={monthlyTrendIsVolume ? monthlyProductVolumes : data.monthlyNetPnl} barSize={44}>
+              <ResponsiveContainer width="100%" height={290}>
+                <ComposedChart data={monthlyTrendData} barSize={44} margin={{ right: 8 }}>
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis
+                    yAxisId="value"
                     tick={{ fontSize: 11 }}
                     tickFormatter={(v) => monthlyTrendIsVolume ? `${Math.round(v).toLocaleString()} MT` : `$${Math.round(v / 1000)}k`}
                   />
-                  <Tooltip
-                    formatter={(v, name) => monthlyTrendIsVolume
-                      ? [`${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })} MT`, name]
-                      : [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, 'Gross Profit']}
+                  <YAxis
+                    yAxisId="margin"
+                    orientation="right"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(value) => `${Number(value).toFixed(1)}%`}
+                    width={52}
+                    domain={['auto', 'auto']}
                   />
+                  <Tooltip
+                    formatter={(value, name) => {
+                      if (name === 'Gross Margin %') return [`${Number(value).toFixed(1)}%`, name];
+                      if (monthlyTrendIsVolume) return [`${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} MT`, name];
+                      return [`$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, 'Gross Profit'];
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
                   {monthlyTrendIsVolume ? (
                     PRODUCT_FAMILY_KPI_ORDER.map((family, index) => (
                       <Bar
                         key={family}
+                        yAxisId="value"
                         dataKey={family}
                         stackId="monthly-volume"
                         fill={PRODUCT_VOLUME_COLORS[family]}
@@ -657,24 +672,25 @@ export default function DashboardSettings() {
                       />
                     ))
                   ) : (
-                    <Bar dataKey="netPnl" radius={[4, 4, 0, 0]}>
+                    <Bar yAxisId="value" dataKey="netPnl" name="Gross Profit" radius={[4, 4, 0, 0]}>
                       {data.monthlyNetPnl.map((item, idx) => (
                         <Cell key={idx} fill={item.netPnl >= 0 ? '#10b981' : '#ef4444'} />
                       ))}
                     </Bar>
                   )}
-                </BarChart>
+                  <Line
+                    yAxisId="margin"
+                    type="monotone"
+                    dataKey="grossMarginPct"
+                    name="Gross Margin %"
+                    stroke="#7c3aed"
+                    strokeWidth={2.5}
+                    dot={{ r: 3, fill: '#7c3aed' }}
+                    activeDot={{ r: 5 }}
+                    connectNulls={false}
+                  />
+                </ComposedChart>
               </ResponsiveContainer>
-              {monthlyTrendIsVolume && (
-                <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
-                  {PRODUCT_FAMILY_KPI_ORDER.map((family) => (
-                    <span key={family} className="inline-flex items-center gap-1.5">
-                      <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: PRODUCT_VOLUME_COLORS[family] }} />
-                      {family}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 

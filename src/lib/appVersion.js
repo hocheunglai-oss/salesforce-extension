@@ -1,6 +1,16 @@
-export const APP_VERSION = '2.0.14';
+export const APP_VERSION = '2.0.15';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '2.0.15',
+    releasedAt: '2026-07-15',
+    title: 'Monthly gross margin trends',
+    changes: [
+      'Added monthly Gross Margin % to the Gross Profit trend with a dedicated percentage axis.',
+      'Added the same Gross Margin % trend to the stacked monthly product-volume chart.',
+      'Calculated each monthly margin from the matching monthly Gross Profit and Turnover totals.',
+    ],
+  },
   {
     version: '2.0.14',
     releasedAt: '2026-07-15',

@@ -14,6 +14,7 @@ import {
 } from '../_disputeParties.js';
 import { disputeQueueExtraCostProductName } from '../_disputeQueue.js';
 import { calculatedBuyerPayTermDate } from '../_buyerInvoiceDates.js';
+import { grossMarginPercent } from '../_dashboardMetrics.js';
 import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import { externalActionGates, isExternalActionEnabled, requireExternalActionGate } from '../_externalActionGates.js';
@@ -1931,11 +1932,16 @@ async function salesforceDashboardFiltered(body) {
   const totalSupplier = recentStems.reduce((sum, stem) => sum + (stem[sf] || 0), 0);
   const totalCosts = costsRes.records?.[0]?.total ?? 0;
   const totalProfit = totalBuyer - totalSupplier;
-  const monthlyNetPnl = Array.from({ length: 12 }, (_, idx) => ({ month: idx + 1, label: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][idx], netPnl: 0 }));
+  const monthlyNetPnl = Array.from({ length: 12 }, (_, idx) => ({ month: idx + 1, label: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][idx], netPnl: 0, turnover: 0 }));
   for (const stem of monthlyRes.records || []) {
     const month = Number(String(stem.Delivery_Date__c || stem.Expected_Delivery_Date__c || '').split('-')[1]);
-    if (month >= 1 && month <= 12) monthlyNetPnl[month - 1].netPnl += (stem[bf] || 0) - (stem[sf] || 0);
+    if (month >= 1 && month <= 12) {
+      const turnover = Number(stem[bf] || 0);
+      monthlyNetPnl[month - 1].turnover += turnover;
+      monthlyNetPnl[month - 1].netPnl += turnover - Number(stem[sf] || 0);
+    }
   }
+  for (const item of monthlyNetPnl) item.grossMarginPct = grossMarginPercent(item.netPnl, item.turnover);
 
   return {
     stemTotal: totalRes.records?.[0]?.total ?? recentStems.length,
@@ -4136,7 +4142,7 @@ async function salesforceDashboardFilteredFull(body, req = null, accessContext =
     .slice(0, 10)
     .map(([name, pnl]) => ({ name, netPnl: pnl }));
 
-  const monthlyTotals = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, netPnl: 0 }));
+  const monthlyTotals = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, netPnl: 0, turnover: 0 }));
   const buyerMonthTotals = {};
   const supplierMonthTotals = {};
   for (const stem of monthlyStemsRes.records || []) {
@@ -4146,6 +4152,7 @@ async function salesforceDashboardFilteredFull(body, req = null, accessContext =
     if (calc.buyer == null) continue;
     const month = Number(String(effectiveDate).split('-')[1]);
     if (!month || month < 1 || month > 12) continue;
+    monthlyTotals[month - 1].turnover += Number(calc.buyer || 0);
     monthlyTotals[month - 1].netPnl += calc.netPnl || 0;
     if (buyerNameField && stem[buyerNameField] && !String(stem[buyerNameField]).toUpperCase().includes('COSULICH')) {
       const buyerName = stem[buyerNameField];
@@ -4161,6 +4168,8 @@ async function salesforceDashboardFilteredFull(body, req = null, accessContext =
     month: item.month,
     label: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][item.month - 1],
     netPnl: item.netPnl,
+    turnover: item.turnover,
+    grossMarginPct: grossMarginPercent(item.netPnl, item.turnover),
   }));
   const monthlyBuyerNames = Object.entries(buyerMonthTotals)
     .map(([name, months]) => ({ name, total: months.reduce((sum, value) => sum + value, 0) }))
@@ -4191,6 +4200,7 @@ async function salesforceDashboardFilteredFull(body, req = null, accessContext =
     HSFO: monthlyProductVolumeByFamily.HSFO[idx] || 0,
     VLSFO: monthlyProductVolumeByFamily.VLSFO[idx] || 0,
     LSMGO: monthlyProductVolumeByFamily.LSMGO[idx] || 0,
+    grossMarginPct: item.grossMarginPct,
   }));
 
   return {
