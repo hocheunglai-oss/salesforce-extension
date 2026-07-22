@@ -711,7 +711,7 @@ export default function AccountManagers() {
             <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               <div className="font-medium">{groupEditAccount.accountName}</div>
               <div className="mt-1">
-                {groupEditAccount.childAccountCount} active child Account{groupEditAccount.childAccountCount === 1 ? '' : 's'} currently appear in this directory. Existing direct child assignments will be replaced when the GROUP is saved.
+                This directory currently shows {groupEditAccount.childAccountCount} active child Account{groupEditAccount.childAccountCount === 1 ? '' : 's'}. Existing direct child assignments will be replaced when the GROUP is saved.
               </div>
             </div>
           )}
