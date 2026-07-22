@@ -7,7 +7,7 @@ export const APP_VERSION_HISTORY = [
     title: 'Account Manager administration',
     changes: [
       'Replaced Buyers Administrator with Account Managers for active Buyer, Buyer & Supplier, and Broker Account names.',
-      'Added inline zero-to-three manager editing, manager-name filters, Salesforce synchronization, and explicit Save and Cancel controls.',
+      'Added responsive inline zero-to-three manager editing, manager-name filters, Salesforce synchronization, and explicit Save and Cancel controls.',
       'Expanded legacy manager initials in Salesforce, replaced Sam Yip with Vincent Lee, and seeded the active assignments in FCOS.',
     ],
   },

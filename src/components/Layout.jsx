@@ -179,10 +179,10 @@ export default function Layout() {
 
       <aside
         className={cn(
-          'app-workspace-sidebar inset-y-0 left-0 z-50 flex w-[272px] shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 ease-out',
+          'app-workspace-sidebar fixed inset-y-0 left-0 z-50 flex w-[272px] shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 ease-out',
           sidebarFixed
-            ? 'relative translate-x-0'
-            : 'fixed -translate-x-[260px] shadow-xl shadow-slate-900/10 hover:translate-x-0 focus-within:translate-x-0',
+            ? 'translate-x-0 shadow-xl shadow-slate-900/10 md:relative md:shadow-none'
+            : '-translate-x-[260px] shadow-xl shadow-slate-900/10 hover:translate-x-0 focus-within:translate-x-0',
         )}
       >
         <div className={cn(
