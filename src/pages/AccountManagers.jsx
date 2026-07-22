@@ -133,12 +133,15 @@ export default function AccountManagers() {
   const [currentPage, setCurrentPage] = useState(1);
   const [editingKey, setEditingKey] = useState('');
   const [draftManagers, setDraftManagers] = useState([]);
+  const [managerPropagateToChildren, setManagerPropagateToChildren] = useState(false);
   const [savingKey, setSavingKey] = useState('');
   const [retryingKey, setRetryingKey] = useState('');
   const [noteEditingKey, setNoteEditingKey] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
+  const [notePropagateToChildren, setNotePropagateToChildren] = useState(false);
   const [noteSavingKey, setNoteSavingKey] = useState('');
   const [groupEditAccount, setGroupEditAccount] = useState(null);
+  const [groupNoteEditAccount, setGroupNoteEditAccount] = useState(null);
   const [methodologyOpen, setMethodologyOpen] = useState(false);
   const nextDraftKey = useRef(0);
 
@@ -157,8 +160,10 @@ export default function AccountManagers() {
         setSelectedManagerKeys(null);
         setEditingKey('');
         setDraftManagers([]);
+        setManagerPropagateToChildren(false);
         setNoteEditingKey('');
         setNoteDraft('');
+        setNotePropagateToChildren(false);
       }
     }
     setLoading(false);
@@ -232,9 +237,10 @@ export default function AccountManagers() {
       : account));
   };
 
-  const beginEdit = (account) => {
+  const beginEdit = (account, { propagateToChildren = false } = {}) => {
     setEditingKey(account.accountNameKey);
     setDraftManagers(account.managers.map((manager) => ({ key: `manager-${manager.id}`, userId: manager.id })));
+    setManagerPropagateToChildren(account.isGroupAccount && propagateToChildren);
   };
 
   const requestEdit = (account) => {
@@ -249,6 +255,7 @@ export default function AccountManagers() {
     if (savingKey) return;
     setEditingKey('');
     setDraftManagers([]);
+    setManagerPropagateToChildren(false);
   };
 
   const addManager = () => {
@@ -286,6 +293,7 @@ export default function AccountManagers() {
       accountName: account.accountName,
       managerUserIds: draftManagerIds,
       expectedRevision: account.revision,
+      propagateToChildren: account.isGroupAccount && managerPropagateToChildren,
     });
     setSavingKey('');
 
@@ -297,6 +305,7 @@ export default function AccountManagers() {
     replaceAccount(response.data.account);
     setEditingKey('');
     setDraftManagers([]);
+    setManagerPropagateToChildren(false);
     if (account.isGroupAccount) await loadAccounts({ background: true });
     if (response.data.syncError) {
       toast({ title: 'Saved with a Salesforce sync issue', description: response.data.syncError, variant: 'destructive' });
@@ -329,15 +338,25 @@ export default function AccountManagers() {
     }
   };
 
-  const beginNoteEdit = (account) => {
+  const beginNoteEdit = (account, { propagateToChildren = false } = {}) => {
     setNoteEditingKey(account.accountNameKey);
     setNoteDraft(account.accountNote || '');
+    setNotePropagateToChildren(account.isGroupAccount && propagateToChildren);
+  };
+
+  const requestNoteEdit = (account) => {
+    if (account.isGroupAccount) {
+      setGroupNoteEditAccount(account);
+      return;
+    }
+    beginNoteEdit(account);
   };
 
   const cancelNoteEdit = () => {
     if (noteSavingKey) return;
     setNoteEditingKey('');
     setNoteDraft('');
+    setNotePropagateToChildren(false);
   };
 
   const saveNote = async (account) => {
@@ -349,6 +368,7 @@ export default function AccountManagers() {
       accountName: account.accountName,
       accountNote,
       expectedRevision: account.noteRevision,
+      propagateToChildren: account.isGroupAccount && notePropagateToChildren,
     });
     setNoteSavingKey('');
 
@@ -360,9 +380,13 @@ export default function AccountManagers() {
     replaceAccount(response.data.note);
     setNoteEditingKey('');
     setNoteDraft('');
+    setNotePropagateToChildren(false);
+    if (account.isGroupAccount && notePropagateToChildren) await loadAccounts({ background: true });
     toast({
       title: 'Account note updated',
-      description: accountNote ? account.accountName : `${account.accountName}: note cleared`,
+      description: response.data.propagatedChildCount
+        ? `${account.accountName} and ${response.data.propagatedChildCount} child Account name${response.data.propagatedChildCount === 1 ? '' : 's'}`
+        : accountNote ? account.accountName : `${account.accountName}: note cleared`,
     });
   };
 
@@ -491,9 +515,17 @@ export default function AccountManagers() {
                   const noteEditing = noteEditingKey === account.accountNameKey;
                   const noteSaving = noteSavingKey === account.accountNameKey;
                   const invalidSelection = draftManagerIds.some((userId) => !userId || !usersById.get(userId)?.active);
-                  const dirty = editing && !sameIds(draftManagerIds, account.managers.map((manager) => manager.id));
+                  const managerScopeDirty = account.isGroupAccount
+                    && managerPropagateToChildren !== account.propagateToChildren;
+                  const dirty = editing && (
+                    !sameIds(draftManagerIds, account.managers.map((manager) => manager.id))
+                    || managerScopeDirty
+                  );
                   const normalizedNoteDraft = noteDraft.trim();
-                  const noteDirty = noteEditing && normalizedNoteDraft !== (account.accountNote || '');
+                  const noteDirty = noteEditing && (
+                    normalizedNoteDraft !== (account.accountNote || '')
+                    || account.isGroupAccount && notePropagateToChildren
+                  );
                   const noteLength = Array.from(noteDraft).length;
                   const noMoreUsers = draftManagerIds.length >= 3
                     || draftManagerIds.some((userId) => !userId)
@@ -591,13 +623,23 @@ export default function AccountManagers() {
                               <Plus />
                               Add manager
                             </Button>
+                            {account.isGroupAccount && (
+                              <div className="text-xs font-medium text-muted-foreground">
+                                Save scope: {managerPropagateToChildren ? 'GROUP + children' : 'GROUP only'}
+                              </div>
+                            )}
                           </div>
                         ) : (
-                          <ManagerCoverage
-                            managers={account.managers}
-                            assignmentSource={account.assignmentSource}
-                            inheritedFromGroupName={account.inheritedFromGroupName}
-                          />
+                          <div>
+                            <ManagerCoverage
+                              managers={account.managers}
+                              assignmentSource={account.assignmentSource}
+                              inheritedFromGroupName={account.inheritedFromGroupName}
+                            />
+                            {account.isGroupAccount && account.propagateToChildren && (
+                              <div className="mt-1.5 text-xs text-muted-foreground">Child Accounts inherit this priority.</div>
+                            )}
+                          </div>
                         )}
                       </TableCell>
                       <TableCell className="min-w-[320px] max-w-[420px] align-top">
@@ -614,7 +656,12 @@ export default function AccountManagers() {
                               placeholder="Add an internal Account note"
                             />
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs tabular-nums text-muted-foreground">{noteLength}/255</span>
+                              <div className="text-xs text-muted-foreground">
+                                <span className="tabular-nums">{noteLength}/255</span>
+                                {account.isGroupAccount && (
+                                  <span className="ml-2 font-medium">Save scope: {notePropagateToChildren ? 'GROUP + children' : 'GROUP only'}</span>
+                                )}
+                              </div>
                               <div className="flex items-center gap-1">
                                 <Button
                                   type="button"
@@ -652,12 +699,17 @@ export default function AccountManagers() {
                                   {account.noteUpdatedByEmail ? ` by ${account.noteUpdatedByEmail}` : ''}
                                 </div>
                               )}
+                              {account.noteSourceGroupAccountName && (
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  Applied from {account.noteSourceGroupAccountName}
+                                </div>
+                              )}
                             </div>
                             <Button
                               type="button"
                               variant="ghost"
                               size="icon"
-                              onClick={() => beginNoteEdit(account)}
+                              onClick={() => requestNoteEdit(account)}
                               disabled={Boolean(noteEditingKey || editingKey || retryingKey || savingKey || noteSavingKey)}
                               aria-label={`Edit note for ${account.accountName}`}
                               title="Edit Account note"
@@ -796,7 +848,7 @@ export default function AccountManagers() {
             <section>
               <h3 className="font-semibold">GROUP Accounts</h3>
               <p className="mt-1 text-muted-foreground">
-                A GROUP assignment is applied to the GROUP Account and all direct child Salesforce Accounts. Child Account names inherit that ordered list unless they are edited directly. Saving the GROUP again replaces direct child overrides.
+                Every GROUP manager edit asks for a scope. GROUP only updates the GROUP Account in FCOS and Salesforce, turns off child inheritance, and leaves existing child Salesforce values and direct FCOS assignments unchanged. GROUP + children writes the ordered list to the GROUP and every direct child Salesforce Account, turns on inheritance, and replaces direct child FCOS manager overrides.
               </p>
             </section>
             <section>
@@ -808,7 +860,7 @@ export default function AccountManagers() {
             <section>
               <h3 className="font-semibold">Account notes</h3>
               <p className="mt-1 text-muted-foreground">
-                Each displayed Account name has an independent FCOS note of up to 255 characters. Notes do not propagate from GROUP Accounts and do not write to Salesforce.
+                Each Account name has an FCOS note of up to 255 characters. A GROUP note edit can update the GROUP only or copy the note to every direct child Account name. GROUP + children replaces existing child notes at that time; each child note remains independently editable afterward. Notes never write to Salesforce.
               </p>
             </section>
             <section>
@@ -828,25 +880,70 @@ export default function AccountManagers() {
           <AlertDialogHeader>
             <AlertDialogTitle>Edit GROUP Account managers?</AlertDialogTitle>
             <AlertDialogDescription>
-              Saving this ordered manager list will apply it to the GROUP Account and every direct child Account in Salesforce.
+              Choose whether this edit applies only to the GROUP Account or also to every direct child Account.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {groupEditAccount && (
             <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               <div className="font-medium">{groupEditAccount.accountName}</div>
               <div className="mt-1">
-                This directory currently shows {groupEditAccount.childAccountCount} active child Account{groupEditAccount.childAccountCount === 1 ? '' : 's'}. Existing direct child assignments will be replaced when the GROUP is saved.
+                This directory currently shows {groupEditAccount.childAccountCount} active child Account{groupEditAccount.childAccountCount === 1 ? '' : 's'}. GROUP only stops inheritance without changing existing child Salesforce values. GROUP + children replaces child manager assignments and Salesforce values.
               </div>
             </div>
           )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="border border-input bg-background text-foreground hover:bg-accent" onClick={() => {
+              const account = groupEditAccount;
+              setGroupEditAccount(null);
+              if (account) beginEdit(account, { propagateToChildren: false });
+            }}>
+              GROUP only
+            </AlertDialogAction>
             <AlertDialogAction onClick={() => {
               const account = groupEditAccount;
               setGroupEditAccount(null);
-              if (account) beginEdit(account);
+              if (account) beginEdit(account, { propagateToChildren: true });
             }}>
-              Continue
+              GROUP + children
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={Boolean(groupNoteEditAccount)} onOpenChange={(open) => {
+        if (!open) setGroupNoteEditAccount(null);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Edit GROUP Account note?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Choose whether this note applies only to the GROUP Account or is copied to every direct child Account.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {groupNoteEditAccount && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <div className="font-medium">{groupNoteEditAccount.accountName}</div>
+              <div className="mt-1">
+                GROUP only leaves child notes unchanged. GROUP + children replaces every direct child note with the saved GROUP note. Child notes can be edited independently afterward.
+              </div>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="border border-input bg-background text-foreground hover:bg-accent" onClick={() => {
+              const account = groupNoteEditAccount;
+              setGroupNoteEditAccount(null);
+              if (account) beginNoteEdit(account, { propagateToChildren: false });
+            }}>
+              GROUP only
+            </AlertDialogAction>
+            <AlertDialogAction onClick={() => {
+              const account = groupNoteEditAccount;
+              setGroupNoteEditAccount(null);
+              if (account) beginNoteEdit(account, { propagateToChildren: true });
+            }}>
+              GROUP + children
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -1408,6 +1408,7 @@ function accountManagerResponse({ salesforceGroup, groupRow = {}, managers = [] 
     parentGroupNames: salesforceGroup.parentGroupNames || [],
     childAccountCount: Number(salesforceGroup.childAccountCount || 0),
     childAccountNames: salesforceGroup.childAccountNames || [],
+    propagateToChildren: salesforceGroup.isGroupAccount === true && groupRow.propagate_to_children === true,
     managers,
     managerCount: managers.length,
     assignmentSource: 'direct',
@@ -1427,7 +1428,10 @@ function accountManagerResponse({ salesforceGroup, groupRow = {}, managers = [] 
   };
 }
 
-async function currentEligibleAccountGroup(body = {}, { includeGroupChildren = true } = {}) {
+async function currentEligibleAccountGroup(body = {}, {
+  includeGroupChildren = true,
+  enforceSalesforceWriteLimit = true,
+} = {}) {
   await accountManagerSchema();
   let requestedName = String(body.accountName || body.buyerName || '').trim();
   const legacyAccountId = String(body.buyerAccountId || '').trim();
@@ -1472,16 +1476,24 @@ async function currentEligibleAccountGroup(body = {}, { includeGroupChildren = t
 
     const childRecords = childResult.records || [];
     const childGroups = groupEligibleSalesforceAccounts(childRecords);
-    group.childAccountNameKeys = [...new Set(childRecords
-      .map((record) => accountNameKey(record.Name))
-      .filter(Boolean))];
+    const childAccountsByKey = new Map();
+    for (const record of childRecords) {
+      const accountName = String(record.Name || '').trim();
+      const childKey = accountNameKey(accountName);
+      if (childKey && childKey !== group.accountNameKey && !childAccountsByKey.has(childKey)) {
+        childAccountsByKey.set(childKey, { accountNameKey: childKey, accountName });
+      }
+    }
+    group.childAccounts = [...childAccountsByKey.values()]
+      .sort((left, right) => left.accountName.localeCompare(right.accountName, undefined, { sensitivity: 'base' }));
+    group.childAccountNameKeys = group.childAccounts.map((account) => account.accountNameKey);
     group.childAccountNames = [...new Set(childGroups.map((child) => child.accountName))];
     group.childAccountCount = childRecords.length;
     group.salesforceAccountIds = [...new Set([
       ...group.directSalesforceAccountIds,
       ...childRecords.map((record) => String(record.Id || '').trim()).filter(Boolean),
     ])];
-    if (group.salesforceAccountIds.length > 200) {
+    if (enforceSalesforceWriteLimit && group.salesforceAccountIds.length > 200) {
       throw appError(`This GROUP contains ${group.salesforceAccountIds.length} Account records, which exceeds the 200-record all-or-none Salesforce update limit.`, 409);
     }
   }
@@ -1549,7 +1561,7 @@ async function accountManagersList(body = {}, req = null, accessContext = null) 
     `, { limit: 10000 }),
     client
       .from('account_manager_groups')
-      .select('account_name_key,account_name,salesforce_account_ids,account_roles,salesforce_manager_text,salesforce_sync_status,salesforce_sync_error,salesforce_synced_at,revision,updated_at,updated_by_email'),
+      .select('account_name_key,account_name,salesforce_account_ids,account_roles,salesforce_manager_text,propagate_to_children,salesforce_sync_status,salesforce_sync_error,salesforce_synced_at,revision,updated_at,updated_by_email'),
     client
       .from('account_manager_assignments')
       .select('account_name_key,manager_user_id,assignment_order'),
@@ -1559,7 +1571,7 @@ async function accountManagersList(body = {}, req = null, accessContext = null) 
       .order('full_name', { ascending: true }),
     client
       .from('account_manager_notes')
-      .select('account_name_key,account_name,account_note,revision,updated_at,updated_by_email'),
+      .select('account_name_key,account_name,account_note,source_group_account_name_key,source_group_account_name,revision,updated_at,updated_by_email'),
   ]);
 
   for (const result of [groupsResult, assignmentsResult, profilesResult, notesResult]) {
@@ -1589,20 +1601,47 @@ async function accountManagersSaveNote(body = {}, req = null, accessContext = nu
   const { client, profile } = accessContext || {};
   if (!client || !profile) throw appError('Sign-in required.', 401);
 
-  const salesforceGroup = await currentEligibleAccountGroup(body, { includeGroupChildren: false });
+  const requestedPropagation = body.propagateToChildren === true;
+  const salesforceGroup = await currentEligibleAccountGroup(body, {
+    includeGroupChildren: requestedPropagation,
+    enforceSalesforceWriteLimit: false,
+  });
+  const propagateToChildren = salesforceGroup.isGroupAccount && requestedPropagation;
   const accountNote = String(body.accountNote ?? body.note ?? '').trim();
   if (Array.from(accountNote).length > 255) {
     throw appError('Account note cannot exceed 255 characters.', 400);
   }
 
-  const { data, error } = await client.rpc('save_account_manager_note', {
+  const rpcName = propagateToChildren
+    ? 'save_account_manager_note_family'
+    : 'save_account_manager_note';
+  const rpcPayload = {
     p_account_name_key: salesforceGroup.accountNameKey,
     p_account_name: salesforceGroup.accountName,
     p_account_note: accountNote,
     p_actor_user_id: profile.id,
     p_actor_email: profile.email,
     p_expected_revision: Number(body.expectedRevision ?? body.noteRevision ?? 0),
-  });
+  };
+  if (propagateToChildren) {
+    const childAccounts = salesforceGroup.childAccounts || [];
+    let childNotes = [];
+    if (childAccounts.length) {
+      const childNotesResult = await client
+        .from('account_manager_notes')
+        .select('account_name_key,revision')
+        .in('account_name_key', childAccounts.map((account) => account.accountNameKey));
+      if (childNotesResult.error) throw accountManagerStorageError(childNotesResult.error);
+      childNotes = childNotesResult.data || [];
+    }
+    const revisionsByKey = new Map(childNotes.map((note) => [note.account_name_key, Number(note.revision || 0)]));
+    rpcPayload.p_child_accounts = childAccounts.map((account) => ({
+      accountNameKey: account.accountNameKey,
+      accountName: account.accountName,
+      expectedRevision: revisionsByKey.get(account.accountNameKey) || 0,
+    }));
+  }
+  const { data, error } = await client.rpc(rpcName, rpcPayload);
   if (error) {
     const storageError = accountManagerStorageError(error);
     if (storageError !== error) throw storageError;
@@ -1619,7 +1658,10 @@ async function accountManagersSaveNote(body = {}, req = null, accessContext = nu
       noteRevision: Number(data?.revision || 0),
       noteUpdatedAt: data?.updated_at || null,
       noteUpdatedByEmail: data?.updated_by_email || null,
+      noteSourceGroupAccountNameKey: data?.source_group_account_name_key || null,
+      noteSourceGroupAccountName: data?.source_group_account_name || '',
     },
+    propagatedChildCount: propagateToChildren ? (salesforceGroup.childAccounts || []).length : 0,
   };
 }
 
@@ -1634,7 +1676,11 @@ async function accountManagersSave(body = {}, req = null, accessContext = null) 
     throw appError(error.message, 400);
   }
 
-  const salesforceGroup = await currentEligibleAccountGroup(body);
+  const requestedPropagation = body.propagateToChildren !== false;
+  const salesforceGroup = await currentEligibleAccountGroup(body, {
+    includeGroupChildren: requestedPropagation,
+  });
+  const propagateToChildren = salesforceGroup.isGroupAccount && requestedPropagation;
   let selectedProfiles = [];
   if (managerUserIds.length) {
     const { data, error } = await client
@@ -1656,7 +1702,7 @@ async function accountManagersSave(body = {}, req = null, accessContext = null) 
   }
 
   const rpcName = salesforceGroup.isGroupAccount
-    ? 'save_account_manager_group_family'
+    ? 'save_account_manager_group_with_scope'
     : 'save_account_manager_group';
   const rpcPayload = {
     p_account_name_key: salesforceGroup.accountNameKey,
@@ -1671,6 +1717,7 @@ async function accountManagersSave(body = {}, req = null, accessContext = null) 
   };
   if (salesforceGroup.isGroupAccount) {
     rpcPayload.p_child_account_name_keys = salesforceGroup.childAccountNameKeys || [];
+    rpcPayload.p_propagate_to_children = propagateToChildren;
   }
   const { data, error } = await client.rpc(rpcName, rpcPayload);
   if (error) {
@@ -1696,7 +1743,7 @@ async function accountManagersRetrySync(body = {}, req = null, accessContext = n
   const [groupResult, assignmentResult] = await Promise.all([
     client
       .from('account_manager_groups')
-      .select('account_name_key,account_name,revision')
+      .select('account_name_key,account_name,propagate_to_children,revision')
       .eq('account_name_key', key)
       .maybeSingle(),
     client
@@ -1714,6 +1761,7 @@ async function accountManagersRetrySync(body = {}, req = null, accessContext = n
     accountName: groupResult.data.account_name,
     managerUserIds: (assignmentResult.data || []).map((row) => row.manager_user_id),
     expectedRevision: groupResult.data.revision,
+    propagateToChildren: groupResult.data.propagate_to_children === true,
   }, req, accessContext);
 }
 

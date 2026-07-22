@@ -1,6 +1,16 @@
-export const APP_VERSION = '2.0.24';
+export const APP_VERSION = '2.0.25';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '2.0.25',
+    releasedAt: '2026-07-22',
+    title: 'Selectable GROUP update scope',
+    changes: [
+      'Added GROUP-only and GROUP-and-children choices when editing Account managers.',
+      'Added the same explicit scope choices for Account notes, with atomic child-note replacement.',
+      'Updated Account Managers methodology and row feedback to explain inheritance, Salesforce writes, and copied notes.',
+    ],
+  },
   {
     version: '2.0.24',
     releasedAt: '2026-07-22',

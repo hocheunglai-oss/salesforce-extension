@@ -149,7 +149,10 @@ export function buildAccountManagerRows({
 
   return groupEligibleSalesforceAccounts(salesforceAccounts).map((group) => {
     const directStored = storedByKey.get(group.accountNameKey);
-    const inheritedKey = !directStored && group.parentGroupKeys.length === 1 && storedByKey.has(group.parentGroupKeys[0])
+    const parentStored = group.parentGroupKeys.length === 1
+      ? storedByKey.get(group.parentGroupKeys[0])
+      : null;
+    const inheritedKey = !directStored && parentStored?.propagate_to_children === true
       ? group.parentGroupKeys[0]
       : '';
     const assignmentKey = directStored ? group.accountNameKey : inheritedKey;
@@ -173,6 +176,7 @@ export function buildAccountManagerRows({
       parentGroupNames: group.parentGroupNames,
       childAccountCount: group.childAccountCount,
       childAccountNames: group.childAccountNames,
+      propagateToChildren: group.isGroupAccount && directStored?.propagate_to_children === true,
       managers,
       managerCount: managers.length,
       assignmentSource: directStored ? 'direct' : inheritedKey ? 'group' : 'none',
@@ -181,6 +185,8 @@ export function buildAccountManagerRows({
       noteRevision: Number(note.revision || 0),
       noteUpdatedAt: note.updated_at || null,
       noteUpdatedByEmail: note.updated_by_email || null,
+      noteSourceGroupAccountNameKey: note.source_group_account_name_key || null,
+      noteSourceGroupAccountName: note.source_group_account_name || '',
       revision: Number(directStored?.revision || 0),
       updatedAt: stored.updated_at || null,
       updatedByEmail: stored.updated_by_email || null,

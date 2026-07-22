@@ -14,6 +14,7 @@ import {
 const migrationUrl = new URL('../supabase/migrations/20260722053528_account_managers.sql', import.meta.url);
 const groupPropagationMigrationUrl = new URL('../supabase/migrations/20260722064852_account_manager_group_propagation.sql', import.meta.url);
 const notesMigrationUrl = new URL('../supabase/migrations/20260722073320_account_manager_notes.sql', import.meta.url);
+const groupScopesMigrationUrl = new URL('../supabase/migrations/20260722075428_account_manager_group_scopes.sql', import.meta.url);
 const functionUrl = new URL('../api/functions/[name].js', import.meta.url);
 const pageUrl = new URL('../src/pages/AccountManagers.jsx', import.meta.url);
 
@@ -120,6 +121,8 @@ test('joins assignments by Account name and reports Salesforce drift', () => {
       revision: 2,
       updated_at: '2026-07-22T07:00:00Z',
       updated_by_email: 'vincent@example.com',
+      source_group_account_name_key: accountNameKey('GROUP - SHARED'),
+      source_group_account_name: 'GROUP - SHARED',
     }],
   });
 
@@ -131,6 +134,7 @@ test('joins assignments by Account name and reports Salesforce drift', () => {
   assert.equal(rows[0].accountNote, 'Review coverage monthly.');
   assert.equal(rows[0].noteRevision, 2);
   assert.equal(rows[0].noteUpdatedByEmail, 'vincent@example.com');
+  assert.equal(rows[0].noteSourceGroupAccountName, 'GROUP - SHARED');
 });
 
 test('inherits ordered GROUP managers when a child has no direct override', () => {
@@ -160,6 +164,7 @@ test('inherits ordered GROUP managers when a child has no direct override', () =
       account_name: groupAccount.Name,
       revision: 3,
       salesforce_sync_status: 'synced',
+      propagate_to_children: true,
     }],
     assignments: [
       { account_name_key: groupKey, manager_user_id: first, assignment_order: 1 },
@@ -185,6 +190,45 @@ test('inherits ordered GROUP managers when a child has no direct override', () =
   assert.equal(child.accountNote, '');
   assert.equal(child.revision, 0);
   assert.equal(child.salesforceSyncStatus, 'synced');
+  assert.equal(group.propagateToChildren, true);
+});
+
+test('does not inherit GROUP managers when child propagation is disabled', () => {
+  const userId = '11111111-1111-4111-8111-111111111111';
+  const groupAccount = buyer({
+    Id: '0012x00000GROUPAAB',
+    Name: 'GROUP - SHARED',
+    RecordType: { Name: 'Group' },
+    Account_Manager__c: 'Vincent Lee',
+  });
+  const groupKey = accountNameKey(groupAccount.Name);
+  const rows = buildAccountManagerRows({
+    salesforceAccounts: [
+      groupAccount,
+      buyer({
+        Id: '0012x00000CHILDAAB',
+        Name: 'Shared Child',
+        ParentId: groupAccount.Id,
+        Parent: { Name: groupAccount.Name },
+        RecordType: { Name: 'Buyer' },
+        Account_Manager__c: 'Vincent Lee',
+      }),
+    ],
+    managedGroups: [{
+      account_name_key: groupKey,
+      account_name: groupAccount.Name,
+      revision: 4,
+      salesforce_sync_status: 'synced',
+      propagate_to_children: false,
+    }],
+    assignments: [{ account_name_key: groupKey, manager_user_id: userId, assignment_order: 1 }],
+    profiles: [{ id: userId, full_name: 'Vincent Lee', email: 'vincent@example.com', active: true }],
+  });
+
+  const child = rows.find((row) => row.accountName === 'Shared Child');
+  assert.deepEqual(child.managers, []);
+  assert.equal(child.assignmentSource, 'none');
+  assert.equal(child.inheritedFromGroupName, '');
 });
 
 test('expands legacy initials and replaces Sam Yip with Vincent Lee', () => {
@@ -198,6 +242,7 @@ test('migration enforces limits, revision locking, RLS, and service-role-only ac
   const sql = await readFile(migrationUrl, 'utf8');
   const groupSql = await readFile(groupPropagationMigrationUrl, 'utf8');
   const notesSql = await readFile(notesMigrationUrl, 'utf8');
+  const scopeSql = await readFile(groupScopesMigrationUrl, 'utf8');
   assert.match(sql, /assignment_order between 1 and 3/i);
   assert.match(sql, /unique \(account_name_key, assignment_order\)/i);
   assert.match(sql, /enable row level security/i);
@@ -220,6 +265,13 @@ test('migration enforces limits, revision locking, RLS, and service-role-only ac
   assert.match(notesSql, /account_manager_note_updated/i);
   assert.match(notesSql, /revoke all on function public\.save_account_manager_note[\s\S]*from public, anon, authenticated/i);
   assert.match(notesSql, /grant execute on function public\.save_account_manager_note[\s\S]*to service_role/i);
+  assert.match(scopeSql, /add column if not exists propagate_to_children boolean not null default false/i);
+  assert.match(scopeSql, /create or replace function public\.save_account_manager_group_with_scope/i);
+  assert.match(scopeSql, /p_propagate_to_children boolean/i);
+  assert.match(scopeSql, /create or replace function public\.save_account_manager_note_family/i);
+  assert.match(scopeSql, /source_group_account_name_key/i);
+  assert.match(scopeSql, /account_manager_note_group_propagated/i);
+  assert.match(scopeSql, /revoke all on function public\.save_account_manager_note_family[\s\S]*from public, anon, authenticated/i);
 });
 
 test('server revalidates eligibility and updates every grouped Salesforce Account atomically', async () => {
@@ -227,8 +279,9 @@ test('server revalidates eligibility and updates every grouped Salesforce Accoun
   assert.match(source, /Inactive_Suspended__c = false[\s\S]*Is_Broker__c = true OR Buyer_Payment_Term__c != null/i);
   assert.match(source, /Account_Manager__c supports only[\s\S]*Increase it to 255/i);
   assert.match(source, /body: \{ allOrNone: true, records \}/);
-  assert.match(source, /save_account_manager_group_family/);
-  assert.match(source, /childRecords\s*\.map\(\(record\) => accountNameKey\(record\.Name\)\)/);
+  assert.match(source, /save_account_manager_group_with_scope/);
+  assert.match(source, /p_propagate_to_children = propagateToChildren/);
+  assert.match(source, /childAccountsByKey/);
   assert.match(source, /RecordType\.Name/);
   assert.match(source, /ParentId IN/);
   assert.match(source, /accountManagersList: \['buyers_administrator'\]/);
@@ -236,8 +289,9 @@ test('server revalidates eligibility and updates every grouped Salesforce Accoun
   assert.match(source, /accountManagersSaveNote: \['buyers_administrator'\]/);
   assert.match(source, /accountManagersRetrySync: \['buyers_administrator'\]/);
   assert.match(source, /from\('account_manager_notes'\)/);
-  assert.match(source, /rpc\('save_account_manager_note'/);
-  assert.match(source, /includeGroupChildren: false/);
+  assert.match(source, /save_account_manager_note_family/);
+  assert.match(source, /propagateToChildren: groupResult\.data\.propagate_to_children === true/);
+  assert.match(source, /enforceSalesforceWriteLimit: false/);
 });
 
 test('page edits rows inline with explicit save and cancel controls', async () => {
@@ -254,6 +308,10 @@ test('page edits rows inline with explicit save and cancel controls', async () =
   assert.match(source, /<DragDropContext/);
   assert.match(source, /Drag to change priority/);
   assert.match(source, /Edit GROUP Account managers\?/);
+  assert.match(source, /Edit GROUP Account note\?/);
+  assert.match(source, /GROUP \+ children/);
+  assert.match(source, /GROUP only stops inheritance/);
+  assert.match(source, /GROUP \+ children replaces existing child notes/);
   assert.match(source, /Account Managers Methodology/);
   assert.match(source, /Search Accounts, groups or managers/);
   assert.match(source, /Unassigned/);
