@@ -26,7 +26,8 @@ test('server validates Salesforce Accounts and enforces eligibility again before
   assert.match(source, /referenceTo\?\.includes\('Account'\)/);
   assert.match(source, /\['Company_Code__c', 'string'\]/);
   assert.match(source, /\['Is_Broker__c', 'boolean'\]/);
-  assert.match(source, /WHERE ParentId != null[\s\S]*Inactive_Suspended__c = false[\s\S]*GROUP BY ParentId/);
+  assert.match(source, /WHERE Inactive_Suspended__c = false[\s\S]*Is_Broker__c = false[\s\S]*Buyer_Payment_Term__c != null OR RecordType\.Name = 'Group'/);
+  assert.match(source, /childCount: children\.length/);
   assert.match(source, /eligibleChildCount: children\.length/);
   assert.match(source, /buyerInvoiceReminderRulesList: \['buyer_invoices'\]/);
   assert.match(source, /report\.paymentReminderRulesAvailable !== true/);

@@ -1,6 +1,15 @@
-export const APP_VERSION = '2.0.28';
+export const APP_VERSION = '2.0.29';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '2.0.29',
+    releasedAt: '2026-07-23',
+    title: 'Eligible GROUP child counts',
+    changes: [
+      'Limited Reminder Rules direct-child totals to active Buyer, Buyer & Supplier, and GROUP Accounts.',
+      'Excluded inactive, pure Supplier, and Broker Accounts from displayed counts and reminder propagation.',
+    ],
+  },
   {
     version: '2.0.28',
     releasedAt: '2026-07-23',

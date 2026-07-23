@@ -1904,24 +1904,6 @@ async function loadBuyerReminderAccountDirectory() {
   return records;
 }
 
-async function loadBuyerReminderGroupChildCounts() {
-  const result = await queryResult(`
-    SELECT ParentId parentAccountId, COUNT(Id) childCount
-    FROM Account
-    WHERE ParentId != null
-      AND Inactive_Suspended__c = false
-    GROUP BY ParentId
-  `, { limit: 10000 });
-  const records = result.records || [];
-  if (Number(result.totalSize || 0) > records.length) {
-    throw appError('The Salesforce Account hierarchy exceeds 10,000 direct-parent groups. Reminder Rules cannot show reliable child counts.', 503);
-  }
-  return new Map(records.map((record) => [
-    canonicalSalesforceAccountId(record.parentAccountId),
-    Number(record.childCount || 0),
-  ]).filter(([accountId]) => Boolean(accountId)));
-}
-
 async function currentBuyerReminderAccount(accountId, { includeChildren = false } = {}) {
   await buyerReminderAccountSchema();
   const canonicalId = canonicalSalesforceAccountId(accountId);
@@ -1975,10 +1957,9 @@ function serializeBuyerReminderRule(rule = null) {
 
 async function buyerInvoiceReminderRulesList(body = {}, req = null, accessContext = null) {
   const client = accessContext?.client || supabaseAdminClient();
-  const [salesforceAccounts, stored, directChildCounts] = await Promise.all([
+  const [salesforceAccounts, stored] = await Promise.all([
     loadBuyerReminderAccountDirectory(),
     loadBuyerInvoiceReminderRules({ required: true, client }),
-    loadBuyerReminderGroupChildCounts(),
   ]);
   const ruleMap = buyerReminderRuleMap(stored.rules);
   const snapshots = salesforceAccounts.map(buyerReminderAccountSnapshot);
@@ -2010,7 +1991,7 @@ async function buyerInvoiceReminderRulesList(body = {}, req = null, accessContex
       directRule: serializeBuyerReminderRule(directRule),
       revision: Number(directRule?.revision || 0),
       inheritToChildren: directRule?.inheritToChildren === true,
-      childCount: directChildCounts.get(account.accountId) || 0,
+      childCount: children.length,
       eligibleChildCount: children.length,
       childOverrideCount,
       updatedAt: (directRule || inheritedRule)?.updatedAt || null,
