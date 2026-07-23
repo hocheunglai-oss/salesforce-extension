@@ -1,6 +1,15 @@
-export const APP_VERSION = '2.0.30';
+export const APP_VERSION = '2.0.31';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '2.0.31',
+    releasedAt: '2026-07-23',
+    title: 'Payment reminder button states',
+    changes: [
+      'Changed payment reminders sent today to a blue tick button.',
+      'Kept blocked payment reminders as disabled blue-cross buttons that cannot open STEM details.',
+    ],
+  },
   {
     version: '2.0.30',
     releasedAt: '2026-07-23',

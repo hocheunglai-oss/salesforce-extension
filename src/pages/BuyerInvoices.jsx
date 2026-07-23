@@ -2927,18 +2927,34 @@ export default function BuyerInvoices() {
                               : reminderSentToday
                                 ? 'Payment reminder sent today'
                                 : 'Send payment reminder'}
-                            aria-label={`Send payment reminder for ${row.stemName || 'invoice'}`}
+                            aria-label={row.paymentReminderEligible !== true
+                              ? `Payment reminder unavailable for ${row.stemName || 'invoice'}`
+                              : reminderSentToday
+                                ? `Payment reminder sent today for ${row.stemName || 'invoice'}`
+                                : `Send payment reminder for ${row.stemName || 'invoice'}`}
+                            data-reminder-state={row.paymentReminderEligible !== true
+                              ? 'blocked'
+                              : reminderSentToday
+                                ? 'sent-today'
+                                : 'available'}
                             disabled={row.paymentReminderEligible !== true}
                             className={cn(
-                              'h-7 px-2',
-                              reminderSentToday && 'border-zinc-700 bg-zinc-800 text-white shadow-sm hover:bg-zinc-700 hover:text-white',
+                              'h-7 px-2 disabled:!pointer-events-auto',
+                              row.paymentReminderEligible !== true
+                                && 'cursor-not-allowed border-blue-300 bg-blue-50 text-blue-700 disabled:opacity-100',
+                              reminderSentToday
+                                && 'border-blue-300 bg-blue-50 text-blue-700 shadow-sm hover:bg-blue-100 hover:text-blue-800',
                             )}
                             onClick={(event) => {
                               event.stopPropagation();
                               setSelectedReminderRow(row);
                             }}
                           >
-                            <Mail className="h-3.5 w-3.5" />
+                            {row.paymentReminderEligible !== true
+                              ? <X className="h-3.5 w-3.5" />
+                              : reminderSentToday
+                                ? <Check className="h-3.5 w-3.5" />
+                                : <Mail className="h-3.5 w-3.5" />}
                           </Button>
                           <Button
                             type="button"

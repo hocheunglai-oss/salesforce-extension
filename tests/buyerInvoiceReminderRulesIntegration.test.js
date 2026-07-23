@@ -52,5 +52,10 @@ test('Buyer Invoices exposes rule management and disables restricted selections'
   assert.match(source, /accountClKeyLabel\(account\.clKey\)/);
   assert.doesNotMatch(source, /account\.accountId\.slice\(-6\)/);
   assert.match(source, /disabled=\{row\.paymentReminderEligible !== true\}/);
+  assert.match(source, /data-reminder-state=\{row\.paymentReminderEligible !== true/);
+  assert.match(source, /'blocked'[\s\S]*'sent-today'[\s\S]*'available'/);
+  assert.match(source, /row\.paymentReminderEligible !== true[\s\S]*<X className="h-3\.5 w-3\.5"/);
+  assert.match(source, /reminderSentToday[\s\S]*<Check className="h-3\.5 w-3\.5"/);
+  assert.match(source, /disabled:!pointer-events-auto/);
   assert.match(source, /disabled=\{!reminderEligible\}/);
 });
