@@ -16,6 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useDownloadAuthToken, withDownloadAuth } from '@/lib/authenticatedDownloadUrl';
 import { numericValue, textValue } from '@/lib/displayValue';
+import { disputeClosureDefaults } from '@/lib/disputeWorkflowDefaults';
 import { DISPUTE_BUYER_CLOSE_REASONS, DISPUTE_SUPPLIER_CLOSE_REASONS } from '@/lib/disputeWorkflowOptions';
 import { cn } from '@/lib/utils';
 
@@ -135,6 +136,30 @@ const preferredSupplierCurrency = (stem, supplierAccountId, current = '') => {
   const normalizedCurrent = String(current || '').trim().toUpperCase();
   return currencies.includes(normalizedCurrent) ? normalizedCurrent : currencies[0] || normalizedCurrent || 'USD';
 };
+
+const buyerReceivableBalance = (stem) => numberOrNull(
+  stem?._Buyer_Finance_Row?.receivableBalance ?? stem?.Receivable_Balance__c
+);
+
+const supplierPayableBalance = (stem, supplierAccountId) => {
+  const accountKey = String(supplierAccountId || '').slice(0, 15);
+  const invoiceBalances = supplierInvoiceExposureRows(stem, supplierAccountId)
+    .map((row) => numberOrNull(row.payableBalance))
+    .filter((value) => value != null);
+  if (invoiceBalances.length) return invoiceBalances.reduce((sum, value) => sum + value, 0);
+
+  const financeBalances = (stem?._Supplier_Finance_Rows_All || [])
+    .filter((row) => String(row.supplierAccountId || row.accountId || '').slice(0, 15) === accountKey)
+    .map((row) => numberOrNull(row.payableBalance))
+    .filter((value) => value != null);
+  return financeBalances.length ? financeBalances.reduce((sum, value) => sum + value, 0) : null;
+};
+
+const closureDefaultsForParty = (stem, actionType, supplierAccountId) => disputeClosureDefaults({
+  actionType,
+  buyerReceivableBalance: buyerReceivableBalance(stem),
+  supplierPayableBalance: supplierPayableBalance(stem, supplierAccountId),
+});
 
 function supplierAllocationPreview(stem, action = {}) {
   const disputeAmount = Math.max(0, numberOrNull(action.disputeAmount ?? action.amount) || 0);
@@ -469,6 +494,7 @@ function ActionForm({ stem, selectedAccountIds, draftAction, setDraftAction, onA
     const nextPartyType = actionPartyType(value);
     const nextParties = partyOptions(stem, nextPartyType, selectedAccountIds);
     const firstParty = nextParties[0];
+    const closureDefaults = closureDefaultsForParty(stem, value, firstParty?.accountId);
     setAction({
       ...DEFAULT_ACTION,
       actionType: value,
@@ -479,12 +505,15 @@ function ActionForm({ stem, selectedAccountIds, draftAction, setDraftAction, onA
       partyAccountId: firstParty?.accountId || '',
       partyKey: firstParty?.partyKey || '',
       currencyIsoCode: nextPartyType === 'supplier' ? preferredSupplierCurrency(stem, firstParty?.accountId) : 'USD',
+      closeReason: closureDefaults.closeReason,
+      balancePaymentInstruction: closureDefaults.balancePaymentInstruction,
     });
   };
 
   const updateParty = (key) => {
     const selected = parties.find((party) => party.key === key);
     if (!selected) return;
+    const closureDefaults = closureDefaultsForParty(stem, draftAction.actionType, selected.accountId);
     setAction((prev) => ({
       ...prev,
       partyType: selected.type,
@@ -495,6 +524,8 @@ function ActionForm({ stem, selectedAccountIds, draftAction, setDraftAction, onA
       partyKey: selected.partyKey,
       currencyIsoCode: selected.type === 'supplier' ? preferredSupplierCurrency(stem, selected.accountId, prev.currencyIsoCode) : prev.currencyIsoCode,
       invoiceAllocations: [],
+      closeReason: closureDefaults.closeReason,
+      balancePaymentInstruction: closureDefaults.balancePaymentInstruction,
     }));
   };
 
@@ -756,7 +787,7 @@ function WorkflowRulesModal({ open, onClose, capabilities }) {
               <section><h3 className="font-semibold text-foreground">Party identity rules</h3><div className="mt-2 space-y-2 text-muted-foreground"><p>Traders select at least one Account from the STEM buyer, line-item suppliers, or extra-cost suppliers.</p><p>Cancelled line and extra-cost items remain eligible. Repeated supplier IDs with different payment terms count once, while different Account IDs remain separate.</p><p>Party identity and workflow instructions are stored in Supabase and revalidated against Salesforce Account lookups.</p></div></section>
               <section><h3 className="font-semibold text-foreground">Commercial outcome and payment-state rules</h3><div className="mt-2 space-y-2 text-muted-foreground"><p>The trader enters an amount only after a buyer credit note or supplier recovery is commercially agreed. The invoice currency is read from Salesforce; it is selectable only when the same supplier has invoices in more than one currency.</p><p>Each supplier invoice is shown as Unpaid, Partly paid, or Paid. FCOS allocates the approved supplier recovery oldest invoice first, subject to trader edits and server revalidation.</p><p>The unpaid portion becomes an urgent Do not pay instruction as soon as the draft is saved. Finance may acknowledge that hold before approval, but cannot settle or release it until approval. Later supplier payments automatically move value from Do not pay to Get back paid amount without changing the approved commercial total.</p></div></section>
               <section><h3 className="font-semibold text-foreground">Refund, offset, and evidence</h3><div className="mt-2 space-y-2 text-muted-foreground"><p>After approval, Finance selects cash refund from the supplier or an offset against an eligible open invoice for the same supplier Account and currency. FCOS only creates instructions and suggestions; it never creates Salesforce payments, refunds, credit notes, or offsets.</p><p>Settled requires the settlement date and either a supplier credit note/supporting document linked to the instruction or a Finance reference. Documents remain stored in Salesforce Files and can optionally link to an invoice instruction.</p><p>The editable default name is the Hong Kong date plus From/To Buyer/Supplier. Duplicate names on the same STEM receive -1, -2, and so on.</p></div></section>
-              <section><h3 className="font-semibold text-foreground">Closure rules</h3><div className="mt-2 space-y-2 text-muted-foreground"><p>Use Close dispute with supplier when no supplier recovery is required; select a close reason and balance-payment instruction instead of entering zero. Use Close dispute with buyer when no buyer credit note is required.</p><p>Every commercial outcome that was added must be Settled or Not Required. Every generated supplier invoice instruction must also be Settled or Not Required. All required documents must remain linked and a final closure note is mandatory.</p><p>Existing legacy supplier actions with no commercial amount remain blocked until corrected. Closure succeeds only after the current Salesforce party structure is revalidated and Salesforce Dispute Status is written back as Closed.</p></div></section>
+              <section><h3 className="font-semibold text-foreground">Closure rules</h3><div className="mt-2 space-y-2 text-muted-foreground"><p>Use Close dispute with supplier when no supplier recovery is required; select a close reason and balance-payment instruction instead of entering zero. FCOS prefills No Balance Payment when that supplier's payable balance is zero. Use Close dispute with buyer when no buyer credit note is required.</p><p>When the buyer receivable balance is zero, FCOS prefills Full payment received from buyer for either closure outcome. These are editable defaults; the trader remains responsible for confirming the actual closure terms.</p><p>Every commercial outcome that was added must be Settled or Not Required. Every generated supplier invoice instruction must also be Settled or Not Required. All required documents must remain linked and a final closure note is mandatory.</p><p>Existing legacy supplier actions with no commercial amount remain blocked until corrected. Closure succeeds only after the current Salesforce party structure is revalidated and Salesforce Dispute Status is written back as Closed.</p></div></section>
               <section><h3 className="font-semibold text-foreground">Salesforce status values</h3><p className="mt-2 text-muted-foreground">No Dispute, Open - Trader Review, Pending Approval, Revision Requested, Rejected, Approved - Pending Accounting, Accounting In Progress, Settled - Ready to Close, Closed.</p></section>
             </TabsContent>
           </Tabs>

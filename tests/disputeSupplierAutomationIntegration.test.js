@@ -90,4 +90,7 @@ test('supplier no-recovery closure bypasses financial allocation requirements', 
   assert.match(apiSource, /DISPUTE_LEGACY_SUPPLIER_FINANCIAL_ACTIONS/);
   assert.match(apiSource, /actionType === 'close_supplier_dispute' && !balancePaymentInstruction/);
   assert.match(apiSource, /choose Close dispute with supplier \(no recovery\)/);
+  assert.match(workflowPageSource, /closureDefaultsForParty/);
+  assert.match(workflowPageSource, /supplierPayableBalance\(stem, supplierAccountId\)/);
+  assert.match(workflowPageSource, /buyerReceivableBalance\(stem\)/);
 });

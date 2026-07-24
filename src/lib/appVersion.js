@@ -1,6 +1,16 @@
-export const APP_VERSION = '2.0.39';
+export const APP_VERSION = '2.0.40';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '2.0.40',
+    releasedAt: '2026-07-24',
+    title: 'Balance-aware dispute closure defaults',
+    changes: [
+      'Prefilled No Balance Payment for supplier no-recovery closure when the selected supplier payable balance is zero.',
+      'Prefilled Full payment received from buyer for buyer and supplier closure when the buyer receivable balance is zero.',
+      'Kept both defaults editable and avoided treating missing Salesforce balances as zero.',
+    ],
+  },
   {
     version: '2.0.39',
     releasedAt: '2026-07-24',
