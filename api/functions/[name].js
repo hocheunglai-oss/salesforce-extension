@@ -56,6 +56,14 @@ import {
   isSalesforceDisputeClosed,
   projectExternalDisputeClosure,
 } from '../_disputeWorkflowStatus.js';
+import {
+  allocateSupplierDispute,
+  normalizeSupplierInvoiceExposure,
+  resolveSupplierSettlementSchema,
+  supplierAllocationFingerprint,
+  supplierInstructionRows,
+  validSupplierSettlementPayment,
+} from '../_disputeSupplierSettlement.js';
 
 async function readBody(req) {
   if (req.method === 'GET') return {};
@@ -419,6 +427,9 @@ const HANDLER_MODULE_ACCESS = {
   disputeWorkflowApprove: ['disputes'],
   disputeWorkflowReject: ['disputes'],
   disputeWorkflowAccountingUpdate: ['disputes'],
+  disputeWorkflowSupplierInstructionUpdate: ['disputes'],
+  disputeWorkflowSupplierOffsetOptions: ['disputes'],
+  disputeWorkflowSupplierAmountAmend: ['disputes'],
   disputeWorkflowUploadDocument: ['disputes'],
   disputeWorkflowDocuments: ['disputes'],
   disputeWorkflowMarkExecuted: ['disputes'],
@@ -3102,6 +3113,7 @@ const DISPUTE_BETA_ACTION_LABELS = {
   hold_supplier_payment: 'Hold supplier payment',
   pay_full_supplier_invoice: 'Pay full supplier invoice amount',
   deduct_specific_amount: 'Deduct specific amount',
+  resolve_supplier_dispute: 'Resolve supplier dispute',
   issue_buyer_credit_note: 'Issue credit note to buyer',
   close_supplier_dispute: 'Close dispute with supplier',
   close_buyer_dispute: 'Close dispute with buyer',
@@ -3121,8 +3133,18 @@ const DISPUTE_WORKFLOW_DOCUMENT_DIRECTIONS = new Set(['from_supplier', 'to_suppl
 const DISPUTE_BETA_CASE_SELECT = 'id,stem_id,stem_name,buyer_name,supplier_names,current_salesforce_status,workflow_status,approval_status,latest_note,submitted_by,submitted_by_email,submitted_at,approved_by,approved_by_email,approved_at,rejected_by,rejected_by_email,rejected_at,rejection_reason,closed_by,closed_by_email,closed_at,settlement_financials,settlement_pnl,salesforce_writeback_status,salesforce_writeback_error,created_at,updated_at';
 const DISPUTE_WORKFLOW_PARTY_SELECT = 'id,case_id,stem_id,account_id,account_key,account_name,roles,source_types,source_record_ids,payment_terms,products,cancelled_source_only,created_by,created_by_email,updated_by,updated_by_email,created_at,updated_at';
 const DISPUTE_BETA_ACTION_SELECT = 'id,case_id,stem_id,party_id,party_side,action_type,action_label,amount,special_sell_price,special_buy_price,quantity,quantity_unit,close_reason,balance_payment_instruction,description,requires_attachment,execution_status,instruction_reference,instruction_date,instruction_amount,settlement_reference,settlement_date,settlement_amount,accounting_note,accounting_by,accounting_by_email,accounting_at,executed_by,executed_by_email,executed_at,execution_note,created_by,created_by_email,updated_by,updated_by_email,created_at,updated_at';
+const DISPUTE_SUPPLIER_INSTRUCTION_SELECT = 'id,case_id,action_id,party_id,stem_id,instruction_type,recovery_method,source_supplier_invoice_id,source_supplier_invoice_name,source_stem_id,target_supplier_invoice_id,target_supplier_invoice_name,target_stem_id,currency_iso_code,planned_amount,allocated_amount,source_invoice_amount_snapshot,source_payable_balance_snapshot,source_paid_amount_snapshot,target_invoice_amount_snapshot,target_payable_amount_snapshot,source_invoice_snapshot,source_stem_snapshot,target_invoice_snapshot,target_stem_snapshot,payment_snapshot,allocation_fingerprint,status,matched_salesforce_payment_id,matching_payment_snapshot,instruction_reference,instruction_date,instruction_amount,settlement_reference,settlement_date,settlement_amount,accounting_note,revision,created_by,created_by_email,updated_by,updated_by_email,created_at,updated_at,acknowledged_by,acknowledged_by_email,acknowledged_at,settled_by,settled_by_email,settled_at';
+const DISPUTE_SUPPLIER_INSTRUCTION_STATUSES = new Set([
+  'Provisional Hold',
+  'Hold Acknowledged',
+  'Pending Accounting',
+  'Instruction Issued',
+  'Settled',
+  'Not Required',
+  'Superseded',
+]);
 const DISPUTE_BETA_EVENT_SELECT = 'id,case_id,action_id,stem_id,event_type,note,metadata,actor_user_id,actor_email,created_at';
-const DISPUTE_WORKFLOW_DOCUMENT_SELECT = 'id,case_id,action_id,party_id,party_side,stem_id,party_name,party_account_id,document_direction,document_type,original_filename,requested_filename,smart_filename,upload_status,content_type,file_extension,content_size,salesforce_content_version_id,salesforce_content_document_id,salesforce_linked_record_id,salesforce_url,uploaded_by,uploaded_by_email,created_at';
+const DISPUTE_WORKFLOW_DOCUMENT_SELECT = 'id,case_id,action_id,supplier_instruction_id,party_id,party_side,stem_id,party_name,party_account_id,document_direction,document_type,original_filename,requested_filename,smart_filename,upload_status,content_type,file_extension,content_size,salesforce_content_version_id,salesforce_content_document_id,salesforce_linked_record_id,salesforce_url,uploaded_by,uploaded_by_email,created_at';
 
 function canonicalDisputeBetaCloseReason(value, allowed = []) {
   const raw = String(value || '').trim();
@@ -9838,14 +9860,21 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
   const supplierInvoiceFields = supplierInvoiceDescribe.fields || [];
   const supplierInvoiceFieldNames = supplierInvoiceFields.map((f) => f.name);
   const supplierInvoiceFieldByName = Object.fromEntries(supplierInvoiceFields.map((field) => [field.name, field]));
-  const supplierInvoicePayableField = ['Payable_Balance__c', 'Balance__c', 'Actual_Balance__c', 'Outstanding_Balance__c']
-    .find((field) => supplierInvoiceFieldNames.includes(field));
-  const supplierInvoiceAmountFields = ['Invoice_Amount__c', 'Calculated_Amount__c', 'Amount__c', 'Total_Amount__c']
-    .filter((field) => supplierInvoiceFieldNames.includes(field));
-  const supplierInvoiceDueDateFields = ['Invoice_Due_Date__c', 'Due_Date__c', 'Payment_Due_Date__c', 'Pay_Term_Date__c', 'Supplier_Pay_Term_Date__c']
-    .filter((field) => supplierInvoiceFieldNames.includes(field));
-  const supplierInvoiceSupplierFields = ['Supplier__c', 'Expected_Supplier__c', 'Substitute_Supplier__c']
-    .filter((field) => supplierInvoiceFieldNames.includes(field));
+  const paymentDescribe = await salesforceObjectFields({ objectName: 'Payment__c' }).catch(() => ({ fields: [] }));
+  const paymentFields = paymentDescribe.fields || [];
+  const paymentFieldNames = new Set(paymentFields.map((field) => field.name));
+  const supplierSettlementSchema = resolveSupplierSettlementSchema({
+    supplierInvoiceFields,
+    paymentFields,
+  });
+  const supplierInvoicePayableField = supplierSettlementSchema.invoicePayableField;
+  const supplierInvoiceAmountFields = supplierSettlementSchema.invoiceAmountField
+    ? [supplierSettlementSchema.invoiceAmountField]
+    : [];
+  const supplierInvoiceDueDateFields = supplierSettlementSchema.invoiceDueDateFields;
+  const supplierInvoiceDateFields = supplierSettlementSchema.invoiceDateFields;
+  const supplierInvoiceStatusFields = supplierSettlementSchema.invoiceStatusFields;
+  const supplierInvoiceSupplierFields = supplierSettlementSchema.supplierAccountFields;
   const supplierInvoiceSupplierNameRelationships = supplierInvoiceSupplierFields
     .map((field) => supplierInvoiceFieldByName[field]?.relationshipName)
     .filter(Boolean);
@@ -9908,6 +9937,7 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
   const extraCostsByStem = {};
   const supplierInvoicesByStem = {};
   const supplierInvoicePayableByStem = {};
+  const supplierPaymentsByInvoice = {};
 
   if (stemIds.length) {
     const [lineItemArrays, extraCostArrays, supplierInvoiceArrays] = await Promise.all([
@@ -9953,9 +9983,14 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
               'STEM__c',
               'Id',
               'Name',
+              'CreatedDate',
+              'LastModifiedDate',
               ...supplierInvoiceAmountFields,
               ...supplierInvoiceDueDateFields,
+              ...supplierInvoiceDateFields,
+              ...supplierInvoiceStatusFields,
               supplierInvoicePayableField,
+              supplierInvoiceFieldNames.includes('CurrencyIsoCode') ? 'CurrencyIsoCode' : null,
               supplierInvoiceFieldNames.includes('Supplier_Name__c') ? 'Supplier_Name__c' : null,
               ...supplierInvoiceSupplierFields,
               ...supplierInvoiceSupplierNameRelationships.map((relationship) => `${relationship}.Name`),
@@ -9986,6 +10021,47 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
       supplierInvoicesByStem[invoice.STEM__c].push(invoice);
       if (supplierInvoicePayableField == null) continue;
       supplierInvoicePayableByStem[invoice.STEM__c] = (supplierInvoicePayableByStem[invoice.STEM__c] || 0) + Number(invoice[supplierInvoicePayableField] || 0);
+    }
+
+    const supplierInvoiceIds = supplierInvoiceArrays.flat().map((invoice) => invoice.Id).filter(isSalesforceId);
+    if (supplierInvoiceIds.length && supplierSettlementSchema.paymentSupplierInvoiceFields.length && supplierSettlementSchema.paymentAmountField) {
+      const paymentSelectFields = [
+        'Id',
+        paymentFieldNames.has('Name') ? 'Name' : null,
+        paymentFieldNames.has('CreatedDate') ? 'CreatedDate' : null,
+        paymentFieldNames.has('CurrencyIsoCode') ? 'CurrencyIsoCode' : null,
+        supplierSettlementSchema.paymentAmountField,
+        supplierSettlementSchema.paymentDateField,
+        ...supplierSettlementSchema.paymentSupplierInvoiceFields,
+        ...supplierSettlementSchema.paymentStatusFields,
+      ].filter(Boolean);
+      await Promise.all(supplierSettlementSchema.paymentSupplierInvoiceFields.map(async (lookupField) => {
+        const paymentChunks = await Promise.all(chunkIds(supplierInvoiceIds).map((chunk) => {
+          const inList = chunk.map((id) => `'${escapeSoql(id)}'`).join(',');
+          return queryRows(`
+            SELECT ${[...new Set(paymentSelectFields)].join(', ')}
+            FROM Payment__c
+            WHERE ${lookupField} IN (${inList})
+            ORDER BY ${supplierSettlementSchema.paymentDateField || 'CreatedDate'} DESC NULLS LAST
+            LIMIT 5000
+          `, { limit: 5000, softFail: true });
+        }));
+        for (const payment of paymentChunks.flat()) {
+          if (!validSupplierSettlementPayment(payment, supplierSettlementSchema.paymentStatusFields)) continue;
+          const invoiceId = payment[lookupField];
+          if (!isSalesforceId(invoiceId)) continue;
+          if (!supplierPaymentsByInvoice[invoiceId]) supplierPaymentsByInvoice[invoiceId] = [];
+          if (supplierPaymentsByInvoice[invoiceId].some((existing) => existing.id === payment.Id)) continue;
+          supplierPaymentsByInvoice[invoiceId].push({
+            id: payment.Id,
+            name: payment.Name || payment.Id,
+            amount: Number(payment[supplierSettlementSchema.paymentAmountField] || 0),
+            date: payment[supplierSettlementSchema.paymentDateField] || payment.CreatedDate || null,
+            currencyIsoCode: payment.CurrencyIsoCode || 'USD',
+            status: supplierSettlementSchema.paymentStatusFields.map((field) => payment[field]).find(Boolean) || null,
+          });
+        }
+      }));
     }
 
   }
@@ -10150,6 +10226,7 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
         const payableBalance = stem.Payable_Balance__c ?? (supplierInvoicePayable != null ? supplierInvoicePayable : null);
         const supplierFinanceByAccount = new Map();
         const supplierInvoiceDueRows = [];
+        const supplierInvoiceExposureRows = [];
         const addSupplierFinanceByAccount = (accountId, supplierName, invoiceAmount = 0, supplierPayableBalance = 0) => {
           const accountKey = disputeSalesforceIdKey(accountId);
           if (!accountKey) return;
@@ -10181,6 +10258,47 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
           addSupplierFinanceByAccount(supplierAccountId, supplierName, invoiceAmount, supplierPayableBalance);
           const dueDateField = supplierInvoiceDueDateFields.find((field) => invoice[field]);
           const dueDate = dueDateField ? invoice[dueDateField] : null;
+          const invoiceDateField = supplierInvoiceDateFields.find((field) => invoice[field]);
+          const invoiceDate = invoiceDateField ? invoice[invoiceDateField] : invoice.CreatedDate || null;
+          const invoiceStatus = supplierInvoiceStatusFields.map((field) => invoice[field]).find(Boolean) || null;
+          const paymentRows = supplierPaymentsByInvoice[invoice.Id] || [];
+          const positivePayments = paymentRows.filter((payment) => Number(payment.amount) > 0)
+            .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+          const supplierRefunds = Math.abs(paymentRows.filter((payment) => Number(payment.amount) < 0)
+            .reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+          const exposure = normalizeSupplierInvoiceExposure({
+            supplierInvoiceId: invoice.Id,
+            invoiceName: invoice.Name,
+            sourceStemId: stem.Id,
+            supplierAccountId,
+            supplierName,
+            currencyIsoCode: invoice.CurrencyIsoCode || 'USD',
+            dueDate,
+            invoiceDate,
+            createdDate: invoice.CreatedDate || null,
+            invoiceAmount,
+            payableBalance: supplierPayableBalance,
+            status: invoiceStatus,
+            payments: paymentRows,
+          });
+          const netPaymentAudit = positivePayments - supplierRefunds;
+          const expectedPaid = Math.max(0, exposure.invoiceAmount - exposure.payableBalance);
+          const exposureWarnings = [...exposure.warnings];
+          if (!disputeSalesforceIdKey(supplierAccountId)) {
+            exposureWarnings.push('Supplier invoice has no valid supplier Account lookup.');
+          }
+          if (paymentRows.length && Math.abs(expectedPaid - netPaymentAudit) > 0.05) {
+            exposureWarnings.push('Payment records do not reconcile to the current payable balance; Finance confirmation is required.');
+          }
+          supplierInvoiceExposureRows.push({
+            ...exposure,
+            payments: paymentRows,
+            positivePayments,
+            supplierRefunds,
+            netPaymentAudit,
+            status: invoiceStatus,
+            warnings: [...new Set(exposureWarnings)],
+          });
           const productRows = supplierInvoiceProductRowsById.get(invoice.Id) || [];
           if (productRows.length) {
             for (const productRow of productRows) {
@@ -10238,6 +10356,7 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
         const supplierCandidateRows = disputePartyRegistry.suppliers.map((party) => {
           const finance = supplierFinanceByAccount.get(party.accountKey);
           const paymentDueDates = paymentDueDatesForAccount(party.accountKey);
+          const invoices = supplierInvoiceExposureRows.filter((invoice) => disputeSalesforceIdKey(invoice.supplierAccountId) === party.accountKey);
           return {
             ...party,
             supplierName: party.name,
@@ -10247,6 +10366,7 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
             paymentDueDate: paymentDueDates[0] || null,
             paymentDueDates,
             payableBalance: finance?.payableBalance ?? null,
+            invoices,
           };
         });
         const disputedSupplierKeys = new Set(disputePartyRegistry.suppliers.map((party) => party.accountKey));
@@ -10263,6 +10383,7 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
               paymentDueDate: paymentDueDates[0] || null,
               paymentDueDates,
               payableBalance: finance.payableBalance,
+              invoices: supplierInvoiceExposureRows.filter((invoice) => disputeSalesforceIdKey(invoice.supplierAccountId) === finance.accountKey),
             };
           });
         const supplierFinanceRowsAll = [...supplierCandidateRows, ...supplierFinanceOnlyRows];
@@ -10295,6 +10416,8 @@ async function salesforceDisputeStems(body, req = null, accessContext = null) {
           _Dispute_Parties: disputePartyRegistry,
           _Buyer_Invoice_Due_Date: stem.Invoice_Due_Date__c || stem.Due_Date__c || stem.Buyer_Pay_Term_Date__c || null,
           _Supplier_Invoice_Due_Rows: supplierInvoiceDueRows,
+          _Supplier_Invoice_Exposure_Rows: supplierInvoiceExposureRows,
+          _Supplier_Settlement_Schema: supplierSettlementSchema,
           _Stem_Base_Pnl: stemBasePnl,
           _Buyer_Dispute_Label: null,
           _Supplier_Dispute_Label: null,
@@ -10468,10 +10591,76 @@ function serializeDisputeBetaCase(row) {
   };
 }
 
-function serializeDisputeBetaAction(row, partyMap = new Map()) {
+function serializeDisputeSupplierInstruction(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    caseId: row.case_id,
+    actionId: row.action_id,
+    partyId: row.party_id,
+    stemId: row.stem_id,
+    instructionType: row.instruction_type,
+    instructionLabel: row.instruction_type === 'withhold_unpaid' ? 'Do not pay' : 'Get back paid amount',
+    recoveryMethod: row.recovery_method || null,
+    sourceSupplierInvoiceId: row.source_supplier_invoice_id,
+    sourceSupplierInvoiceName: row.source_supplier_invoice_name || '',
+    sourceStemId: row.source_stem_id || row.stem_id,
+    targetSupplierInvoiceId: row.target_supplier_invoice_id || null,
+    targetSupplierInvoiceName: row.target_supplier_invoice_name || '',
+    targetStemId: row.target_stem_id || null,
+    currencyIsoCode: row.currency_iso_code || 'USD',
+    plannedAmount: Number(row.planned_amount || 0),
+    allocatedAmount: Number(row.allocated_amount || 0),
+    sourceInvoiceAmountSnapshot: Number(row.source_invoice_amount_snapshot || 0),
+    sourcePayableBalanceSnapshot: Number(row.source_payable_balance_snapshot || 0),
+    sourcePaidAmountSnapshot: Number(row.source_paid_amount_snapshot || 0),
+    targetInvoiceAmountSnapshot: row.target_invoice_amount_snapshot == null ? null : Number(row.target_invoice_amount_snapshot),
+    targetPayableAmountSnapshot: row.target_payable_amount_snapshot == null ? null : Number(row.target_payable_amount_snapshot),
+    sourceInvoiceSnapshot: row.source_invoice_snapshot || {},
+    sourceStemSnapshot: row.source_stem_snapshot || {},
+    targetInvoiceSnapshot: row.target_invoice_snapshot || {},
+    targetStemSnapshot: row.target_stem_snapshot || {},
+    paymentSnapshot: row.payment_snapshot || {},
+    allocationFingerprint: row.allocation_fingerprint || '',
+    status: row.status || 'Pending Accounting',
+    matchedSalesforcePaymentId: row.matched_salesforce_payment_id || null,
+    matchingPaymentSnapshot: row.matching_payment_snapshot || {},
+    instructionReference: row.instruction_reference || '',
+    instructionDate: row.instruction_date || null,
+    instructionAmount: row.instruction_amount == null ? null : Number(row.instruction_amount),
+    settlementReference: row.settlement_reference || '',
+    settlementDate: row.settlement_date || null,
+    settlementAmount: row.settlement_amount == null ? null : Number(row.settlement_amount),
+    accountingNote: row.accounting_note || '',
+    revision: Number(row.revision || 1),
+    acknowledgedBy: row.acknowledged_by || null,
+    acknowledgedByEmail: row.acknowledged_by_email || null,
+    acknowledgedAt: row.acknowledged_at || null,
+    settledBy: row.settled_by || null,
+    settledByEmail: row.settled_by_email || null,
+    settledAt: row.settled_at || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function serializeDisputeBetaAction(row, partyMap = new Map(), instructionRows = []) {
   if (!row) return null;
   const party = partyMap.get(row.party_id) || null;
   const actionType = row.action_type;
+  const supplierInstructions = instructionRows
+    .filter((instruction) => instruction.action_id === row.id && instruction.status !== 'Superseded')
+    .map(serializeDisputeSupplierInstruction);
+  const invoiceAllocationMap = new Map();
+  for (const instruction of supplierInstructions) {
+    const existing = invoiceAllocationMap.get(instruction.sourceSupplierInvoiceId) || {
+      supplierInvoiceId: instruction.sourceSupplierInvoiceId,
+      invoiceName: instruction.sourceSupplierInvoiceName,
+      amount: instruction.allocatedAmount,
+    };
+    existing.amount = Math.max(existing.amount, instruction.allocatedAmount);
+    invoiceAllocationMap.set(instruction.sourceSupplierInvoiceId, existing);
+  }
   const closeReason = actionType === 'close_supplier_dispute'
     ? canonicalDisputeBetaCloseReason(row.close_reason, DISPUTE_BETA_SUPPLIER_CLOSE_REASONS)
     : actionType === 'close_buyer_dispute'
@@ -10491,6 +10680,20 @@ function serializeDisputeBetaAction(row, partyMap = new Map()) {
     actionType,
     actionLabel: row.action_label || DISPUTE_BETA_ACTION_LABELS[actionType] || actionType,
     amount: row.amount == null ? null : Number(row.amount),
+    disputeAmount: row.amount == null ? null : Number(row.amount),
+    currencyIsoCode: supplierInstructions[0]?.currencyIsoCode || 'USD',
+    invoiceAllocations: [...invoiceAllocationMap.values()],
+    supplierInstructions,
+    totalDoNotPay: supplierInstructions
+      .filter((instruction) => instruction.instructionType === 'withhold_unpaid')
+      .reduce((sum, instruction) => sum + instruction.plannedAmount, 0),
+    totalGetBackPaid: supplierInstructions
+      .filter((instruction) => instruction.instructionType === 'get_back_paid')
+      .reduce((sum, instruction) => sum + instruction.plannedAmount, 0),
+    supplierDisputeAmountRequired: row.party_side === 'supplier' && row.amount == null,
+    supplierInstructionConversionRequired: row.party_side === 'supplier'
+      && row.amount != null
+      && row.action_type !== 'resolve_supplier_dispute',
     specialSellPrice: row.special_sell_price == null ? null : Number(row.special_sell_price),
     specialBuyPrice: row.special_buy_price == null ? null : Number(row.special_buy_price),
     quantity: row.quantity == null ? null : Number(row.quantity),
@@ -10532,6 +10735,7 @@ function serializeDisputeWorkflowDocument(row) {
     id: row.id,
     caseId: row.case_id,
     actionId: row.action_id || null,
+    supplierInstructionId: row.supplier_instruction_id || null,
     partyId: row.party_id,
     stemId: row.stem_id,
     partySide: row.party_side,
@@ -10578,7 +10782,7 @@ function serializeDisputeBetaEvent(row) {
 
 function disputeBetaActionPartyType(actionType, inputPartyType) {
   if (actionType === 'issue_buyer_credit_note' || actionType === 'close_buyer_dispute') return 'buyer';
-  if (actionType === 'hold_supplier_payment' || actionType === 'pay_full_supplier_invoice' || actionType === 'deduct_specific_amount' || actionType === 'close_supplier_dispute') return 'supplier';
+  if (actionType === 'hold_supplier_payment' || actionType === 'pay_full_supplier_invoice' || actionType === 'deduct_specific_amount' || actionType === 'resolve_supplier_dispute' || actionType === 'close_supplier_dispute') return 'supplier';
   return String(inputPartyType || '').toLowerCase() === 'buyer' ? 'buyer' : 'supplier';
 }
 
@@ -10589,6 +10793,10 @@ function normalizeDisputeBetaAction(input = {}, caseRow, profile = {}, registry)
   const party = canonicalDisputeActionTarget(input, partySide, registry);
   const amount = decimalOrNull(input.amount);
   if (actionType === 'deduct_specific_amount' && amount == null) throw appError('Deduction amount is required.', 400);
+  if (actionType === 'resolve_supplier_dispute' && (amount == null || amount < 0)) throw appError('Supplier dispute amount is required.', 400);
+  if (actionType === 'resolve_supplier_dispute' && amount === 0 && !String(input.description || '').trim()) {
+    throw appError('Explain why no supplier recovery is required when the dispute amount is zero.', 400);
+  }
   if (actionType === 'issue_buyer_credit_note' && amount == null) throw appError('Credit note amount is required.', 400);
   const closeReasonInput = String(input.closeReason || input.close_reason || '').trim();
   const closeReason = actionType === 'close_supplier_dispute'
@@ -10605,6 +10813,10 @@ function normalizeDisputeBetaAction(input = {}, caseRow, profile = {}, registry)
   const balancePaymentInstruction = String(input.balancePaymentInstruction || input.balance_payment_instruction || '').trim() || null;
   if (balancePaymentInstruction && !DISPUTE_BETA_BALANCE_PAYMENT_INSTRUCTIONS.includes(balancePaymentInstruction)) {
     throw appError('Valid balance payment instruction is required.', 400);
+  }
+  const currencyIsoCode = String(input.currencyIsoCode || input.currency_iso_code || 'USD').trim().toUpperCase() || 'USD';
+  if (actionType === 'resolve_supplier_dispute' && !/^[A-Z]{3}$/.test(currencyIsoCode)) {
+    throw appError('Supplier dispute currency must be a three-letter ISO code.', 400);
   }
 
   return {
@@ -10624,8 +10836,50 @@ function normalizeDisputeBetaAction(input = {}, caseRow, profile = {}, registry)
     description: String(input.description || '').trim(),
     requires_attachment: Boolean(input.requiresAttachment ?? input.requires_attachment),
     execution_status: normalizeDisputeBetaStatus(input.accountingStatus || input.executionStatus || input.execution_status, DISPUTE_BETA_EXECUTION_STATUSES, 'Pending Accounting'),
+    currency_iso_code: currencyIsoCode,
+    invoice_allocations: Array.isArray(input.invoiceAllocations || input.invoice_allocations)
+      ? (input.invoiceAllocations || input.invoice_allocations)
+      : [],
     updated_by: profile.id,
     updated_by_email: profile.email,
+  };
+}
+
+function prepareSupplierSettlementAction(action, currentStem) {
+  if (action.action_type !== 'resolve_supplier_dispute') return action;
+  const schema = currentStem?._Supplier_Settlement_Schema;
+  if (!schema?.valid) {
+    throw appError(`Supplier payment automation is unavailable: ${(schema?.issues || ['Salesforce invoice/payment schema is incomplete.']).join(' ')}`, 400);
+  }
+  const accountKey = disputeSalesforceIdKey(action.party_account_key);
+  const invoices = (currentStem?._Supplier_Invoice_Exposure_Rows || [])
+    .filter((invoice) => disputeSalesforceIdKey(invoice.supplierAccountId) === accountKey);
+  const invalidInvoices = invoices.filter((invoice) => (invoice.warnings || []).some((warning) => /no valid supplier Account lookup|negative|exceeds its invoice amount/i.test(warning)));
+  if (invalidInvoices.length) {
+    throw appError('Correct the supplier invoice Account or payable balance in Salesforce before saving this supplier resolution.', 400);
+  }
+  const allocation = allocateSupplierDispute({
+    invoices,
+    disputeAmount: action.amount,
+    currencyIsoCode: action.currency_iso_code,
+    invoiceAllocations: action.invoice_allocations,
+  });
+  return {
+    ...action,
+    invoice_allocations: allocation.allocations.map((item) => ({
+      supplier_invoice_id: item.supplierInvoiceId,
+      amount: item.allocatedAmount,
+    })),
+    supplier_allocation: allocation,
+    supplier_instructions: supplierInstructionRows(allocation).map((instruction) => ({
+      ...instruction,
+      source_stem_id: currentStem.Id,
+      source_stem_snapshot: {
+        stemId: currentStem.Id,
+        stemName: currentStem._Display_Name || currentStem.Name || currentStem.KeyStem__c || '',
+        deliveryDate: currentStem.Delivery_Date__c || null,
+      },
+    })),
   };
 }
 
@@ -10645,6 +10899,10 @@ function calculateDisputeBetaSettlement(actions = []) {
     if (action.action_type === 'deduct_specific_amount' || action.actionType === 'deduct_specific_amount') {
       supplierImpact += amount;
       lines.push({ label: action.action_label || action.actionLabel || 'Supplier deduction', impact: amount });
+    }
+    if (action.action_type === 'resolve_supplier_dispute' || action.actionType === 'resolve_supplier_dispute') {
+      supplierImpact += amount;
+      lines.push({ label: action.action_label || action.actionLabel || 'Supplier dispute resolution', impact: amount });
     }
 
     const buyerCreditNote = Number(action.special_sell_price ?? action.specialSellPrice);
@@ -10685,7 +10943,7 @@ function calculateDisputeBetaSettlement(actions = []) {
 async function loadDisputeBetaWorkflowMap(client, stemIds = []) {
   const ids = [...new Set(stemIds.filter(Boolean))];
   if (!ids.length) return {};
-  const [casesRes, partiesRes, actionsRes, eventsRes, documentsRes] = await Promise.all([
+  const [casesRes, partiesRes, actionsRes, instructionsRes, eventsRes, documentsRes] = await Promise.all([
     client
       .from('dispute_beta_cases')
       .select(DISPUTE_BETA_CASE_SELECT)
@@ -10698,6 +10956,11 @@ async function loadDisputeBetaWorkflowMap(client, stemIds = []) {
     client
       .from('dispute_beta_actions')
       .select(DISPUTE_BETA_ACTION_SELECT)
+      .in('stem_id', ids)
+      .order('created_at', { ascending: true }),
+    client
+      .from('dispute_workflow_supplier_instructions')
+      .select(DISPUTE_SUPPLIER_INSTRUCTION_SELECT)
       .in('stem_id', ids)
       .order('created_at', { ascending: true }),
     client
@@ -10716,29 +10979,34 @@ async function loadDisputeBetaWorkflowMap(client, stemIds = []) {
   if (casesRes.error) throw casesRes.error;
   if (partiesRes.error) throw partiesRes.error;
   if (actionsRes.error) throw actionsRes.error;
+  if (instructionsRes.error) throw instructionsRes.error;
   if (eventsRes.error) throw eventsRes.error;
   if (documentsRes.error) throw documentsRes.error;
 
   const map = {};
   for (const row of casesRes.data || []) {
-    map[row.stem_id] = { case: serializeDisputeBetaCase(row), parties: [], actions: [], events: [], documents: [] };
+    map[row.stem_id] = { case: serializeDisputeBetaCase(row), parties: [], actions: [], supplierInstructions: [], events: [], documents: [] };
   }
   const partyById = new Map();
   for (const row of partiesRes.data || []) {
     partyById.set(row.id, row);
-    if (!map[row.stem_id]) map[row.stem_id] = { case: null, parties: [], actions: [], events: [], documents: [] };
+    if (!map[row.stem_id]) map[row.stem_id] = { case: null, parties: [], actions: [], supplierInstructions: [], events: [], documents: [] };
     map[row.stem_id].parties.push(serializeDisputeWorkflowParty(row));
   }
+  for (const row of instructionsRes.data || []) {
+    if (!map[row.stem_id]) map[row.stem_id] = { case: null, parties: [], actions: [], supplierInstructions: [], events: [], documents: [] };
+    map[row.stem_id].supplierInstructions.push(serializeDisputeSupplierInstruction(row));
+  }
   for (const row of actionsRes.data || []) {
-    if (!map[row.stem_id]) map[row.stem_id] = { case: null, parties: [], actions: [], events: [], documents: [] };
-    map[row.stem_id].actions.push(serializeDisputeBetaAction(row, partyById));
+    if (!map[row.stem_id]) map[row.stem_id] = { case: null, parties: [], actions: [], supplierInstructions: [], events: [], documents: [] };
+    map[row.stem_id].actions.push(serializeDisputeBetaAction(row, partyById, instructionsRes.data || []));
   }
   for (const row of eventsRes.data || []) {
-    if (!map[row.stem_id]) map[row.stem_id] = { case: null, parties: [], actions: [], events: [], documents: [] };
+    if (!map[row.stem_id]) map[row.stem_id] = { case: null, parties: [], actions: [], supplierInstructions: [], events: [], documents: [] };
     map[row.stem_id].events.push(serializeDisputeBetaEvent(row));
   }
   for (const row of documentsRes.data || []) {
-    if (!map[row.stem_id]) map[row.stem_id] = { case: null, parties: [], actions: [], events: [], documents: [] };
+    if (!map[row.stem_id]) map[row.stem_id] = { case: null, parties: [], actions: [], supplierInstructions: [], events: [], documents: [] };
     map[row.stem_id].documents.push(serializeDisputeWorkflowDocument(row));
   }
   return map;
@@ -10789,20 +11057,143 @@ function disputePartyRowMap(partyRows = []) {
 }
 
 async function loadDisputeWorkflowActions(client, caseId) {
-  const [partyRows, actionsResult] = await Promise.all([
+  const [partyRows, actionsResult, instructionsResult] = await Promise.all([
     loadDisputeWorkflowParties(client, caseId),
     client
       .from('dispute_beta_actions')
       .select(DISPUTE_BETA_ACTION_SELECT)
       .eq('case_id', caseId)
       .order('created_at', { ascending: true }),
+    client
+      .from('dispute_workflow_supplier_instructions')
+      .select(DISPUTE_SUPPLIER_INSTRUCTION_SELECT)
+      .eq('case_id', caseId)
+      .order('created_at', { ascending: true }),
   ]);
   if (actionsResult.error) throw actionsResult.error;
+  if (instructionsResult.error) throw instructionsResult.error;
+  const instructionRows = instructionsResult.data || [];
   return {
     partyRows,
     actionRows: actionsResult.data || [],
-    actions: (actionsResult.data || []).map((row) => serializeDisputeBetaAction(row, disputePartyRowMap(partyRows))),
+    instructionRows,
+    supplierInstructions: instructionRows.map(serializeDisputeSupplierInstruction),
+    actions: (actionsResult.data || []).map((row) => serializeDisputeBetaAction(row, disputePartyRowMap(partyRows), instructionRows)),
   };
+}
+
+function storedSupplierInvoiceAllocations(instructionRows = []) {
+  const allocations = new Map();
+  for (const instruction of instructionRows.filter((row) => row.status !== 'Superseded')) {
+    const id = instruction.source_supplier_invoice_id;
+    if (!id) continue;
+    allocations.set(id, Math.max(
+      Number(allocations.get(id) || 0),
+      Number(instruction.allocated_amount || 0),
+    ));
+  }
+  return [...allocations].map(([supplierInvoiceId, amount]) => ({ supplierInvoiceId, amount }));
+}
+
+function currentSupplierActionAllocation(action, partyRows, instructionRows, currentStem) {
+  const party = disputePartyRowMap(partyRows).get(action.party_id);
+  if (!party) throw appError('Supplier resolution has no selected Account.', 400);
+  const accountKey = disputeSalesforceIdKey(party.account_id);
+  const actionInstructions = instructionRows.filter((instruction) => instruction.action_id === action.id && instruction.status !== 'Superseded');
+  const currencyIsoCode = actionInstructions[0]?.currency_iso_code || 'USD';
+  const invoices = (currentStem?._Supplier_Invoice_Exposure_Rows || [])
+    .filter((invoice) => disputeSalesforceIdKey(invoice.supplierAccountId) === accountKey);
+  if (!currentStem?._Supplier_Settlement_Schema?.valid) {
+    throw appError(`Supplier payment automation is unavailable: ${(currentStem?._Supplier_Settlement_Schema?.issues || []).join(' ')}`, 409);
+  }
+  return allocateSupplierDispute({
+    invoices,
+    disputeAmount: action.amount,
+    currencyIsoCode,
+    invoiceAllocations: storedSupplierInvoiceAllocations(actionInstructions),
+  });
+}
+
+function supplierInstructionStateChanged(currentRows = [], allocation = {}) {
+  const activeRows = currentRows.filter((row) => row.status !== 'Superseded');
+  const currentFingerprint = activeRows.map((row) => row.allocation_fingerprint).find(Boolean);
+  if (currentFingerprint) return currentFingerprint !== allocation.fingerprint;
+  const currentShape = activeRows
+    .map((row) => `${row.source_supplier_invoice_id}:${row.instruction_type}:${Number(row.planned_amount || 0).toFixed(2)}`)
+    .sort();
+  const nextShape = supplierInstructionRows(allocation)
+    .map((row) => `${row.source_supplier_invoice_id}:${row.instruction_type}:${Number(row.planned_amount || 0).toFixed(2)}`)
+    .sort();
+  return JSON.stringify(currentShape) !== JSON.stringify(nextShape);
+}
+
+function assertSupplierAllocationsCurrent(actions, partyRows, instructionRows, currentStem) {
+  for (const action of actions.filter((row) => row.action_type === 'resolve_supplier_dispute')) {
+    const allocation = currentSupplierActionAllocation(action, partyRows, instructionRows, currentStem);
+    const actionInstructions = instructionRows.filter((instruction) => instruction.action_id === action.id);
+    if (supplierInstructionStateChanged(actionInstructions, allocation)) {
+      throw appError('Supplier invoice payment data changed. Save the draft again to review the updated Do not pay and Get back paid amount allocation.', 409);
+    }
+  }
+}
+
+async function reconcileApprovedSupplierInstructions(client, caseRow, partyRows, actionRows, instructionRows, currentStem, profile) {
+  if (caseRow.approval_status !== 'Approved' || caseRow.workflow_status === 'Closed') {
+    return { changed: false, instructionRows };
+  }
+  const reconciliations = [];
+  for (const action of actionRows.filter((row) => row.action_type === 'resolve_supplier_dispute')) {
+    const allocation = currentSupplierActionAllocation(action, partyRows, instructionRows, currentStem);
+    const currentRows = instructionRows.filter((instruction) => instruction.action_id === action.id);
+    if (!supplierInstructionStateChanged(currentRows, allocation)) continue;
+    const sourceStemSnapshot = {
+      stemId: currentStem.Id,
+      stemName: currentStem._Display_Name || currentStem.Name || currentStem.KeyStem__c || '',
+      deliveryDate: currentStem.Delivery_Date__c || null,
+    };
+    reconciliations.push({
+      action_id: action.id,
+      instructions: supplierInstructionRows(allocation).map((desired) => ({
+        ...desired,
+        party_id: action.party_id,
+        source_stem_id: caseRow.stem_id,
+        source_stem_snapshot: sourceStemSnapshot,
+        allocation_fingerprint: allocation.fingerprint,
+      })),
+      note: `Supplier payment changed. Do not pay is now ${allocation.totalDoNotPay.toFixed(2)} ${allocation.currencyIsoCode}; get back paid amount is ${allocation.totalGetBackPaid.toFixed(2)} ${allocation.currencyIsoCode}.`,
+      metadata: {
+        disputeAmount: allocation.disputeAmount,
+        totalDoNotPay: allocation.totalDoNotPay,
+        totalGetBackPaid: allocation.totalGetBackPaid,
+        allocationFingerprint: allocation.fingerprint,
+      },
+    });
+  }
+  if (!reconciliations.length) {
+    if (
+      caseRow.salesforce_writeback_status === 'failed'
+      && ['Approved - Pending Accounting', 'Accounting In Progress', 'Settled - Ready to Close'].includes(caseRow.workflow_status)
+    ) {
+      await writeDisputeWorkflowStatusToSalesforce(client, caseRow, profile, caseRow.workflow_status);
+      return { changed: false, writebackRetried: true, instructionRows };
+    }
+    return { changed: false, writebackRetried: false, instructionRows };
+  }
+  const { error: reconciliationError } = await client.rpc('reconcile_dispute_supplier_instructions', {
+    p_case_id: caseRow.id,
+    p_reconciliations: reconciliations,
+    p_actor: { id: profile.id, email: profile.email },
+  });
+  if (reconciliationError) throw reconciliationError;
+  const updatedCase = await getDisputeBetaCase(client, caseRow.id);
+  await writeDisputeWorkflowStatusToSalesforce(client, updatedCase, profile, 'Accounting In Progress');
+  const { data, error } = await client
+    .from('dispute_workflow_supplier_instructions')
+    .select(DISPUTE_SUPPLIER_INSTRUCTION_SELECT)
+    .eq('case_id', caseRow.id)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return { changed: true, writebackRetried: false, instructionRows: data || [] };
 }
 
 async function loadDisputeWorkflowDocuments(client, caseId) {
@@ -11006,14 +11397,62 @@ function validateStoredDisputeActions(actions, partyRows, registry) {
   return actions || [];
 }
 
+function supplierActionsMissingDisputeAmount(actions = []) {
+  return actions.filter((action) => action.party_side === 'supplier' && action.amount == null);
+}
+
+function assertSupplierDisputeAmounts(actions = []) {
+  const missing = supplierActionsMissingDisputeAmount(actions);
+  if (missing.length) {
+    throw appError('Supplier dispute amount required. Record an amount, or explicitly enter zero with a no-recovery explanation, before this workflow can progress.', 409);
+  }
+  const legacy = actions.filter((action) => action.party_side === 'supplier' && action.action_type !== 'resolve_supplier_dispute');
+  if (legacy.length) {
+    throw appError('Convert each legacy supplier action into invoice-level Finance instructions before this workflow can progress.', 409);
+  }
+}
+
 async function disputeBetaList(body = {}, req, accessContext = null) {
   const { client, profile } = accessContext || await requireActiveUser(req);
   const salesforceData = await salesforceDisputeStems({ limit: body.limit || 10000 }, null, accessContext || { client, profile });
   const rows = salesforceData.rows || [];
-  const [workflowMap, capabilities] = await Promise.all([
+  let [workflowMap, capabilities] = await Promise.all([
     loadDisputeBetaWorkflowMap(client, rows.map((row) => row.Id)),
     disputeWorkflowCapabilities(client, profile),
   ]);
+  let reconciled = false;
+  const reconciliationErrors = new Map();
+  for (const stem of rows) {
+    const workflow = workflowMap[stem.Id];
+    if (
+      workflow?.case?.approvalStatus !== 'Approved'
+      || workflow.case.workflowStatus === 'Closed'
+      || !workflow.actions.some((action) => action.actionType === 'resolve_supplier_dispute')
+      || !stem._Supplier_Settlement_Schema?.valid
+    ) continue;
+    try {
+      const caseRow = await getDisputeBetaCase(client, workflow.case.id);
+      const stored = await loadDisputeWorkflowActions(client, caseRow.id);
+      const result = await reconcileApprovedSupplierInstructions(
+        client,
+        caseRow,
+        stored.partyRows,
+        stored.actionRows,
+        stored.instructionRows,
+        stem,
+        profile,
+      );
+      reconciled = reconciled || result.changed || result.writebackRetried;
+    } catch (error) {
+      reconciliationErrors.set(stem.Id, error.message || 'Supplier payment reconciliation failed.');
+    }
+  }
+  if (reconciled) {
+    workflowMap = await loadDisputeBetaWorkflowMap(client, rows.map((row) => row.Id));
+  }
+  for (const [stemId, error] of reconciliationErrors) {
+    if (workflowMap[stemId]) workflowMap[stemId].reconciliationError = error;
+  }
   projectExternallyClosedDisputeWorkflows(rows, workflowMap);
   return {
     isDisputeAdmin: capabilities.canApprove,
@@ -11022,7 +11461,7 @@ async function disputeBetaList(body = {}, req, accessContext = null) {
     requiredSalesforceFieldsMissing: true,
     fieldWarning: 'Disputed Accounts, approval, accounting, documents, and audit state are stored in Supabase. Salesforce receives only the high-level STEM Dispute Status.',
     rows: rows.map((row) => {
-      const workflow = workflowMap[row.Id] || { case: null, parties: [], actions: [], events: [], documents: [] };
+      const workflow = workflowMap[row.Id] || { case: null, parties: [], actions: [], supplierInstructions: [], events: [], documents: [] };
       if (!workflow.case) workflow.case = legacyClosedDisputeCase(row);
       return {
         ...row,
@@ -11083,10 +11522,10 @@ async function disputeBetaSaveDraft(body = {}, req, accessContext = null) {
   }
   const registry = disputeRegistryWithSelection(candidateRegistry, selectedPartyRows);
   const caseInput = { id: existingCase?.id || null, stem_id: stemId };
-  const normalizedActions = (body.actions || []).map((action) => ({
+  const normalizedActions = (body.actions || []).map((action) => prepareSupplierSettlementAction({
     id: String(action.id || '').trim() || null,
     ...normalizeDisputeBetaAction(action, caseInput, profile, registry),
-  }));
+  }, currentStem));
   const seenActionSides = new Set();
   for (const action of normalizedActions) {
     const key = `${action.party_account_key}:${action.party_side}`;
@@ -11131,7 +11570,7 @@ async function disputeBetaSaveDraft(body = {}, req, accessContext = null) {
     profile,
     'Open - Trader Review',
   );
-  const [{ partyRows, actions }, documents, statusCase] = await Promise.all([
+  const [{ partyRows, actions, supplierInstructions }, documents, statusCase] = await Promise.all([
     workflowPromise,
     documentsPromise,
     statusPromise,
@@ -11141,6 +11580,7 @@ async function disputeBetaSaveDraft(body = {}, req, accessContext = null) {
     case: serializeDisputeBetaCase(statusCase),
     parties: partyRows.map(serializeDisputeWorkflowParty),
     actions,
+    supplierInstructions,
     events: events.map(serializeDisputeBetaEvent),
     documents: documents.map(serializeDisputeWorkflowDocument),
   };
@@ -11152,10 +11592,12 @@ async function disputeBetaSubmitApproval(body = {}, req, accessContext = null) {
   await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
   const currentStem = await loadCurrentDisputeStem(caseRow.stem_id, accessContext || { client, profile });
   assertSalesforceDisputeIsOpen(currentStem);
-  const { partyRows, actionRows, actions: serializedActions } = await loadDisputeWorkflowActions(client, caseRow.id);
+  const { partyRows, actionRows, instructionRows, actions: serializedActions } = await loadDisputeWorkflowActions(client, caseRow.id);
   const registry = assertValidDisputeParties(currentStem, partyRows);
   const actions = validateStoredDisputeActions(actionRows, partyRows, registry);
   if (!actions?.length) throw appError('Add at least one trader action before submitting for approval.', 400);
+  assertSupplierDisputeAmounts(actions);
+  assertSupplierAllocationsCurrent(actions, partyRows, instructionRows, currentStem);
   if (!['Draft', 'Rejected', 'Revision Requested'].includes(caseRow.workflow_status)) {
     throw appError('Only draft, rejected, or revision-requested cases can be submitted.', 400);
   }
@@ -11196,58 +11638,58 @@ async function disputeBetaApprove(body = {}, req, accessContext = null) {
   if (caseRow.approval_status !== 'Pending Approval') throw appError('Only pending Dispute Workflow cases can be approved.', 400);
   const currentStem = await loadCurrentDisputeStem(caseRow.stem_id, accessContext || { client, profile });
   assertSalesforceDisputeIsOpen(currentStem);
-  const { partyRows, actionRows } = await loadDisputeWorkflowActions(client, caseRow.id);
+  const { partyRows, actionRows, instructionRows } = await loadDisputeWorkflowActions(client, caseRow.id);
   const registry = assertValidDisputeParties(currentStem, partyRows);
   const actions = validateStoredDisputeActions(actionRows, partyRows, registry);
+  assertSupplierDisputeAmounts(actions);
+  assertSupplierAllocationsCurrent(actions, partyRows, instructionRows, currentStem);
   await assertRequiredDisputeDocuments(client, actions || []);
-  const salesforceCase = await writeDisputeWorkflowStatusToSalesforce(client, caseRow, profile, 'Approved - Pending Accounting', { required: true });
-  const nowIso = new Date().toISOString();
-  const { error: accountingResetError } = await client
-    .from('dispute_beta_actions')
-    .update({
-      execution_status: 'Pending Accounting',
-      instruction_reference: null,
-      instruction_date: null,
-      instruction_amount: null,
-      settlement_reference: null,
-      settlement_date: null,
-      settlement_amount: null,
-      accounting_note: null,
-      accounting_by: null,
-      accounting_by_email: null,
-      accounting_at: null,
-      updated_at: nowIso,
-    })
-    .eq('case_id', caseRow.id);
-  if (accountingResetError) throw accountingResetError;
-  const { data: updatedCase, error } = await client
+  const salesforceStatus = 'Approved - Pending Accounting';
+  const { error: pendingError } = await client
     .from('dispute_beta_cases')
     .update({
-      workflow_status: 'Approved - Pending Accounting',
-      approval_status: 'Approved',
-      approved_by: profile.id,
-      approved_by_email: profile.email,
-      approved_at: nowIso,
-      rejection_reason: null,
-      updated_at: nowIso,
+      salesforce_writeback_status: 'not_started',
+      salesforce_writeback_error: null,
+      updated_at: new Date().toISOString(),
     })
-    .eq('id', salesforceCase.id)
-    .select(DISPUTE_BETA_CASE_SELECT)
-    .single();
-  if (error) throw error;
-  await writeDisputeBetaEvent(client, updatedCase, 'approved', profile, { note: body.note || 'Approved by dispute administrator.' });
-  const { data: updatedActions, error: updatedActionsError } = await client
-    .from('dispute_beta_actions')
-    .select(DISPUTE_BETA_ACTION_SELECT)
-    .eq('case_id', caseRow.id)
-    .order('created_at', { ascending: true });
-  if (updatedActionsError) throw updatedActionsError;
+    .eq('id', caseRow.id);
+  if (pendingError) throw pendingError;
+  try {
+    await patchDisputeWorkflowStatusInSalesforce(caseRow, salesforceStatus);
+  } catch (error) {
+    await recordDisputeWorkflowSalesforceWriteback(
+      client,
+      caseRow,
+      profile,
+      salesforceStatus,
+      'failed',
+      error.message,
+    );
+    throw error;
+  }
+  const { error: approvalError } = await client.rpc('approve_dispute_workflow_case', {
+    p_case_id: caseRow.id,
+    p_actor: { id: profile.id, email: profile.email },
+    p_note: body.note || 'Approved by dispute administrator.',
+    p_salesforce_status: salesforceStatus,
+  });
+  if (approvalError) throw approvalError;
+  let updatedCase = await getDisputeBetaCase(client, caseRow.id);
+  if (updatedCase.workflow_status !== salesforceStatus) {
+    updatedCase = await writeDisputeWorkflowStatusToSalesforce(
+      client,
+      updatedCase,
+      profile,
+      updatedCase.workflow_status,
+    );
+  }
+  const accountingState = await loadDisputeWorkflowActions(client, caseRow.id);
   const documents = await loadDisputeWorkflowDocuments(client, caseRow.id);
-  const partyMap = disputePartyRowMap(partyRows);
   return {
     case: serializeDisputeBetaCase(updatedCase),
     parties: partyRows.map(serializeDisputeWorkflowParty),
-    actions: (updatedActions || []).map((action) => serializeDisputeBetaAction(action, partyMap)),
+    actions: accountingState.actions,
+    supplierInstructions: accountingState.supplierInstructions,
     documents: documents.map(serializeDisputeWorkflowDocument),
     writebackResults: [],
   };
@@ -11306,6 +11748,29 @@ async function disputeWorkflowUploadDocument(body = {}, req, accessContext = nul
   assertSalesforceDisputeIsOpen(currentStem);
   const partyRows = await loadDisputeWorkflowParties(client, caseRow.id);
   const registry = assertValidDisputeParties(currentStem, partyRows);
+  const storedWorkflow = await loadDisputeWorkflowActions(client, caseRow.id);
+  validateStoredDisputeActions(storedWorkflow.actionRows, partyRows, registry);
+  if (caseRow.approval_status === 'Approved') {
+    const reconciliation = await reconcileApprovedSupplierInstructions(
+      client,
+      caseRow,
+      partyRows,
+      storedWorkflow.actionRows,
+      storedWorkflow.instructionRows,
+      currentStem,
+      profile,
+    );
+    if (reconciliation.changed) {
+      throw appError('Supplier payments changed. FCOS updated the accounting plan; reopen the document upload and link it to the revised instruction.', 409);
+    }
+  } else {
+    assertSupplierAllocationsCurrent(
+      storedWorkflow.actionRows,
+      partyRows,
+      storedWorkflow.instructionRows,
+      currentStem,
+    );
+  }
   const canEdit = ['Draft', 'Rejected', 'Revision Requested'].includes(caseRow.workflow_status);
   const [canApproveDocuments, canAccountDocuments] = await Promise.all([
     userHasCapability(client, profile, 'disputes_approve'),
@@ -11316,6 +11781,7 @@ async function disputeWorkflowUploadDocument(body = {}, req, accessContext = nul
   }
 
   const actionId = String(body.actionId || '').trim() || null;
+  const supplierInstructionId = String(body.supplierInstructionId || '').trim() || null;
   let action = null;
   if (actionId) {
     const { data, error } = await client
@@ -11327,6 +11793,31 @@ async function disputeWorkflowUploadDocument(body = {}, req, accessContext = nul
     if (error) throw error;
     if (!data) throw appError('The selected workflow action was not found.', 404);
     action = data;
+  }
+  let supplierInstruction = null;
+  if (supplierInstructionId) {
+    const { data, error } = await client
+      .from('dispute_workflow_supplier_instructions')
+      .select(DISPUTE_SUPPLIER_INSTRUCTION_SELECT)
+      .eq('id', supplierInstructionId)
+      .eq('case_id', caseRow.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw appError('The selected supplier instruction was not found.', 404);
+    supplierInstruction = data;
+    if (action && supplierInstruction.action_id !== action.id) {
+      throw appError('The supplier instruction does not belong to the selected action.', 400);
+    }
+    if (!action) {
+      const { data: linkedAction, error: linkedActionError } = await client
+        .from('dispute_beta_actions')
+        .select(DISPUTE_BETA_ACTION_SELECT)
+        .eq('id', supplierInstruction.action_id)
+        .eq('case_id', caseRow.id)
+        .maybeSingle();
+      if (linkedActionError) throw linkedActionError;
+      action = linkedAction;
+    }
   }
   const partyId = String(body.partyId || action?.party_id || '').trim();
   const partyRow = partyRows.find((party) => party.id === partyId);
@@ -11370,7 +11861,8 @@ async function disputeWorkflowUploadDocument(body = {}, req, accessContext = nul
       .from('dispute_workflow_documents')
       .insert({
         case_id: caseRow.id,
-        action_id: actionId,
+        action_id: action?.id || actionId,
+        supplier_instruction_id: supplierInstructionId,
         party_id: partyRow.id,
         party_side: partySide,
         stem_id: caseRow.stem_id,
@@ -11444,9 +11936,466 @@ async function disputeWorkflowUploadDocument(body = {}, req, accessContext = nul
   await writeDisputeBetaEvent(client, caseRow, 'document_uploaded', profile, {
     actionId,
     note: `${smartFileName} uploaded to Salesforce.`,
-    metadata: { documentId: documentRow.id, documentType, documentDirection, partySide, partyName, partyAccountId: party.accountId, contentVersionId: documentRow.salesforce_content_version_id, linkedRecordIds: [linkedRecordId] },
+    metadata: { documentId: documentRow.id, documentType, documentDirection, partySide, partyName, partyAccountId: party.accountId, supplierInstructionId, contentVersionId: documentRow.salesforce_content_version_id, linkedRecordIds: [linkedRecordId] },
   });
   return { document: serializeDisputeWorkflowDocument(documentRow) };
+}
+
+async function supplierOffsetInvoiceOptions({
+  supplierAccountId,
+  currencyIsoCode,
+  excludeInvoiceIds = [],
+  accessContext = null,
+} = {}) {
+  if (!isSalesforceId(supplierAccountId)) throw appError('Valid supplier Account is required.', 400);
+  const [invoiceDescribe, paymentDescribe] = await Promise.all([
+    salesforceObjectFields({ objectName: 'Supplier_Invoice__c' }),
+    salesforceObjectFields({ objectName: 'Payment__c' }).catch(() => ({ fields: [] })),
+  ]);
+  const invoiceFields = invoiceDescribe.fields || [];
+  const invoiceFieldNames = new Set(invoiceFields.map((field) => field.name));
+  const invoiceFieldByName = Object.fromEntries(invoiceFields.map((field) => [field.name, field]));
+  const schema = resolveSupplierSettlementSchema({
+    supplierInvoiceFields: invoiceFields,
+    paymentFields: paymentDescribe.fields || [],
+  });
+  if (!schema.valid) {
+    throw appError(`Supplier offset options are unavailable: ${schema.issues.join(' ')}`, 409);
+  }
+  const relationships = schema.supplierAccountFields
+    .map((field) => invoiceFieldByName[field]?.relationshipName)
+    .filter(Boolean);
+  const selectFields = [
+    'Id',
+    'Name',
+    'CreatedDate',
+    invoiceFieldNames.has('STEM__c') ? 'STEM__c' : null,
+    invoiceFieldNames.has('CurrencyIsoCode') ? 'CurrencyIsoCode' : null,
+    schema.invoiceAmountField,
+    schema.invoicePayableField,
+    ...schema.invoiceDueDateFields,
+    ...schema.invoiceDateFields,
+    ...schema.invoiceStatusFields,
+    ...schema.supplierAccountFields,
+    ...relationships.map((relationship) => `${relationship}.Name`),
+  ].filter(Boolean);
+  const accountCondition = schema.supplierAccountFields
+    .map((field) => `${field} = '${escapeSoql(supplierAccountId)}'`)
+    .join(' OR ');
+  const rows = await queryRows(`
+    SELECT ${[...new Set(selectFields)].join(', ')}
+    FROM Supplier_Invoice__c
+    WHERE (${accountCondition})
+    ORDER BY CreatedDate ASC
+    LIMIT 2000
+  `, { limit: 2000, softFail: true });
+  const excluded = new Set(excludeInvoiceIds.map((id) => String(id).slice(0, 15)));
+  const options = [];
+  for (const invoice of rows) {
+    if (excluded.has(String(invoice.Id || '').slice(0, 15))) continue;
+    if (invoice.STEM__c) {
+      const allowed = await requireInterofficeStemAccess(invoice.STEM__c, accessContext).then(() => true).catch(() => false);
+      if (!allowed) continue;
+    }
+    const supplierField = schema.supplierAccountFields.find((field) => invoice[field]);
+    if (disputeSalesforceIdKey(invoice[supplierField]) !== disputeSalesforceIdKey(supplierAccountId)) continue;
+    const dueDate = schema.invoiceDueDateFields.map((field) => invoice[field]).find(Boolean) || null;
+    const invoiceDate = schema.invoiceDateFields.map((field) => invoice[field]).find(Boolean) || invoice.CreatedDate || null;
+    const status = schema.invoiceStatusFields.map((field) => invoice[field]).find(Boolean) || null;
+    const statusToken = String(status || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (['closed', 'paid', 'cancelled', 'canceled', 'void', 'rejected'].some((token) => statusToken.includes(token))) continue;
+    const exposure = normalizeSupplierInvoiceExposure({
+      supplierInvoiceId: invoice.Id,
+      invoiceName: invoice.Name,
+      sourceStemId: invoice.STEM__c,
+      supplierAccountId: invoice[supplierField],
+      supplierName: relationships.map((relationship) => invoice[relationship]?.Name).find(Boolean) || '',
+      currencyIsoCode: invoice.CurrencyIsoCode || 'USD',
+      dueDate,
+      invoiceDate,
+      createdDate: invoice.CreatedDate,
+      invoiceAmount: invoice[schema.invoiceAmountField],
+      payableBalance: invoice[schema.invoicePayableField],
+      status,
+    });
+    if (exposure.payableBalance <= 0.01 || exposure.currencyIsoCode !== currencyIsoCode) continue;
+    options.push({
+      supplierInvoiceId: exposure.supplierInvoiceId,
+      invoiceName: exposure.invoiceName,
+      stemId: invoice.STEM__c || null,
+      currencyIsoCode: exposure.currencyIsoCode,
+      invoiceAmount: exposure.invoiceAmount,
+      payableBalance: exposure.payableBalance,
+      dueDate: exposure.dueDate,
+      invoiceDate: exposure.invoiceDate,
+      status,
+    });
+  }
+  return options;
+}
+
+async function disputeWorkflowSupplierOffsetOptions(body = {}, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  await requireCapability(client, profile, 'disputes_account', 'Dispute accounting permission is required for supplier offset options.');
+  const instructionId = String(body.instructionId || '').trim();
+  const { data: instruction, error } = await client
+    .from('dispute_workflow_supplier_instructions')
+    .select(DISPUTE_SUPPLIER_INSTRUCTION_SELECT)
+    .eq('id', instructionId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!instruction) throw appError('Supplier instruction not found.', 404);
+  if (instruction.instruction_type !== 'get_back_paid') throw appError('Only Get back paid amount instructions can use an offset invoice.', 400);
+  const caseRow = await getDisputeBetaCase(client, instruction.case_id);
+  await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
+  const partyRows = await loadDisputeWorkflowParties(client, caseRow.id);
+  const party = partyRows.find((row) => row.id === instruction.party_id);
+  if (!party) throw appError('Supplier instruction has no selected Account.', 400);
+  const options = await supplierOffsetInvoiceOptions({
+    supplierAccountId: party.account_id,
+    currencyIsoCode: instruction.currency_iso_code,
+    excludeInvoiceIds: [instruction.source_supplier_invoice_id],
+    accessContext: accessContext || { client, profile },
+  });
+  const { data: reservations, error: reservationError } = await client
+    .from('dispute_workflow_supplier_instructions')
+    .select('id,target_supplier_invoice_id,planned_amount,status,recovery_method')
+    .eq('recovery_method', 'future_invoice_offset')
+    .not('target_supplier_invoice_id', 'is', null);
+  if (reservationError) throw reservationError;
+  const reservedByInvoice = new Map();
+  for (const reservation of reservations || []) {
+    if (reservation.id === instruction.id || ['Not Required', 'Superseded'].includes(reservation.status)) continue;
+    const key = String(reservation.target_supplier_invoice_id || '').slice(0, 15);
+    reservedByInvoice.set(key, Number(reservedByInvoice.get(key) || 0) + Number(reservation.planned_amount || 0));
+  }
+  const availableOptions = options
+    .map((option) => {
+      const reservedAmount = Number(reservedByInvoice.get(String(option.supplierInvoiceId || '').slice(0, 15)) || 0);
+      return {
+        ...option,
+        reservedAmount,
+        unreservedPayableBalance: Math.max(0, Number(option.payableBalance || 0) - reservedAmount),
+      };
+    })
+    .filter((option) => option.unreservedPayableBalance + 0.01 >= Number(instruction.planned_amount || 0));
+  return { options: availableOptions };
+}
+
+async function disputeWorkflowSupplierInstructionUpdate(body = {}, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  await requireCapability(client, profile, 'disputes_account', 'Dispute accounting permission is required for supplier instructions.');
+  const instructionId = String(body.instructionId || '').trim();
+  if (!instructionId) throw appError('instructionId is required.', 400);
+  const { data: originalInstruction, error: lookupError } = await client
+    .from('dispute_workflow_supplier_instructions')
+    .select(DISPUTE_SUPPLIER_INSTRUCTION_SELECT)
+    .eq('id', instructionId)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+  if (!originalInstruction) throw appError('Supplier instruction not found.', 404);
+  const caseRow = await getDisputeBetaCase(client, originalInstruction.case_id);
+  await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
+  const currentStem = await loadCurrentDisputeStem(caseRow.stem_id, accessContext || { client, profile });
+  assertSalesforceDisputeIsOpen(currentStem);
+  let workflow = await loadDisputeWorkflowActions(client, caseRow.id);
+  const registry = assertValidDisputeParties(currentStem, workflow.partyRows);
+  validateStoredDisputeActions(workflow.actionRows, workflow.partyRows, registry);
+  assertSupplierDisputeAmounts(workflow.actionRows);
+  const reconciliation = await reconcileApprovedSupplierInstructions(
+    client,
+    caseRow,
+    workflow.partyRows,
+    workflow.actionRows,
+    workflow.instructionRows,
+    currentStem,
+    profile,
+  );
+  if (reconciliation.changed) workflow = await loadDisputeWorkflowActions(client, caseRow.id);
+  const instruction = workflow.instructionRows.find((row) => row.id === instructionId);
+  if (!instruction || instruction.status === 'Superseded') {
+    throw appError('Supplier payment data changed and this instruction was replaced. Review the updated accounting plan.', 409);
+  }
+  const requestedRevision = Number(body.revision);
+  if (Number.isInteger(requestedRevision) && requestedRevision !== Number(instruction.revision || 1)) {
+    throw appError('This supplier instruction changed after it was opened. Refresh and review the latest values.', 409);
+  }
+  const status = String(body.status || '').trim();
+  if (!DISPUTE_SUPPLIER_INSTRUCTION_STATUSES.has(status) || status === 'Superseded') {
+    throw appError('Valid supplier instruction status is required.', 400);
+  }
+  if (caseRow.approval_status !== 'Approved') {
+    if (instruction.instruction_type !== 'withhold_unpaid' || status !== 'Hold Acknowledged') {
+      throw appError('Before approval, Finance can only acknowledge an immediate Do not pay instruction.', 400);
+    }
+  }
+  const instructionReference = String(body.instructionReference || '').trim();
+  const instructionDate = String(body.instructionDate || '').trim() || null;
+  const settlementReference = String(body.settlementReference || '').trim();
+  const settlementDate = String(body.settlementDate || '').trim() || null;
+  const accountingNote = String(body.accountingNote || '').trim();
+  if (instructionDate && !/^\d{4}-\d{2}-\d{2}$/.test(instructionDate)) throw appError('Instruction date is invalid.', 400);
+  if (settlementDate && !/^\d{4}-\d{2}-\d{2}$/.test(settlementDate)) throw appError('Settlement date is invalid.', 400);
+  const recoveryMethod = instruction.instruction_type === 'get_back_paid'
+    ? String(body.recoveryMethod || instruction.recovery_method || '').trim() || null
+    : null;
+  if (instruction.instruction_type === 'get_back_paid' && ['Instruction Issued', 'Settled'].includes(status) && !['cash_refund', 'future_invoice_offset'].includes(recoveryMethod)) {
+    throw appError('Choose cash refund or future invoice offset for Get back paid amount.', 400);
+  }
+  if (status === 'Instruction Issued' && (!instructionDate || (!instructionReference && !accountingNote))) {
+    throw appError('Instruction Issued requires an instruction date and a reference or accounting note.', 400);
+  }
+  if (status === 'Not Required' && !accountingNote) throw appError('Explain why this supplier instruction is not required.', 400);
+  const documents = await loadDisputeWorkflowDocuments(client, caseRow.id);
+  const hasEvidence = documents.some((document) => (
+    document.supplier_instruction_id === instruction.id
+    && ['supplier_credit_note', 'settlement_agreement', 'proof_of_payment'].includes(document.document_type)
+  ));
+  if (status === 'Settled' && (!settlementDate || (!settlementReference && !hasEvidence))) {
+    throw appError('Settled requires a settlement date and either an uploaded supplier document or a Finance reference.', 400);
+  }
+  const plannedAmount = Number(instruction.planned_amount || 0);
+  const settlementAmount = decimalOrNull(body.settlementAmount) ?? (status === 'Settled' ? plannedAmount : null);
+  if (status === 'Settled' && Math.abs(Number(settlementAmount || 0) - plannedAmount) > 0.01) {
+    throw appError('Settlement amount must equal the current supplier instruction amount.', 400);
+  }
+
+  const party = workflow.partyRows.find((row) => row.id === instruction.party_id);
+  let targetInvoice = null;
+  if (recoveryMethod === 'future_invoice_offset') {
+    const targetSupplierInvoiceId = String(body.targetSupplierInvoiceId || '').trim();
+    if (!targetSupplierInvoiceId) throw appError('Select the supplier invoice that will receive the offset.', 400);
+    const options = await supplierOffsetInvoiceOptions({
+      supplierAccountId: party?.account_id,
+      currencyIsoCode: instruction.currency_iso_code,
+      excludeInvoiceIds: [instruction.source_supplier_invoice_id],
+      accessContext: accessContext || { client, profile },
+    });
+    targetInvoice = options.find((option) => String(option.supplierInvoiceId).slice(0, 15) === String(targetSupplierInvoiceId).slice(0, 15));
+    if (!targetInvoice) throw appError('The selected offset invoice is no longer eligible for this supplier Account and currency.', 409);
+    if (targetInvoice.payableBalance + 0.01 < plannedAmount) throw appError('The selected offset invoice does not have enough payable balance.', 400);
+  }
+  let matchedPaymentId = null;
+  let matchedPayment = null;
+  if (recoveryMethod === 'cash_refund' && body.matchedSalesforcePaymentId) {
+    const exposure = (currentStem._Supplier_Invoice_Exposure_Rows || [])
+      .find((row) => row.supplierInvoiceId === instruction.source_supplier_invoice_id);
+    matchedPayment = (exposure?.payments || []).find((row) => (
+      row.id === body.matchedSalesforcePaymentId
+      && Number(row.amount) < 0
+      && Math.abs(Math.abs(Number(row.amount)) - plannedAmount) <= 0.01
+      && (row.currencyIsoCode || 'USD') === instruction.currency_iso_code
+    ));
+    if (!matchedPayment) throw appError('The selected Salesforce refund no longer matches this supplier invoice, currency, and amount.', 409);
+    matchedPaymentId = matchedPayment.id;
+  }
+
+  const eventType = status === 'Hold Acknowledged'
+    ? 'supplier_hold_acknowledged'
+    : status === 'Settled'
+      ? 'supplier_recovery_settled'
+      : recoveryMethod && recoveryMethod !== instruction.recovery_method
+        ? 'supplier_recovery_method_selected'
+        : 'accounting_updated';
+  const eventNote = `${instruction.instruction_type === 'withhold_unpaid' ? 'Do not pay' : 'Get back paid amount'} updated to ${status}.`;
+  const instructionValues = {
+    status,
+    recovery_method: recoveryMethod,
+    target_supplier_invoice_id: targetInvoice?.supplierInvoiceId || null,
+    target_supplier_invoice_name: targetInvoice?.invoiceName || null,
+    target_stem_id: targetInvoice?.stemId || null,
+    target_invoice_amount_snapshot: targetInvoice?.invoiceAmount ?? null,
+    target_payable_amount_snapshot: targetInvoice?.payableBalance ?? null,
+    target_invoice_snapshot: targetInvoice || {},
+    target_stem_snapshot: targetInvoice?.stemId ? { stemId: targetInvoice.stemId } : {},
+    matched_salesforce_payment_id: matchedPaymentId,
+    matching_payment_snapshot: matchedPayment || {},
+    instruction_reference: instructionReference || null,
+    instruction_date: instructionDate,
+    instruction_amount: decimalOrNull(body.instructionAmount) ?? (status === 'Instruction Issued' ? plannedAmount : null),
+    settlement_reference: settlementReference || null,
+    settlement_date: settlementDate,
+    settlement_amount: settlementAmount,
+    accounting_note: accountingNote || null,
+    event_type: eventType,
+    event_note: eventNote,
+    event_metadata: {
+      supplierInstructionId: instruction.id,
+      recoveryMethod,
+      targetSupplierInvoiceId: targetInvoice?.supplierInvoiceId || null,
+      matchedSalesforcePaymentId: matchedPaymentId,
+      plannedAmount,
+      currencyIsoCode: instruction.currency_iso_code,
+    },
+  };
+  const { error: updateError } = await client.rpc('update_dispute_supplier_instruction', {
+    p_instruction_id: instruction.id,
+    p_expected_revision: Number(instruction.revision || 1),
+    p_values: instructionValues,
+    p_target_payable_amount: targetInvoice?.payableBalance ?? null,
+    p_actor: { id: profile.id, email: profile.email },
+  });
+  if (updateError) {
+    if (String(updateError.message || '').includes('revision conflict')) {
+      throw appError('This supplier instruction was updated by another user. Refresh and try again.', 409);
+    }
+    if (String(updateError.message || '').includes('already reserved')) {
+      throw appError('The selected offset invoice no longer has enough unreserved payable balance. Refresh the offset options.', 409);
+    }
+    throw updateError;
+  }
+
+  if (caseRow.approval_status !== 'Approved') {
+    const refreshed = await loadDisputeWorkflowActions(client, caseRow.id);
+    return {
+      case: serializeDisputeBetaCase(caseRow),
+      parties: refreshed.partyRows.map(serializeDisputeWorkflowParty),
+      actions: refreshed.actions,
+      supplierInstructions: refreshed.supplierInstructions,
+      documents: documents.map(serializeDisputeWorkflowDocument),
+    };
+  }
+  let updatedCase = await getDisputeBetaCase(client, caseRow.id);
+  updatedCase = await writeDisputeWorkflowStatusToSalesforce(
+    client,
+    updatedCase,
+    profile,
+    updatedCase.workflow_status,
+  );
+  const refreshed = await loadDisputeWorkflowActions(client, caseRow.id);
+  return {
+    case: serializeDisputeBetaCase(updatedCase),
+    parties: workflow.partyRows.map(serializeDisputeWorkflowParty),
+    actions: refreshed.actions,
+    supplierInstructions: refreshed.supplierInstructions,
+    documents: documents.map(serializeDisputeWorkflowDocument),
+  };
+}
+
+async function disputeWorkflowSupplierAmountAmend(body = {}, req, accessContext = null) {
+  const { client, profile } = accessContext || await requireActiveUser(req);
+  const actionId = String(body.actionId || '').trim();
+  const amount = decimalOrNull(body.disputeAmount ?? body.amount);
+  const note = String(body.note || body.description || '').trim();
+  const currencyIsoCode = String(body.currencyIsoCode || 'USD').trim().toUpperCase();
+  if (!actionId) throw appError('actionId is required.', 400);
+  if (amount == null || amount < 0) throw appError('Supplier dispute amount must be zero or greater.', 400);
+  if (!/^[A-Z]{3}$/.test(currencyIsoCode)) throw appError('Supplier dispute currency must be a three-letter ISO code.', 400);
+  if (amount === 0 && !note) throw appError('Explain why no supplier recovery is required.', 400);
+  const { data: action, error: actionError } = await client
+    .from('dispute_beta_actions')
+    .select(DISPUTE_BETA_ACTION_SELECT)
+    .eq('id', actionId)
+    .maybeSingle();
+  if (actionError) throw actionError;
+  if (!action || action.party_side !== 'supplier') throw appError('Supplier action not found.', 404);
+  const caseRow = await getDisputeBetaCase(client, action.case_id);
+  const actorEmail = String(profile.email || '').trim().toLowerCase();
+  const responsibleTrader = (
+    action.created_by === profile.id
+    || caseRow.submitted_by === profile.id
+    || [action.created_by_email, caseRow.submitted_by_email]
+      .some((email) => String(email || '').trim().toLowerCase() === actorEmail)
+  );
+  if (profile.user_type !== 'administrator' && !responsibleTrader) {
+    throw appError('Only the responsible trader or an administrator can record this supplier dispute amount.', 403);
+  }
+  if (caseRow.workflow_status === 'Closed') throw appError('Closed disputes cannot be amended.', 400);
+  await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
+  const currentStem = await loadCurrentDisputeStem(caseRow.stem_id, accessContext || { client, profile });
+  assertSalesforceDisputeIsOpen(currentStem);
+  const workflow = await loadDisputeWorkflowActions(client, caseRow.id);
+  const registry = assertValidDisputeParties(currentStem, workflow.partyRows);
+  validateStoredDisputeActions(workflow.actionRows, workflow.partyRows, registry);
+  const partyById = disputePartyRowMap(workflow.partyRows);
+  const existingAmount = decimalOrNull(action.amount);
+  const commercialAmountChanged = existingAmount == null || Math.abs(existingAmount - amount) > 0.01;
+  const editableStage = ['Draft', 'Rejected', 'Revision Requested'].includes(caseRow.workflow_status);
+  const amendedStage = editableStage
+    ? caseRow.workflow_status
+    : commercialAmountChanged
+      ? 'Revision Requested'
+      : caseRow.approval_status === 'Approved'
+        ? 'Accounting In Progress'
+        : caseRow.workflow_status;
+  const amendedApproval = amendedStage === 'Draft'
+    ? 'Draft'
+    : amendedStage === 'Revision Requested'
+      ? 'Revision Requested'
+      : caseRow.approval_status;
+  const rpcActions = workflow.actionRows.map((row) => {
+    const party = partyById.get(row.party_id);
+    const base = {
+      ...row,
+      party_account_key: party?.account_key,
+    };
+    if (row.id !== action.id) return base;
+    return prepareSupplierSettlementAction({
+      ...base,
+      action_type: 'resolve_supplier_dispute',
+      action_label: DISPUTE_BETA_ACTION_LABELS.resolve_supplier_dispute,
+      amount,
+      special_buy_price: null,
+      description: note || row.description || '',
+      currency_iso_code: currencyIsoCode,
+      invoice_allocations: Array.isArray(body.invoiceAllocations) ? body.invoiceAllocations : [],
+      execution_status: 'Pending Accounting',
+    }, currentStem);
+  });
+  const financials = calculateDisputeBetaSettlement(rpcActions);
+  const salesforceStatus = amendedStage === 'Draft' ? 'Open - Trader Review' : amendedStage;
+  const casePayload = {
+    ...disputeBetaCaseFromStem(currentStem),
+    current_salesforce_status: salesforceStatus,
+    workflow_status: amendedStage,
+    approval_status: amendedApproval,
+    latest_note: note || 'Supplier dispute amount recorded.',
+    settlement_financials: financials,
+    settlement_pnl: financials.settlementPnl,
+  };
+  const { data: savedCaseId, error: saveError } = await client.rpc('save_dispute_workflow_draft', {
+    p_case: casePayload,
+    p_parties: workflow.partyRows.map((party) => ({
+      account_id: party.account_id,
+      account_key: party.account_key,
+      account_name: party.account_name,
+      roles: party.roles,
+      source_types: party.source_types,
+      source_record_ids: party.source_record_ids,
+      payment_terms: party.payment_terms,
+      products: party.products,
+      cancelled_source_only: party.cancelled_source_only,
+    })),
+    p_actions: rpcActions,
+    p_actor: { id: profile.id, email: profile.email },
+    p_event_note: note || 'Supplier dispute amount recorded.',
+  });
+  if (saveError) throw saveError;
+  const updatedCase = await getDisputeBetaCase(client, savedCaseId || caseRow.id);
+  await patchDisputeWorkflowStatusInSalesforce(updatedCase, salesforceStatus);
+  const statusCase = await recordDisputeWorkflowSalesforceWriteback(client, updatedCase, profile, salesforceStatus);
+  if (amendedStage === 'Revision Requested') {
+    await writeDisputeBetaEvent(client, statusCase, 'revision_requested', profile, {
+      actionId: action.id,
+      note: 'Supplier dispute amount added to an existing workflow; approval is required again.',
+      metadata: { disputeAmount: amount, currencyIsoCode },
+    });
+  } else if (!commercialAmountChanged && action.action_type !== 'resolve_supplier_dispute') {
+    await writeDisputeBetaEvent(client, statusCase, 'supplier_payment_reconciled', profile, {
+      actionId: action.id,
+      note: 'Existing supplier amount converted into invoice-level Finance instructions.',
+      metadata: { disputeAmount: amount, currencyIsoCode },
+    });
+  }
+  const refreshed = await loadDisputeWorkflowActions(client, caseRow.id);
+  const documents = await loadDisputeWorkflowDocuments(client, caseRow.id);
+  return {
+    case: serializeDisputeBetaCase(statusCase),
+    parties: refreshed.partyRows.map(serializeDisputeWorkflowParty),
+    actions: refreshed.actions,
+    supplierInstructions: refreshed.supplierInstructions,
+    documents: documents.map(serializeDisputeWorkflowDocument),
+  };
 }
 
 async function disputeWorkflowAccountingUpdate(body = {}, req, accessContext = null) {
@@ -11461,16 +12410,30 @@ async function disputeWorkflowAccountingUpdate(body = {}, req, accessContext = n
     .maybeSingle();
   if (actionLookupError) throw actionLookupError;
   if (!action) throw appError('Dispute Workflow action not found.', 404);
+  if (action.action_type === 'resolve_supplier_dispute') {
+    throw appError('Update each supplier invoice instruction instead of the parent supplier resolution.', 400);
+  }
   const caseRow = await getDisputeBetaCase(client, action.case_id);
   await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
   const partyRows = await loadDisputeWorkflowParties(client, caseRow.id);
   const currentStem = await loadCurrentDisputeStem(caseRow.stem_id, accessContext || { client, profile });
   assertSalesforceDisputeIsOpen(currentStem);
   const registry = assertValidDisputeParties(currentStem, partyRows);
-  validateStoredDisputeActions([action], partyRows, registry);
+  const storedWorkflow = await loadDisputeWorkflowActions(client, caseRow.id);
+  validateStoredDisputeActions(storedWorkflow.actionRows, partyRows, registry);
+  assertSupplierDisputeAmounts(storedWorkflow.actionRows);
   if (caseRow.approval_status !== 'Approved' || caseRow.workflow_status === 'Closed') {
     throw appError('Accounting can update actions only after approval and before closure.', 400);
   }
+  await reconcileApprovedSupplierInstructions(
+    client,
+    caseRow,
+    partyRows,
+    storedWorkflow.actionRows,
+    storedWorkflow.instructionRows,
+    currentStem,
+    profile,
+  );
 
   const accountingStatus = normalizeDisputeBetaStatus(body.accountingStatus || body.executionStatus, DISPUTE_BETA_EXECUTION_STATUSES, '');
   if (!accountingStatus) throw appError('Valid accounting status is required.', 400);
@@ -11590,13 +12553,34 @@ async function disputeBetaClose(body = {}, req, accessContext = null) {
   await requireInterofficeStemAccess(caseRow.stem_id, accessContext || { client, profile });
   const currentStem = await loadCurrentDisputeStem(caseRow.stem_id, accessContext || { client, profile });
   if (!hasRecordedFcosClosureWriteback(caseRow)) assertSalesforceDisputeIsOpen(currentStem);
-  const { partyRows, actionRows } = await loadDisputeWorkflowActions(client, caseRow.id);
+  let { partyRows, actionRows, instructionRows } = await loadDisputeWorkflowActions(client, caseRow.id);
   const registry = assertValidDisputeParties(currentStem, partyRows);
+  const reconciliation = await reconcileApprovedSupplierInstructions(
+    client,
+    caseRow,
+    partyRows,
+    actionRows,
+    instructionRows,
+    currentStem,
+    profile,
+  );
+  if (reconciliation.changed) {
+    const reloaded = await loadDisputeWorkflowActions(client, caseRow.id);
+    partyRows = reloaded.partyRows;
+    actionRows = reloaded.actionRows;
+    instructionRows = reloaded.instructionRows;
+    throw appError('Supplier payments changed after approval. FCOS updated the accounting plan; Finance must complete the revised instructions before closure.', 409);
+  }
   if (caseRow.approval_status !== 'Approved') throw appError('Only approved Dispute Workflow cases can be closed.', 400);
   if (caseRow.workflow_status !== 'Settled - Ready to Close') throw appError('Complete accounting settlement for every action before closing.', 400);
   const finalNote = String(body.note || '').trim();
   if (!finalNote) throw appError('Final closure note is required.', 400);
   const actions = validateStoredDisputeActions(actionRows, partyRows, registry);
+  assertSupplierDisputeAmounts(actions);
+  const activeSupplierInstructions = instructionRows.filter((instruction) => instruction.status !== 'Superseded');
+  if (activeSupplierInstructions.some((instruction) => !['Settled', 'Not Required'].includes(instruction.status))) {
+    throw appError('Every supplier invoice instruction must be Settled or Not Required before closure.', 400);
+  }
   if (!(actions || []).length || !(actions || []).every((action) => action.execution_status === 'Settled' || action.execution_status === 'Not Required')) {
     throw appError('Every accounting action must be Settled or Not Required before closure.', 400);
   }
@@ -12297,6 +13281,9 @@ const handlers = {
   disputeWorkflowApprove: disputeBetaApprove,
   disputeWorkflowReject: disputeBetaReject,
   disputeWorkflowAccountingUpdate,
+  disputeWorkflowSupplierInstructionUpdate,
+  disputeWorkflowSupplierOffsetOptions,
+  disputeWorkflowSupplierAmountAmend,
   disputeWorkflowUploadDocument,
   disputeWorkflowDocuments,
   disputeWorkflowMarkExecuted: disputeBetaMarkExecuted,

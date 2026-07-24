@@ -1,6 +1,16 @@
-export const APP_VERSION = '2.0.37';
+export const APP_VERSION = '2.0.38';
 
 export const APP_VERSION_HISTORY = [
+  {
+    version: '2.0.38',
+    releasedAt: '2026-07-24',
+    title: 'Paid supplier invoice dispute automation',
+    changes: [
+      'Added one supplier dispute amount with editable oldest-invoice-first allocation into Do not pay and Get back paid amount instructions.',
+      'Added urgent pre-approval Finance holds, invoice-level refund or offset settlement, evidence controls, and exact Account and currency validation.',
+      'Added automatic post-approval payment reconciliation without changing the approved dispute total or Dispute P&L.',
+    ],
+  },
   {
     version: '2.0.37',
     releasedAt: '2026-07-24',
